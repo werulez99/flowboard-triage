@@ -5,6 +5,6 @@
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "description": "Portable, human-directed Solidity finding triage with Flowboard",
   "engines": { "node": ">=18" },
-  "scripts": { "test": "node --test tests", "package": "node scripts/package.js" },
+  "scripts": { "test": "node scripts/test.js", "package": "node scripts/package.js" },
   "license": "MIT"
 }
