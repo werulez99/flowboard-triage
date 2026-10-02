@@ -228,7 +228,7 @@ async function refreshFindingMap(root, id, extensionPath, options = {}) {
       regenerated.request.finding.openQuestions = [...(regenerated.request.finding.openQuestions || []).slice(0, 39), 'Source or mapped anchors changed. Prior evidence/assessment must be re-reviewed; the old draft is archived.'];
       regenerated.warnings.push('Source or mapped anchors changed: prior review fields were retained for context, not revalidated. The assessment is now unreviewed.');
       if (regenerated.request.finding.triage) {
-        for (const item of regenerated.request.finding.triage.evidence) item.needsReview = true;
+        require('./webview/claim-model').invalidate(regenerated.request.finding.triage);
         for (const check of regenerated.request.finding.triage.checks) check.state = 'unchecked';
       }
     }

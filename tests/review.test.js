@@ -142,6 +142,9 @@ test('map refresh retains old evidence/hash as stale and resets review checkmark
   fs.writeFileSync(report, '### [I-01] Demo counter review\nThe increment operation updates the Demo counter.'); await importReport(report, root, native);
   const old = store.readDraft(root, 'I-01'); old.finding.status = 'invalid'; old.finding.triage = finding().triage;
   old.finding.triage.evidence = [{ ...entry(), source: { file: 'src/Demo.sol', line: 13 } }];
+  old.finding.triage.claims = [{ id: 'c-1', text: 'The counter decreases.', state: 'contradicted', reason: 'The fictional statement adds amount.', observed: 'Counter addition.',
+    evidence: [{ evidenceId: 'e-1', stance: 'contradicts', reason: 'Addition contradicts the reported decrease.' }] }];
+  old.finding.triage.evidence[0].source.sourceHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'src/Demo.sol'), 'utf8')).digest('hex');
   old.finding.triage.checks[0] = { id: 'revision', state: 'checked', note: 'Original fictional revision checked.' }; store.writeDraft(root, 'I-01', old);
   const hash = old.finding.triage.evidence[0].source.sourceHash;
   fs.appendFileSync(path.join(root, 'src/Demo.sol'), '\n// changed\n');
@@ -150,6 +153,7 @@ test('map refresh retains old evidence/hash as stale and resets review checkmark
   const triage = refreshed.request.finding.triage;
   assert.equal(triage.evidence[0].needsReview, true); assert.equal(triage.evidence[0].source.sourceHash, hash);
   assert.equal(triage.checks[0].state, 'unchecked'); assert.equal(refreshed.request.finding.status, 'unreviewed');
+  assert.equal(triage.claims[0].state, 'unreviewed'); assert.equal(triage.claims[0].reason, old.finding.triage.claims[0].reason);
   p.sources(root, refreshed.request); assert.equal(review.readiness(refreshed.request.finding).counts.contradicts, 0);
   assert.equal(p.readWorkspaceJson(root, refreshed.backup).finding.triage.evidence[0].needsReview, undefined);
 });

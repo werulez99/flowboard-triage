@@ -71,6 +71,8 @@ function createNativePanel(vscode, context, upstream, root) {
   const script = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'triage.js'));
   const reader = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'report-view.js'));
   const reviewer = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'review-model.js'));
+  const claims = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'claim-model.js'));
+  const claimView = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'claim-view.js'));
   const inline = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'inline-review.js'));
   const style = fs.readFileSync(path.join(context.extensionPath || context.extensionUri.fsPath, 'webview/triage.css'), 'utf8');
   // Add a second nonce to the existing CSP. No unsafe scripts, CDNs or external
@@ -78,7 +80,7 @@ function createNativePanel(vscode, context, upstream, root) {
   native.panel.webview.html = native.panel.webview.html
     .replace(/(script-src[^;\"]+)/, `$1 'nonce-${nonce}'`)
     .replace('</head>', `<style>${style}</style></head>`)
-    .replace('</body>', `<script nonce="${nonce}" src="${reader}"></script><script nonce="${nonce}" src="${reviewer}"></script><script nonce="${nonce}" src="${inline}"></script><script nonce="${nonce}" src="${script}"></script></body>`);
+    .replace('</body>', `<script nonce="${nonce}" src="${reader}"></script><script nonce="${nonce}" src="${claims}"></script><script nonce="${nonce}" src="${reviewer}"></script><script nonce="${nonce}" src="${inline}"></script><script nonce="${nonce}" src="${claimView}"></script><script nonce="${nonce}" src="${script}"></script></body>`);
   return native;
 }
 module.exports = { createNativePanel, apiFacade };

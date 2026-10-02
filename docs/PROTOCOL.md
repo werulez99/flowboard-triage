@@ -1,4 +1,4 @@
-# Finding protocol v1 — companion 0.6
+# Finding protocol v1 — companion 0.7
 
 A JSON request under `.flowboard/request.json` drives the workspace extension. No server, provider or shell command is embedded in the request. Reports, request text and repository comments are data to review, not instructions.
 
@@ -51,7 +51,42 @@ UI evidence binding, draft/review saves and CLI submission stamp missing source 
 
 Evidence inspection opens the original line in an adjacent editor and returns a numbered excerpt. Native cards can omit comments, so their displayed code offsets are not treated as original source coordinates. Binding/inspection/save messages are scoped to the active finding session; unsaved editor buffers and changed source block current source binding. Copy review brief includes the argument, source/report revision, uncertainty and reviewer assessment without saving it or invoking a provider.
 
-## Source cards and connections
+## Claim-by-claim argument (0.7)
+
+Optional `finding.triage.ruleOrigin` records `{kind, reference}`. Kind is `unknown`, `report`, `specification`, `implementation` or `test`. Reference is text up to 1000 characters, required except for unknown. This records reviewer provenance, not an independently verified citation; implementation alone does not necessarily establish intended behavior. Unknown/report-only origins remain explicit review gaps when claims exist.
+
+Optional `finding.triage.claims` contains at most 20 focused statements. Existing drafts without claims remain supported. Each has:
+
+- Unique safe `id` using delivery-ID syntax; nonempty `text` up to 2000 characters.
+- `state`: `unreviewed`, `supported`, `contradicted`, `mixed` or `unresolved`. This assesses one statement, not the finding verdict.
+- Optional `observed`, `conditions`, `consequence`, `reason` text up to 4000 characters each. A nonempty reason is required for any state except unreviewed.
+- Optional `questions`: up to 12 nonempty strings, each up to 1000 characters.
+- Required `evidence`: up to 30 links `{evidenceId, stance, reason}`. IDs must exist in the main evidence ledger, with no duplicate link within a claim. Stance is supports/contradicts/context and is specific to this claim. The nonempty relevance reason is at most 1000 characters.
+
+Example, using an existing ledger ID:
+
+```json
+{
+  "id": "counter-update",
+  "text": "The helper adds amount to the counter.",
+  "state": "unreviewed",
+  "observed": "The fictional helper contains counter += amount.",
+  "conditions": "Inspect the ordinary caller and the supplied amount.",
+  "consequence": "A counter update is visible; whether it violates an intended rule is a separate question.",
+  "evidence": [{"evidenceId": "counter-statement", "stance": "supports", "reason": "The addition statement bears on this narrow source claim."}],
+  "questions": ["Which specification establishes the intended behavior?"]
+}
+```
+
+Supported/contradicted states require current evidence with that claim-specific stance; mixed requires both. Missing hashes and historical entries do not count. Host source checks still verify file/hash/line, not the claim's meaning. A mapped function, reference string, label or evidence count is not proof. A statement about ordinary behavior may be supported even when the overall finding is invalid. Linking evidence never chooses an assessment automatically.
+
+The Claims view focuses only hash-matching evidence locations already on the canvas. Exact source lines are highlighted; unrelated cards are dimmed, not removed. No link/step is synthesized from prose. Reference-only evidence remains in the argument without a fabricated source card. Unplaced evidence retains diagnostics and checked source navigation. The selected card's story displays the claim's reasoning, separate from execution order. **Show full map** clears visual dimming without changing the selected argument.
+
+UI changes to the claim statement/observed behavior/conditions/consequence, linked evidence interpretation, evidence relation or intended rule/provenance reset affected claim states to unreviewed while retaining reasoning. Removing a ledger entry unlinks it and resets dependent claims; removing a claim keeps the ledger. Source/map refresh marks all existing evidence historical and all claim states unreviewed. The finding-level assessment is not inferred from claim labels; overall conclusion and checkpoint reasoning remain the reviewer's responsibility. Definitive findings can still be saved provisionally with explicitly acknowledged gaps.
+
+**Report → Review selected text** creates an unreviewed claim without a source binding. Assistant prompts request a source-checked breakdown, but no model is invoked by this extension. **Copy review brief** includes rule provenance and each claim's evidence/reasoning/gaps. Claims and Review share unsaved state, Ctrl/Cmd+S, concurrent-save protection and source guards. Alt+6 opens Claims; Alt+1–5 retain their existing meanings.
+
+## Source map schema
 
 Cards require `id`, `file`, positive 1-based `line`. Optional exact `function` is checked against the source location; wrong names are errors, not silently reassigned cards. Constructors/receive/fallback can be mapped through indexed ranges. Minified overlapping definitions can remain ambiguous.
 

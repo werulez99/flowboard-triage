@@ -1,10 +1,10 @@
 // Shared, dependency-free review model. Checkmarks/evidence labels are reviewer
 // assertions; this module validates structure, never Solidity bug validity.
 (function(root, factory) {
-  const api = factory();
+  const api = factory(typeof module === 'object' && module.exports ? require('./claim-model') : root.FlowboardClaims);
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.FlowboardReview = api;
-})(globalThis, function() {
+})(globalThis, function(claims) {
   'use strict';
   const checkpoints = [
     { id: 'revision', title: 'Source / report version', question: 'Does this checkout match the reported behavior? Distinguish a stale report from current code.' },
@@ -18,7 +18,8 @@
   function create(value) {
     return { version: 1, actor: value?.actor || '', decisionReason: value?.decisionReason || '',
       checks: checkpoints.map(check => ({ id: check.id, state: 'unchecked', note: '', ...value?.checks?.find(item => item.id === check.id) })),
-      evidence: structuredClone(value?.evidence || []) };
+      evidence: structuredClone(value?.evidence || []), claims: structuredClone(value?.claims || []),
+      ruleOrigin: structuredClone(value?.ruleOrigin || { kind: 'unknown', reference: '' }) };
   }
   function validate(value) {
     const fail = text => { throw new Error(text); };
@@ -53,7 +54,7 @@
         if (item.source.sourceHash !== undefined && !/^[0-9a-f]{64}$/.test(item.source.sourceHash)) fail('Evidence sourceHash must be SHA-256.');
       }
     }
-    return value;
+    claims.validate(value); return value;
   }
   function readiness(finding) {
     const value = create(finding.triage);
@@ -61,7 +62,7 @@
     const counts = Object.fromEntries(['supports', 'contradicts', 'context'].map(stance => [stance, value.evidence.filter(item => item.stance === stance && current(item)).length]));
     const gaps = value.checks.filter(check => check.state === 'unchecked' || check.state === 'blocked').map(check => checkpoints.find(item => item.id === check.id).title);
     const errors = [];
-    try { validate(value); } catch (error) { errors.push(error.message); }
+    try { validate(value); gaps.push(...claims.gaps(value)); } catch (error) { errors.push(error.message); }
     if (definitive.includes(finding.status)) {
       if (!value.decisionReason.trim()) errors.push('Explain why the evidence supports this assessment.');
       if (!value.evidence.some(current)) errors.push('Add an explained current source/specification/test entry to the evidence ledger.');
@@ -82,7 +83,7 @@
     for (const item of value.evidence) lines.push(`- ${item.needsReview ? '[NEEDS RE-REVIEW] ' : ''}${item.stance}: ${item.source ? `${item.source.file}:${item.source.line}` : item.reference} — ${item.note}`);
     if (!value.evidence.length) lines.push('No structured evidence recorded.');
     if (finding.evidence?.length) lines.push('', 'Additional / legacy references (not automatically revalidated):', ...finding.evidence.map(text => `- ${text}`));
-    lines.push('', '## Review reasoning', ...value.checks.map(check => `- ${checkpoints.find(item => item.id === check.id).title}: ${check.state} — ${check.note || 'Not recorded.'}`));
+    lines.push(...claims.brief(value), '', '## Review reasoning', ...value.checks.map(check => `- ${checkpoints.find(item => item.id === check.id).title}: ${check.state} — ${check.note || 'Not recorded.'}`));
     lines.push('', '## Decision explanation', value.decisionReason || 'No conclusion established.', '', '## Unchecked / blocked review areas',
       ready.gaps.length ? ready.gaps.join('; ') : 'Reviewer marked all areas checked/not applicable; this is not semantic proof.', '',
       '## Remaining questions', ...(finding.openQuestions || ['Not recorded.']), '', '## Impact', finding.impact || 'Not established.');

@@ -2,7 +2,7 @@
 
 A source-linked Solidity review workspace for developers and auditors, built on the original Solidity Flowboard canvas.
 
-Import an audit report, select a finding, inspect its function cards and connection rationale, and record an evidence-backed assessment with your coding assistant. Version **0.6.1** adds source-bound explanations between code lines, a navigable review story and placement diagnostics. It retains the original canvas engine, source highlighting, minimap, notes, linking and Undo, with a calmer companion theme and a resizable panel.
+Import an audit report, select a finding, inspect its function cards and connection rationale, and record an evidence-backed assessment with your coding assistant. Version **0.7.0** adds claim-by-claim review: intended rule, individual report statements, evidence for/against each statement and exact-line source focus. It retains the original Solidity Flowboard canvas engine, source highlighting, minimap, notes, linking and Undo, with readable inline explanations and a resizable companion panel.
 
 This is an independent, MIT-licensed companion, not an official Anchabadze release. Source indexing is heuristic. A diagram helps you understand a claim; it does not establish vulnerability validity or runtime reachability.
 
@@ -11,7 +11,7 @@ This is an independent, MIT-licensed companion, not an official Anchabadze relea
 Download the installation ZIP from [GitHub Releases](https://github.com/werulez99/flowboard-triage/releases). The separate `-source.zip` contains the English public sources without installation binaries. This is a preview release: heuristic source navigation and reviewer judgments still need independent checking.
 
 1. Extract the release ZIP. Open your Solidity project in Cursor or VS Code.
-2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.6.1.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live.
+2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.7.0.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live.
 3. Reload the editor window. Open only a workspace you trust.
 4. Run **Flowboard Triage: Import Report** and choose a `.txt` or `.md` report. The first mapped finding opens in the native canvas.
 5. **Overview** opens beside the source cards with the claim, behavior comparison, evidence balance and an unanswered review question. Choose **Inspect** on a card for its role, conditions and adjacent relationships. **Review** edits the assessment. **Flow** searches mapped functions and explains connections; **Report** formats the original text with checked source links. Missing maps open the Report explanation.
@@ -23,7 +23,24 @@ No compiler, Slither, model API key or paid service is required for default sour
 
 **0.5.1 compatibility fix:** fixes `CANNOT use API proposal: tunnels` when opening the native panel in Cursor. The adapter now preserves lazy API descriptors instead of eagerly spreading editor namespaces. No proposed APIs, development mode or special launch flags are required. Regression coverage includes frozen API objects and proposal-gated getters; the previous plain-object editor mocks did not model those getters. Reload the editor window after upgrading.
 
-## Inline explanations in 0.6
+## Claim-by-claim review in 0.7
+
+Read the argument before deciding whether the finding is valid:
+
+1. Establish the **intended rule** and its provenance. A rule asserted only by the report remains visibly unverified.
+2. Open **Claims**, or select one statement in **Report → Review selected text**. Ask your assistant to prepare a source-checked breakdown through **Ask AI**; import alone does not perform semantic review.
+3. Select a claim to focus its linked source. Only exact, hash-matching evidence lines are highlighted. Other cards dim; **Show full map** restores the complete map. No source binding is guessed from prose.
+4. Read the observed behavior, permissions/state, consequence, counterevidence and unanswered questions. Compact reading summaries come before optional editing fields. Inline notes and the function's **Selected claim** story explain why each linked statement matters.
+5. Assess the individual statement as unreviewed, supported, contradicted, mixed or unresolved. One report statement may be supported while another remains unresolved. Evidence stance for a specific claim is separate from the overall finding stance.
+6. Set the overall finding assessment in **Review**, explain the decision and save. **Copy review brief** includes the individual claims, evidence links, provenance and gaps. Claim labels never automatically set the finding verdict.
+
+Changing linked evidence, the intended rule or the claim explanation resets affected claim states to unreviewed. Removing evidence unlinks it without silently keeping a supported claim. Source-map refresh retains historical explanations/hashes while marking evidence and claims for re-review. Older drafts still work without a claim breakdown. Save guards, concurrent-edit protection and the Cursor compatibility fix remain in place.
+
+The bundled skill and AI handoff prompt describe the new schema. This extension does not run an AI model, execute exploits or generate missing attack sequences. The assistant and human reviewer supply the reasoning; the tool makes its source bindings and uncertainty inspectable.
+
+Try the fictional example: open `examples/project` as the editor workspace, run **Flowboard Triage: Open Finding JSON**, and select `examples/claim-review.json` from the bundle. It includes inline observations, a source-behavior claim and an unresolved specification question. It deliberately does not declare a bug.
+
+## Inline source explanations
 
 Read short explanations directly between the original function's code lines. Each note has a distinct category: **Behavior**, **Reported concern**, **Consequence**, **Counterevidence / guard** or **Open question**. Category is not a verdict: the evidence retains its independent supports/contradicts/context stance.
 
@@ -55,7 +72,7 @@ The 0.6.1 browser pass also fixed Fit/source focus after browser-induced viewpor
 11. **Editable evidence:** change notes/stances while retaining the original source hash and re-review flag; removal asks before dropping an entry.
 12. **Evidence filters:** inspect supporting, contradicting, contextual or historical evidence separately; clear an unadded entry without losing other form edits.
 13. **Function-specific AI handoff:** copy a source-bound prompt from the inspector. It does not invoke a provider or include unsaved form changes.
-14. **Keyboard and focus support:** Alt+1…5 switches views; Alt+Left/Right traverses source history; Ctrl/Cmd+S saves in Review; Escape closes the panel without discarding edits. Tab arrows and resize keys are supported; text inputs retain normal typing.
+14. **Keyboard and focus support:** Alt+1…6 switches Findings/Overview/Flow/Review/Report/Claims; Alt+Left/Right traverses source history; Ctrl/Cmd+S saves in Review or Claims; Escape closes the panel without discarding edits. Tab arrows and resize keys are supported; text inputs retain normal typing.
 15. **Review guidance:** prioritize a recorded blocker/unchecked question, flag repeated evidence and opposite interpretations of the same reference, surface high confidence with review gaps, and include checkpoint reasoning in the copied brief. These are transparent review cues, not semantic verdicts.
 
 Panel width, filters, source history and neighborhood focus are view-local; they reset when the webview closes. Source history resets between findings. The queue and related-source list use saved drafts, not unsaved edits; unmapped drafts have no source anchors to compare. Imported source relevance and actual bug validity still require review.

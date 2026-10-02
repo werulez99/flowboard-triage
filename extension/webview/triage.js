@@ -11,6 +11,7 @@
   let navigation = [], navigationIndex = -1, editingEvidence = null, renderedTab = null;
   let inlineVisible = true;
   let hintVersion = 0;
+  let activeClaim = null, claimFocus = false, reportSelection = '';
   const disclosureState = new Map();
   const scrollPositions = new Map();
   const pendingEvidence = new Map();
@@ -39,6 +40,55 @@
     });
   }
   const visibleHints = () => [...cards.keys()].map(id => hints[id]).filter(Boolean);
+  const selectedClaim = () => profile().claims.find(claim => claim.id === activeClaim);
+  function claimSources() {
+    const claim = selectedClaim();
+    return claim ? FlowboardClaims.argument(claim, profile().evidence).links.filter(link => FlowboardClaims.current(link.entry)) : [];
+  }
+  function claimCardIds() {
+    const sources = claimSources();
+    return new Set([...cards.values()].filter(card => hints[card.id] && sources.some(link => FlowboardInline.forSource([link.entry], hints[card.id]).length)).map(card => card.id));
+  }
+  function focusClaim(id) {
+    activeClaim = id; claimFocus = true; spotlight = false;
+    const sources = claimSources();
+    const card = [...cards.values()].find(card => hints[card.id] && sources.some(link => FlowboardInline.forSource([link.entry], hints[card.id]).length));
+    selectedCard = card?.id || null;
+    show('claims'); if (card) focusSourceLine(card, FlowboardInline.forSource(sources.map(link => link.entry), hints[card.id])[0]?.source.line); redrawEdges();
+  }
+  function addClaim(text) {
+    if (readOnly || profile().claims.length >= 20) return;
+    if (text.length > 2000) { window.alert('Select one focused statement of at most 2000 characters.'); return; }
+    const id = `claim-${crypto.randomUUID()}`;
+    editProfile(value => value.claims.push({ id, text, state: 'unreviewed', evidence: [], questions: [] }));
+    activeClaim = id; claimFocus = false; selectedCard = null; show('claims'); drawer.querySelector('[aria-label="Claim statement"]')?.focus();
+  }
+  function saveArgument(copy = false) {
+    if (readOnly) return;
+    if (hasEvidenceDraft()) { window.alert('Add or clear the pending evidence entry first.'); return; }
+    const value = currentFinding(), patch = { triage: profile() };
+    for (const key of Object.keys(reviewEdits)) patch[key] = value[key];
+    const ready = FlowboardReview.readiness(value);
+    if (ready.errors.length) { window.alert(ready.errors.join('\n')); return; }
+    if (!copy && FlowboardReview.definitive.includes(value.status) && ready.gaps.length && !window.confirm('Save a provisional reviewer judgment with unresolved review areas still visible?')) return;
+    send(copy ? 'triage:copyBrief' : 'triage:save', { patch, editVersion });
+  }
+  function renderClaims() {
+    drawer.append(FlowboardClaimView.render({ profile: profile(), finding: currentFinding(), activeId: activeClaim, readOnly, pendingEvidence: hasEvidenceDraft(),
+      edit: (change, refresh = false) => { editProfile(change, refresh); FlowboardClaimView.status(drawer, currentFinding()); },
+      editFinding: (key, value) => { reviewEdits[key] = value; editProfile(next => { for (const claim of next.claims) claim.state = 'unreviewed'; }); FlowboardClaimView.status(drawer, currentFinding()); },
+      selectClaim: focusClaim, addClaim, focusClaim, fullMap: () => { claimFocus = false; redrawEdges(); fit(); },
+      removeClaim: id => { editProfile(value => { value.claims = value.claims.filter(claim => claim.id !== id); }); activeClaim = null; claimFocus = false; renderDrawer(); redrawEdges(); },
+      readReport: () => show('report'), addEvidence: () => show('review'), inspect: inspectEvidence,
+      placement: entry => FlowboardInline.placement(entry, visibleHints()), save: () => saveArgument(), copy: () => saveArgument(true), overall: () => show('review') }));
+    FlowboardClaimView.status(drawer, currentFinding());
+  }
+  function claimLinks(parent) {
+    const claims = profile().claims; if (!claims.length) return;
+    const group = element('section', 'triage-report-claims'); group.append(element('h3', '', 'Claim breakdown · reviewer statements'));
+    for (const claim of claims) { const item = button(claim.text || 'Untitled claim', () => focusClaim(claim.id), 'triage-claim-select'); item.append(element('small', '', claim.state)); group.append(item); }
+    parent.append(group);
+  }
   function send(type, payload = {}) { vscode.postMessage({ type, issueId: active, token, ...payload }); }
   function show(tab) {
     drawerTab = tab; drawer.dataset.tab = tab; drawer.classList.add('visible'); document.body.classList.add('triage-drawer-open'); renderDrawer(); redrawEdges();
@@ -81,7 +131,7 @@
     const status = element('span', '', statusLabel(current.status || 'Select a finding') + (gaps ? ' · review gaps' : '') + (dirtyReview ? ' · unsaved review' : '')); status.id = 'triage-status'; bar.append(status);
     const attention = FlowboardReview.nextAttention(library, active);
     const nextReview = button('Next review', () => attention && select(attention.id)); nextReview.disabled = !attention; nextReview.title = attention ? `Next needing attention: ${attention.title}` : 'No other finding needs attention in this saved index';
-    bar.append(nextReview, button('Overview', () => toggle('brief')), button('Ask AI', () => send('triage:prompt')), button('Fit', fit));
+    bar.append(nextReview, button('Overview', () => toggle('brief')), button('Claims', () => show('claims')), button('Ask AI', () => send('triage:prompt')), button('Fit', fit));
     const inline = button(inlineVisible ? 'Notes on' : 'Notes off', () => { inlineVisible = !inlineVisible; renderBar(); redrawEdges(); }); inline.title = 'Show source-bound inline review notes'; inline.setAttribute('aria-pressed', String(inlineVisible)); bar.append(inline);
     const arrange = button('Arrange', arrangeCards); arrange.title = 'Space source cards using their displayed size; native Undo restores positions. Notes stay in place.'; bar.append(arrange);
     const help = button('?', () => show('help')); help.setAttribute('aria-label', 'Keyboard shortcuts'); bar.append(help);
@@ -89,6 +139,14 @@
   function section(title) { const node = element('section', 'triage-section'); node.append(element('h3', '', title)); return node; }
   function resetViewportScroll() { flowboard.scrollLeft = 0; flowboard.scrollTop = 0; }
   function focusReadable(card) { resetViewportScroll(); if (scale < 0.8) scale = 0.9; focusOnModel(card); }
+  function focusSourceLine(card, line) {
+    focusReadable(card);
+    const row = [...card.codeEl.querySelectorAll('[data-source-line]')].find(node => Number(node.dataset.sourceLine) === line);
+    if (!row) return;
+    const viewport = flowboard.getBoundingClientRect(), target = row.getBoundingClientRect();
+    panY += viewport.top + Math.min(140, viewport.height * .2) - target.top;
+    applyTransform(); schedulePersist();
+  }
   const mappingLabel = value => ({ citation: 'report line', symbol: 'named symbol', description: 'description match', 'source-neighbor': 'source neighbor', reviewer: 'reviewer mapping' }[value] || 'source anchor');
   const stanceLabel = value => ({ supports: 'Supports claim', contradicts: 'Contradicts claim', context: 'Context only' }[value] || value);
   const profile = () => FlowboardReview.create(reviewEdits.triage || finding.triage);
@@ -98,7 +156,7 @@
     document.getElementById('triage-status').textContent = statusLabel(reviewEdits.status || finding.status || 'unreviewed') + ' · unsaved review';
   }
   function editProfile(action, redraw = false) {
-    const next = profile(); action(next); reviewEdits.triage = next; markDirty();
+    const previous = profile(), next = structuredClone(previous); action(next); FlowboardClaims.reconcile(previous, next); reviewEdits.triage = next; markDirty();
     if (evidencePreview) { const current = next.evidence.find(item => item.id === evidencePreview.evidence.id); evidencePreview = current ? { ...evidencePreview, evidence: current } : null; }
     redrawEdges(); if (redraw) renderDrawer();
   }
@@ -122,11 +180,11 @@
   }
   function renderDrawerContent() {
     document.body.classList.toggle('triage-report-reading', drawerTab === 'report');
-    document.body.classList.toggle('triage-reviewing', drawerTab === 'review');
+    document.body.classList.toggle('triage-reviewing', ['review', 'claims'].includes(drawerTab));
     requestAnimationFrame(() => redrawEdges());
     drawer.replaceChildren();
     const tabs = element('div', 'triage-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Finding views');
-    for (const [tab, name] of [['findings', 'Findings'], ['brief', 'Overview'], ['flow', 'Flow'], ['review', 'Review'], ['report', 'Report']]) {
+    for (const [tab, name] of [['findings', 'Findings'], ['brief', 'Overview'], ['flow', 'Flow'], ['review', 'Review'], ['report', 'Report'], ['claims', 'Claims']]) {
       const item = button(name, () => show(tab), tab === drawerTab ? 'selected' : '');
       item.setAttribute('role', 'tab'); item.setAttribute('aria-selected', String(tab === drawerTab)); tabs.append(item);
       item.onkeydown = event => { if (['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); const nodes = [...tabs.children], index = nodes.indexOf(item), next = nodes[(index + (event.key === 'ArrowLeft' ? nodes.length - 1 : 1)) % nodes.length]; const name = next.textContent; next.click(); [...drawer.querySelectorAll('[role="tab"]')].find(node => node.textContent === name)?.focus(); } };
@@ -134,7 +192,7 @@
     drawer.append(tabs);
     if (drawerTab === 'help') {
       const help = section('Keyboard shortcuts');
-      for (const line of ['Alt+1…5: Findings, Overview, Flow, Review, Report', 'Alt+Left / Right: source inspection back / forward', 'Ctrl/Cmd+S in Review: save review', 'Escape: close panel; unsaved edits remain', 'Resize divider: Left / Right arrows; Home resets width']) help.append(element('p', '', line));
+      for (const line of ['Alt+1…6: Findings, Overview, Flow, Review, Report, Claims', 'Alt+Left / Right: source inspection back / forward', 'Ctrl/Cmd+S in Review or Claims: save review', 'Escape: close panel; unsaved edits remain', 'Resize divider: Left / Right arrows; Home resets width']) help.append(element('p', '', line));
       help.append(element('p', 'triage-muted', 'Shortcuts do not navigate away while you type in an input. Native canvas shortcuts remain available.')); drawer.append(help); return;
     }
     if (drawerTab === 'findings') {
@@ -175,6 +233,7 @@
       })); context.append(actions);
     }
     if (drawerTab === 'brief') { renderBrief(); return; }
+    if (drawerTab === 'claims') { renderClaims(); return; }
     if (drawerTab === 'flow') {
       const overview = section('Source map overview');
       overview.append(element('p', 'triage-muted', finding.summary || 'Inspect the report and source before assessing this finding.'),
@@ -234,10 +293,15 @@
       original.append(element('h2', 'triage-report-title', finding.title || 'Selected finding'));
       const actions = element('div', 'triage-report-actions');
       actions.append(button(rawReport ? 'Reading view' : 'Raw text', () => { rawReport = !rawReport; renderDrawer(); }), button('Copy original', () => send('triage:copyReport')));
+      const fromSelection = button('Review selected text', () => { if (!reportSelection) { window.alert('Select one report statement first.'); return; } addClaim(reportSelection); });
+      fromSelection.disabled = readOnly; fromSelection.onmousedown = event => event.preventDefault(); actions.append(fromSelection);
       original.append(actions);
+      claimLinks(original);
       const value = report || finding.summary || 'No original report attached.';
-      if (rawReport) original.append(element('pre', 'triage-report-raw', value));
-      else original.append(FlowboardReport.render(document, value, reference => send('triage:openReference', reference)));
+      const body = rawReport ? element('pre', 'triage-report-raw', value) : FlowboardReport.render(document, value, reference => send('triage:openReference', reference));
+      original.append(body); reportSelection = '';
+      const captureSelection = () => { const selection = window.getSelection(); if (selection && !selection.isCollapsed && body.contains(selection.anchorNode) && body.contains(selection.focusNode)) reportSelection = selection.toString().trim(); else reportSelection = ''; };
+      original.addEventListener('mouseup', captureSelection); original.addEventListener('keyup', captureSelection);
       drawer.append(original);
       if (unresolved.length) { const missing = section('Unresolved citations'); for (const ref of unresolved) missing.append(element('p', 'triage-warning', `${ref.file}:${ref.line} — ${ref.reason}`)); drawer.append(missing); }
       return;
@@ -250,7 +314,9 @@
       node.value = Object.hasOwn(reviewEdits, name) ? reviewEdits[name] : Array.isArray(finding[name]) ? finding[name].join('\n') : finding[name] || (choices ? choices[0] : '');
       node.id = `triage-field-${name}`; const labelNode = element('label', '', label); labelNode.htmlFor = node.id;
       node.oninput = () => {
-        reviewEdits[name] = node.value; markDirty(); updateReadiness(); redrawEdges();
+        reviewEdits[name] = node.value;
+        if (name === 'expectedBehavior') editProfile(next => { for (const claim of next.claims) claim.state = 'unreviewed'; }); else markDirty();
+        updateReadiness(); redrawEdges();
       }; fields[name] = { node, array }; parent.append(labelNode, node);
     }
     function profileControl(name, label, parent) {
@@ -284,9 +350,9 @@
       const caption = element('div', 'triage-evidence-caption'); caption.append(element('strong', '', stanceLabel(item.stance)),
         button(editingEvidence === item.id ? 'Done' : 'Edit note', () => { editingEvidence = editingEvidence === item.id ? null : item.id; renderDrawer(); }),
         button('Remove', () => {
-          if (!window.confirm('Remove this evidence from the unsaved review? The saved draft changes only when you save.')) return;
+          if (!window.confirm('Remove this evidence and its claim links? Affected claim assessments become unreviewed. The saved draft changes only when you save.')) return;
           if (evidencePreview?.evidence.id === item.id) { evidencePreview = null; for (const card of cards.values()) card.el.classList.remove('triage-evidence-focus'); }
-          editProfile(value => { value.evidence = value.evidence.filter(entry => entry.id !== item.id); }, true);
+          editProfile(value => FlowboardClaims.detach(value, item.id), true);
         }));
       row.append(caption, button(item.source ? `${item.source.file}:${item.source.line}` : item.reference, () => inspectEvidence(item), 'triage-evidence-reference'),
         element('p', 'triage-evidence-note', item.note)); ledger.append(row);
@@ -400,7 +466,8 @@
     const hero = section('Finding overview'); hero.classList.add('triage-overview');
     hero.append(element('p', 'triage-eyebrow', `${statusLabel(value.status)}${dirtyReview ? ' · unsaved edits' : ''}`),
       element('h2', 'triage-report-title', value.title || 'Select a finding'), element('p', 'triage-brief-claim', value.summary || 'Read the original report to establish its claim.'));
-    const actions = element('div', 'triage-report-actions'); actions.append(button('Read report', () => show('report')), button('Edit review', () => show('review'))); hero.append(actions); drawer.append(hero);
+    const actions = element('div', 'triage-report-actions'); actions.append(button('Read report', () => show('report')), button('Review claims', () => show('claims')), button('Edit review', () => show('review'))); hero.append(actions); drawer.append(hero);
+    claimLinks(drawer);
     const behavior = section('What should happen / what the source does');
     for (const [label, text] of [['Intended rule', value.expectedBehavior], ['Observed behavior', value.actualBehavior]]) {
       const block = element('div', 'triage-brief-block'); block.append(element('strong', '', label), element('p', '', text || 'Not established yet.')); behavior.append(block);
@@ -464,13 +531,16 @@
   }
   function decorateCards() {
     const neighborhood = new Set([selectedCard]);
+    const claimCards = claimCardIds();
     if (spotlight && cards.has(selectedCard)) for (const edge of edges) { if (edge.from === selectedCard) neighborhood.add(edge.to); if (edge.to === selectedCard) neighborhood.add(edge.from); }
     for (const card of cards.values()) {
       card.el.classList.toggle('triage-selected-source', card.id === selectedCard);
-      card.el.classList.toggle('triage-dimmed', spotlight && cards.has(selectedCard) && !neighborhood.has(card.id));
+      card.el.classList.toggle('triage-dimmed', claimFocus && claimCards.size ? !claimCards.has(card.id) : spotlight && cards.has(selectedCard) && !neighborhood.has(card.id));
       const info = hints[card.id];
       if (!info) continue;
       decorateInline(card, info);
+      const claimLines = claimSources().filter(link => FlowboardInline.forSource([link.entry], info).length).map(link => link.entry.source.line);
+      card.codeEl.querySelectorAll('.code-line').forEach(row => row.classList.toggle('triage-claim-line', claimLines.includes(Number(row.dataset.sourceLine))));
       let row = card.el.querySelector('.triage-card-info');
       if (!row) {
         row = element('div', 'triage-card-info');
@@ -488,7 +558,7 @@
       }
       const badges = row.querySelector('.triage-card-evidence'); badges.replaceChildren();
       for (const item of FlowboardInline.forSource(profile().evidence, info)) {
-        const badge = button(`${stanceLabel(item.stance)} · L${item.source.line}`, () => inspectEvidence(item), `triage-evidence-badge ${item.stance}`); badge.title = item.note; badges.append(badge);
+        const badge = button(`${stanceLabel(item.stance).replace('claim', 'finding')} · L${item.source.line}`, () => inspectEvidence(item), `triage-evidence-badge ${item.stance}`); badge.title = item.note; badges.append(badge);
       }
       if (info.context) card.el.querySelector('.card-title').textContent = 'Source context';
     }
@@ -499,7 +569,7 @@
     select.value = value; return select;
   }
   function decorateInline(card, info) {
-    const key = `${token}:${editVersion}:${dirtyReview}:${inlineVisible}:${hintVersion}:${info.sourceHash}:${selectedCard || ''}:${[...cards.keys()].join(',')}`;
+    const key = `${token}:${editVersion}:${dirtyReview}:${inlineVisible}:${hintVersion}:${activeClaim}:${info.sourceHash}:${selectedCard || ''}:${[...cards.keys()].join(',')}`;
     if (card._triageInlineKey === key) return;
     card._triageInlineKey = key;
     card.el.querySelectorAll('.triage-inline-note,.triage-line-number,.triage-inline-unplaced,.triage-card-story').forEach(node => node.remove());
@@ -526,8 +596,12 @@
     for (const item of entries) {
       const kind = FlowboardInline.category(item), note = element('details', `triage-inline-note ${kind}`);
       note.dataset.evidenceId = item.id;
-      const caption = element('summary', '', `${FlowboardInline.categories[kind]} · L${item.source.line} · ${stanceLabel(item.stance)}${dirtyReview ? ' · unsaved' : ''}`);
+      const caption = element('summary', '', `${FlowboardInline.categories[kind]} · L${item.source.line} · ${stanceLabel(item.stance).replace('claim', 'finding')}${dirtyReview ? ' · unsaved' : ''}`);
       note.append(caption, element('p', '', item.note));
+      const claimLink = selectedClaim()?.evidence.find(link => link.evidenceId === item.id);
+      if (claimLink) {
+        const context = element('div', 'triage-inline-claim'); context.append(element('strong', '', `${claimLink.stance} selected claim`), element('p', '', claimLink.reason)); note.append(context);
+      }
       const actions = element('div', 'triage-inline-actions');
       actions.append(button('Open exact source', () => inspectEvidence(item)), button('Edit explanation', () => { editingEvidence = item.id; evidenceFilter = 'all'; show('review'); drawer.querySelector('[aria-label="Edit evidence explanation"]')?.focus(); })); note.append(actions);
       const row = byLine.get(item.source.line);
@@ -540,21 +614,32 @@
       }
       rememberDisclosure(note, `${card.id}:evidence:${item.id}`, true);
     }
-    if (selectedCard === card.id || !cards.has(selectedCard) && cards.values().next().value === card) {
-      const story = element('details', 'triage-card-story'); story.append(element('summary', '', 'Review story · claim, behavior, consequence'));
-      story.append(element('p', 'triage-story-caption', 'Finding-level reading outline from supplied fields. These bullets do not establish execution order or bug validity.'));
+    if ((!selectedClaim() || claimCardIds().has(card.id)) && (selectedCard === card.id || !cards.has(selectedCard) && cards.values().next().value === card)) {
+      const claim = selectedClaim(), story = element('details', 'triage-card-story'); story.append(element('summary', '', claim ? 'Selected claim · evidence and reasoning' : 'Review story · claim, behavior, consequence'));
+      story.append(element('p', 'triage-story-caption', 'Reviewer argument from supplied fields. These bullets do not establish execution order or bug validity.'));
       const list = element('ul');
-      for (const item of FlowboardInline.story(currentFinding())) { const row = element('li'); row.append(element('strong', '', item.label), element('p', '', item.text)); list.append(row); }
+      const parts = claim ? [
+        { label: 'Intended rule', text: currentFinding().expectedBehavior || 'Not established.' },
+        { label: `Claim · ${claim.state}`, text: claim.text || 'Untitled claim' },
+        { label: 'Observed source behavior', text: claim.observed || 'Not established.' },
+        { label: 'Permissions / state', text: claim.conditions || 'Not established.' },
+        { label: 'Consequence / uncertainty', text: claim.consequence || 'Not established.' },
+        { label: 'Reviewer reasoning', text: claim.reason || 'No conclusion recorded.' },
+        ...(claim.questions || []).map(text => ({ label: 'Unresolved', text }))
+      ] : FlowboardInline.story(currentFinding());
+      for (const item of parts) { const row = element('li'); row.append(element('strong', '', item.label), element('p', '', item.text)); list.append(row); }
       if (!list.children.length) list.append(element('li', '', 'No description supplied. Read the report and add source-bound review notes.'));
       story.append(list);
-      const evidence = profile().evidence, currentHints = visibleHints();
+      const evidence = profile().evidence.filter(item => !claim || claim.evidence.some(link => link.evidenceId === item.id)), currentHints = visibleHints();
       const observations = evidence.filter(item => item.source && !FlowboardInline.placement(item, currentHints));
       const excluded = evidence.filter(item => item.source && FlowboardInline.placement(item, currentHints));
       const trail = element('div', 'triage-story-evidence');
       trail.append(element('strong', '', 'Source observations · reviewer argument, not execution order'));
       for (const item of observations) {
         const entry = element('div', 'triage-story-observation');
-        entry.append(button(`${stanceLabel(item.stance)} · ${item.source.file}:${item.source.line}`, () => inspectEvidence(item)), element('p', '', item.note)); trail.append(entry);
+        const link = claim?.evidence.find(link => link.evidenceId === item.id);
+        entry.append(button(`${stanceLabel(link?.stance || item.stance)} · ${item.source.file}:${item.source.line}`, () => inspectEvidence(item)), element('p', '', item.note));
+        if (link) entry.append(element('p', 'triage-muted', link.reason)); trail.append(entry);
       }
       if (!observations.length) trail.append(element('p', '', 'No current source-bound observations on this map. Add evidence after inspecting the source.'));
       if (excluded.length) trail.append(button(`${excluded.length} source observation(s) not placed — review why`, () => { evidenceFilter = 'all'; show('review'); }));
@@ -591,6 +676,7 @@
   const nativeRedraw = redrawEdges;
   redrawEdges = function() {
     decorateCards(); nativeRedraw();
+    const claimCards = claimCardIds();
     const visibleEdges = edges.filter(edge => (cards.has(edge.from) || notes.has(edge.from)) && (cards.has(edge.to) || notes.has(edge.to)));
     const paths = svg.querySelectorAll('.edge-line');
     paths.forEach((node, index) => {
@@ -598,7 +684,7 @@
       const meta = connections.find(x => x.from === edge?.from && x.to === edge?.to);
       const kind = meta?.kind || 'hypothesis';
       node.classList.add(kind === 'call' ? 'triage-call' : kind === 'state-dependency' ? 'triage-state' : 'triage-hypothesis');
-      node.classList.toggle('triage-dimmed', spotlight && cards.has(selectedCard) && edge?.from !== selectedCard && edge?.to !== selectedCard);
+      node.classList.toggle('triage-dimmed', claimFocus && claimCards.size ? !claimCards.has(edge?.from) || !claimCards.has(edge?.to) : spotlight && cards.has(selectedCard) && edge?.from !== selectedCard && edge?.to !== selectedCard);
       const title = document.createElementNS(SVG_NS, 'title'); title.textContent = `${kind}: ${meta?.reason || 'User-expanded/manual connection; verify source and runtime context.'}`; node.append(title);
     });
   };
@@ -631,6 +717,7 @@
       if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
       active = message.issueId; token = message.token; finding = message.finding; library = message.library || [];
       disclosureState.clear();
+      activeClaim = null; claimFocus = false; reportSelection = '';
       connections = message.connections || []; hints = message.hints || {}; report = message.reportText || '';
       warnings = message.warnings || []; unresolved = message.unresolved || []; git = message.git || {}; diagnostics = message.diagnostics || {};
       retrieval = message.retrieval || null; validation = message.validation || {}; rawReport = false;
@@ -662,7 +749,7 @@
       for (const card of cards.values()) card.el.classList.remove('triage-evidence-focus');
       const source = message.evidence.source;
       const card = source && [...cards.values()].find(card => hints[card.id]?.file === source.file && source.line >= hints[card.id].line && source.line <= hints[card.id].endLine);
-      if (card) { card.el.classList.add('triage-evidence-focus'); focusReadable(card); }
+      if (card) { card.el.classList.add('triage-evidence-focus'); focusSourceLine(card, source.line); }
       if (drawerTab === 'review') renderDrawer();
     }
     else if (message?.type === 'triage:reviewSaved' && message.issueId === active && message.token === token) {
@@ -680,16 +767,16 @@
   });
   window.addEventListener('keydown', event => {
     const typing = event.target.closest?.('input,textarea,select,[contenteditable="true"]');
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && drawerTab === 'review' && drawer.classList.contains('visible')) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && ['review', 'claims'].includes(drawerTab) && drawer.classList.contains('visible')) {
       event.preventDefault(); event.stopImmediatePropagation(); drawer.querySelector('.triage-save-row .primary')?.click(); return;
     }
     if (typing) return;
     if (event.key === 'Escape' && drawer.classList.contains('visible')) {
       event.preventDefault(); drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); redrawEdges(); bar.querySelector('button')?.focus();
-    } else if (event.altKey && !event.ctrlKey && !event.metaKey && ['1', '2', '3', '4', '5', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    } else if (event.altKey && !event.ctrlKey && !event.metaKey && ['1', '2', '3', '4', '5', '6', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault(); event.stopImmediatePropagation();
       if (event.key.startsWith('Arrow')) moveHistory(event.key === 'ArrowLeft' ? -1 : 1);
-      else show(['findings', 'brief', 'flow', 'review', 'report'][Number(event.key) - 1]);
+      else show(['findings', 'brief', 'flow', 'review', 'report', 'claims'][Number(event.key) - 1]);
     }
   }, true);
   window.addEventListener('beforeunload', () => { if (active) persistNow(); });

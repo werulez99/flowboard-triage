@@ -147,3 +147,31 @@ body.triage-drawer-open .triage-resize { display:block; }
 .triage-card-story p { margin:4px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .triage-card-story .triage-story-caption { color:#849caf; font-size:11px; margin-top:8px; }
 @media(max-width:850px) { #triage-title { min-width:0; } #triage-bar { gap:4px; } #triage-bar button { padding:4px; font-size:10px; } }
+/* Claim navigation emphasizes exact evidence locations, never guessed paths. */
+.triage-tabs { flex-wrap:wrap; }
+.triage-claims { overflow-wrap:anywhere; }
+.triage-claims h2 { margin:4px 0 10px; font-size:21px; letter-spacing:-.025em; }
+.triage-claims h3 { color:#b4cfdf; font-size:13px; margin:22px 0 12px; }
+.triage-claim-rule,.triage-claim-list { border-bottom:1px solid var(--border); padding-bottom:18px; }
+.triage-claim-select { display:block; width:100%; text-align:left; white-space:pre-wrap; overflow-wrap:anywhere; padding:12px!important; margin:9px 0; line-height:1.65; }
+.triage-claim-select small { display:block; margin-top:7px; font-size:11px; color:#9cafbc; }
+.triage-claim-select.active { border-color:#76adc8; background:#1b303d; }
+.triage-claims label { font-size:12px; line-height:1.6; color:#b9cbd7; }
+.triage-claims textarea { margin-top:6px; font-size:13px; min-height:80px; }
+.triage-claims button:not(.triage-claim-select) { margin:4px 5px 4px 0; }
+.triage-claim-evidence { margin:12px 0; padding:14px; border:1px solid #3b4d59; border-left:3px solid #7f9eaf; border-radius:7px; background:#19242c; }
+.triage-claim-evidence.supports { border-left-color:#deb27e; }
+.triage-claim-evidence.contradicts { border-left-color:#92c3a6; }
+.triage-claim-evidence strong { display:block; font-size:12px; color:#bed3e0; }
+.triage-claim-evidence button { text-align:left; overflow-wrap:anywhere; max-width:100%; }
+.triage-claim-evidence p { white-space:pre-wrap; font-size:13px; line-height:1.75; }
+.triage-drawer button:disabled { opacity:.5; cursor:default; }
+.triage-inline-claim { border-top:1px solid #476071; margin-top:12px; padding-top:9px; }
+.triage-inline-claim strong { font-size:11px; color:#bdd8e9; }
+.card-code .triage-claim-line { background:#478bb12b; box-shadow:inset 3px 0 #8ac9ed; }
+.triage-report-claims { margin:20px 0; padding-bottom:10px; border-bottom:1px solid var(--border); }
+.triage-claim-readiness { padding:10px 0; }
+.triage-rule-text { white-space:pre-wrap; line-height:1.75; font-size:14px; }
+.triage-rule-reference { font-size:12px; color:#a5bdcd; white-space:pre-wrap; }
+.triage-claim-edit { margin:15px 0; }
+.triage-claim-edit summary { cursor:pointer; color:#9dc4db; font-size:12px; }

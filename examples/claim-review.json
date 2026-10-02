@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "id": "demo-claim-review",
+  "findingId": "demo-claim-review",
+  "finding": {
+    "title": "Fictional counter: separate behavior from intended access",
+    "reportedSeverity": "Info",
+    "status": "insufficient-evidence",
+    "confidence": "low",
+    "summary": "An ordinary counter demo: inspect the addition separately from the question of who should be allowed to request it. This is not a vulnerability report.",
+    "expectedBehavior": "The counter is expected to accept additions. Its intended caller restrictions have not been independently specified.",
+    "actualBehavior": "The public entry calls an internal helper containing counter += amount. Inspect the source and intended rule before assessing either claim.",
+    "openQuestions": ["Which specification establishes the intended caller permissions?"],
+    "triage": {
+      "version": 1,
+      "actor": "Inspect the caller requirements on the public increment function.",
+      "decisionReason": "The demo intentionally leaves specification review unfinished. A source binding is not a validity verdict.",
+      "ruleOrigin": {"kind": "report", "reference": "Fictional demo description; no independent access specification supplied"},
+      "checks": [],
+      "evidence": [
+        {"id": "addition", "stance": "context", "category": "behavior", "note": "This statement adds the supplied amount to counter. It establishes a local state update, not whether the caller policy is intended.", "source": {"file": "src/Demo.sol", "line": 13}},
+        {"id": "caller-question", "stance": "context", "category": "question", "note": "The entry is external. Compare its surrounding implementation and any specification before deciding what caller restrictions should exist.", "source": {"file": "src/Demo.sol", "line": 8}}
+      ],
+      "claims": [
+        {
+          "id": "counter-addition",
+          "text": "The helper adds amount to the stored counter.",
+          "state": "unreviewed",
+          "observed": "The helper contains counter += amount.",
+          "conditions": "Inspect the ordinary call from increment and its supplied amount.",
+          "consequence": "An ordinary local counter update; no defect established.",
+          "reason": "This example supplies a source observation for review, not a completed assessment.",
+          "evidence": [{"evidenceId": "addition", "stance": "supports", "reason": "The addition statement bears on this narrow behavior claim."}],
+          "questions": []
+        },
+        {
+          "id": "intended-access",
+          "text": "Unrestricted increments are intended behavior.",
+          "state": "unresolved",
+          "observed": "The public entry and the internal update are visible; intent is a separate question.",
+          "conditions": "Caller policy needs specification review.",
+          "consequence": "Public access alone is neither proof of a bug nor proof of a deliberate design choice.",
+          "reason": "No independent specification is supplied in this fictional fixture.",
+          "evidence": [{"evidenceId": "caller-question", "stance": "context", "reason": "The declaration provides code context but does not establish intended policy."}],
+          "questions": ["What caller policy does the specification require?"]
+        }
+      ]
+    }
+  },
+  "cards": [
+    {"id": "entry", "file": "src/Demo.sol", "line": 8, "function": "increment", "description": "Ordinary public entry passing the supplied amount to the helper."},
+    {"id": "update", "file": "src/Demo.sol", "line": 12, "function": "_add", "description": "Updates the fictional counter; compare local behavior separately from intended access."}
+  ],
+  "connections": [
+    {"from": "entry", "to": "update", "kind": "call", "reason": "The source contains a direct internal call to _add(amount). This is not a validity or runtime reachability verdict."}
+  ]
+}

@@ -28,7 +28,7 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         if route == '/':
             body, kind = fixture['html'].encode(), 'text/html'
-        elif route in ['/native/flowboard.js', '/tool/triage.js', '/tool/report-view.js', '/tool/review-model.js', '/tool/inline-review.js']:
+        elif route in ['/native/flowboard.js', '/tool/triage.js', '/tool/report-view.js', '/tool/review-model.js', '/tool/inline-review.js', '/tool/claim-model.js', '/tool/claim-view.js']:
             folder = upstream / 'webview' if route.startswith('/native/') else root / 'extension/webview'
             body, kind = (folder / Path(route).name).read_bytes(), 'text/javascript'
         else:
@@ -124,7 +124,7 @@ try:
         assert page.locator('.triage-inline-note').count() == 1
         assert page.locator('.triage-inline-note').evaluate('node=>node.previousElementSibling.dataset.sourceLine') == '13'
         assert 'counter += amount' in page.locator('.code-line[data-source-line="13"]').inner_text()
-        assert 'contradicts claim' in page.locator('.triage-inline-note summary').inner_text().lower()
+        assert 'contradicts finding' in page.locator('.triage-inline-note summary').inner_text().lower()
         page.locator('.triage-inline-note summary').click()
         page.wait_for_function('!document.querySelector(".triage-inline-note").open')
         page.get_by_role('button', name='Notes on', exact=True).click()
@@ -233,7 +233,7 @@ try:
         positions = page.locator('.card').evaluate_all('nodes=>nodes.map(node=>({left:node.offsetLeft,width:node.offsetWidth}))')
         assert positions[0]['left'] + positions[0]['width'] < positions[1]['left']
         page.locator('.triage-card-story > summary').click()
-        assert 'Finding-level reading outline' in page.locator('.triage-card-story').inner_text()
+        assert 'Reviewer argument from supplied fields' in page.locator('.triage-card-story').inner_text()
         assert page.locator('.triage-card-story li').count() >= 2
         assert page.locator('.triage-story-observation').count() == 1
         page.locator('.triage-story-observation button').click()
@@ -326,9 +326,99 @@ try:
         page.evaluate('''() => { const card=[...cards.values()][0];card.clean+=String.fromCharCode(10);renderCodeBody(card);redrawEdges(); }''')
         assert page.locator('.triage-inline-note').count() == 0
         assert 'Inline source mapping unavailable' in page.locator('.triage-inline-unplaced').inner_text()
+        # Claim-level argument: checked line binding is separate from meaning.
+        claim_fixture = copy.deepcopy(fixture['message'])
+        claim_fixture.update({'issueId': 'claims-demo', 'token': 'claims-session'})
+        claim_fixture['finding'] = {**claim_fixture['finding'], 'status': 'insufficient-evidence',
+            'expectedBehavior': 'The fictional counter accepts ordinary additions.',
+            'triage': {'version': 1, 'checks': [], 'ruleOrigin': {'kind': 'specification', 'reference': 'Fictional demo specification'},
+                'evidence': [bound], 'claims': [
+                    {'id': 'addition', 'text': 'The helper adds amount to the counter.', 'state': 'supported',
+                     'observed': 'The helper writes counter += amount.', 'conditions': 'Normal internal call with amount.',
+                     'consequence': 'An ordinary counter update; no defect established.', 'reason': 'The statement matches the fictional source.',
+                     'evidence': [{'evidenceId': bound['id'], 'stance': 'supports', 'reason': 'This exact addition establishes the narrow source claim.'}], 'questions': []},
+                    {'id': 'unmapped', 'text': 'A separate claim with no source binding.', 'state': 'unreviewed', 'evidence': [], 'questions': []}
+                ]}}
+        page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))', claim_fixture)
+        page.locator('.triage-tabs').get_by_role('tab', name='Claims', exact=True).click()
+        page.locator('.triage-claim-select[data-claim-id="addition"]').click()
+        assert page.get_by_label('Claim statement', exact=True).input_value() == 'The helper adds amount to the counter.'
+        assert page.locator('.triage-claim-line').count() == 1
+        assert page.locator('.triage-claim-line').get_attribute('data-source-line') == '13'
+        assert 78 < page.locator('.triage-claim-line').bounding_box()['y'] < 300, 'Source focus targets the line, not the center of a potentially long function.'
+        assert page.locator('.card.triage-dimmed').count() == 1
+        assert 'supports selected claim' in page.locator('.triage-inline-claim').inner_text()
+        page.locator('.triage-card-story > summary').click()
+        assert 'Selected claim' in page.locator('.triage-card-story').inner_text()
+        assert 'This exact addition' in page.locator('.triage-story-observation').inner_text()
+        page.locator('.triage-claim-evidence').get_by_role('button', name='src/Demo.sol:13', exact=True).click()
+        assert page.evaluate('window.sent.findLast(x=>x.type==="triage:inspectEvidence").evidence.source.line') == 13
+        page.get_by_role('button', name='Copy review brief', exact=True).click()
+        copied = page.evaluate('window.sent.findLast(x=>x.type==="triage:copyBrief")')
+        assert copied['patch']['triage']['claims'][0]['state'] == 'supported'
+        assert copied['patch']['triage']['evidence'][0]['stance'] == 'contradicts', 'Claim stance does not rewrite the overall evidence stance.'
+        page.get_by_role('button', name='Show full map', exact=True).click()
+        assert page.locator('.card.triage-dimmed').count() == 0
+        page.get_by_role('button', name='Focus linked source', exact=True).click()
+        page.get_by_role('button', name='Arrange', exact=True).click()
+        page.locator('.triage-drawer').evaluate('node=>node.scrollTop=0')
+        page.get_by_role('button', name='Fit', exact=True).click()
+        page.screenshot(path=str(Path(args.output).with_name(Path(args.output).stem + '-claims.png')), full_page=True)
+        page.get_by_text('Edit claim explanation', exact=True).click()
+        page.get_by_label('Observed source behavior for this claim', exact=True).fill('Updated explanation of the ordinary addition.')
+        assert page.get_by_label('Claim review state', exact=True).input_value() == 'unreviewed'
+        assert 'unreviewed' in page.locator('.triage-claim-select[data-claim-id="addition"] small').inner_text()
+        page.keyboard.press('Control+s')
+        claim_save = page.evaluate('window.sent.findLast(x=>x.type==="triage:save")')
+        assert claim_save['issueId'] == 'claims-demo' and claim_save['patch']['triage']['claims'][0]['state'] == 'unreviewed'
+        page.get_by_label('Claim decision reason', exact=True).fill('A newer reason typed while the save was pending.')
+        page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))',
+                      {'type': 'triage:reviewSaved', 'issueId': claim_save['issueId'], 'token': claim_save['token'], 'editVersion': claim_save['editVersion'],
+                       'finding': {**claim_fixture['finding'], **claim_save['patch']}, 'library': claim_fixture['library']})
+        assert 'newer reason' in page.get_by_label('Claim decision reason', exact=True).input_value()
+        page.locator('.triage-claim-select[data-claim-id="unmapped"]').click()
+        assert page.locator('.triage-claim-line').count() == 0, 'Unmapped prose cannot borrow another claim source highlight.'
+        assert page.locator('.triage-card-story').count() == 0, 'An unbound claim must not attach its story to the previously selected function.'
+        assert 'No source binding is established' in page.locator('.triage-claim-detail').inner_text()
+        page.locator('.triage-tabs').get_by_role('tab', name='Report', exact=True).click()
+        page.locator('.triage-report p').filter(has_text='The public').evaluate('''node=>{
+          const range=document.createRange();range.selectNodeContents(node);
+          const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+          node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+        }''')
+        page.get_by_role('button', name='Review selected text', exact=True).click()
+        assert 'The public' in page.get_by_label('Claim statement', exact=True).input_value()
+        assert page.get_by_label('Claim review state', exact=True).input_value() == 'unreviewed'
+        assert page.locator('.triage-claim-line').count() == 0
+        assert page.locator('.triage-claim-select').count() == 3
+        page.get_by_role('button', name='Link selected evidence as context', exact=True).click()
+        assert page.locator('.triage-claim-evidence.context').count() == 1
+        assert page.get_by_label('Claim review state', exact=True).input_value() == 'unreviewed'
+        page.set_viewport_size({'width': 640, 'height': 900})
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        assert page.locator('.triage-claims').evaluate('node=>node.scrollWidth <= node.clientWidth')
+        page.locator('.triage-drawer').evaluate('node=>node.scrollTop=0')
+        page.screenshot(path=str(Path(args.output).with_name(Path(args.output).stem + '-claims-narrow.png')), full_page=True)
+        # Historical/off-map evidence and markup must not turn into source proof.
+        stale_claim = copy.deepcopy(claim_fixture)
+        stale_claim['token'] = 'claim-stale-session'
+        stale_claim['finding']['triage']['evidence'][0]['source']['sourceHash'] = 'f' * 64
+        stale_claim['finding']['triage']['claims'][0]['text'] = '<img src=x onerror="window.claimInjected=true"> Source review only.'
+        page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))', stale_claim)
+        page.locator('.triage-tabs').get_by_role('tab', name='Claims', exact=True).click()
+        page.locator('.triage-claim-select[data-claim-id="addition"]').click()
+        assert page.locator('.triage-claim-line,.triage-inline-note').count() == 0
+        assert page.locator('.triage-card-story').count() == 0
+        assert 'Source hash differs' in page.locator('.triage-claim-evidence').inner_text()
+        assert page.locator('.triage-claims img').count() == 0 and not page.evaluate('!!window.claimInjected')
+        stale_claim.update({'token': 'claim-readonly-session', 'readOnly': True})
+        page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))', stale_claim)
+        page.locator('.triage-tabs').get_by_role('tab', name='Claims', exact=True).click()
+        assert page.get_by_role('button', name='Add claim', exact=True).is_disabled()
+        assert page.get_by_role('button', name='Save review', exact=True).is_disabled()
         assert not errors, errors
         browser.close()
 finally:
     server.shutdown()
     server.server_close()
-print('Native visual smoke passed: exact-line notes; hidden comments/repeated statements; fail-closed mapping; plain-text rendering; placement diagnostics; retained disclosure state; navigable review story; measured arrangement and Fit bounds; function roles; overview/inspector/navigation; filters; preserved hashes; keyboard/save acknowledgments; pending-edit and session isolation; native Undo; report/source links; narrow layout.')
+print('Native visual smoke passed: claim selection and exact-line focus; independent claim/evidence stances; report selection; conservative claim reset; claim save races; narrow claim layout; exact-line notes; hidden comments/repeated statements; fail-closed mapping; plain-text rendering; placement diagnostics; retained disclosure state; navigable review story; measured arrangement and Fit bounds; function roles; overview/inspector/navigation; filters; preserved hashes; keyboard/save acknowledgments; pending-edit and session isolation; native Undo; report/source links; narrow layout.')
