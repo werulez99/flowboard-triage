@@ -1,0 +1,8 @@
+dist/
+vendor/
+node_modules/
+.flowboard/
+*.vsix
+*.zip
+*.call-graph.dot
+__pycache__/

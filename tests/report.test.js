@@ -1,0 +1,49 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { parseReport } = require('../extension/report');
+test('parse issue headings, structured fields and range citations', () => {
+  const text = '### [H-01] Test title\n\n**Severity**: High\n**Location**: glue/src/A.sol:12-14,25-30; src/B.sol:40\n\n**Summary/Description**\nA claim.\n\n### [M-02] Other\n**Severity**: Medium\n';
+  const issues = parseReport(text);
+  assert.equal(issues.length, 2); assert.equal(issues[0].fields.severity, 'High');
+  assert.equal(issues[0].fields.summarydescription, 'A claim.');
+  assert.deepEqual(issues[0].locations, [{ file: 'glue/src/A.sol', line: 12 }, { file: 'glue/src/A.sol', line: 25 }, { file: 'src/B.sol', line: 40 }]);
+});
+test('plain numbered issue headings and duplicate heading guards', () => {
+  assert.equal(parseReport('Issue 1: Hello\nText\nIssue 2: World\nText')[0].title, 'Hello');
+  const duplicates = parseReport('### [H-01] X\n### [H-01] Y');
+  assert.equal(duplicates[1].id, 'H-01-2'); assert.equal(duplicates[1].warnings.length, 1);
+  assert.throws(() => parseReport('unstructured prose'), /No findings/);
+});
+test('real pinned upstream source indexing maps harmless fixture without invoking Slither', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async () => {
+  const { analyze } = require('../extension/runner-adapter');
+  const { draftIssue } = require('../extension/report');
+  const root = path.resolve(__dirname, '../examples/project');
+  const { runner, result, diagnostics } = await analyze(process.env.FLOWBOARD_EXTENSION_PATH, root, { mode: 'source', slitherPath: '/never/run/this' });
+  const issue = parseReport(fs.readFileSync(path.join(__dirname, '../examples/report.md'), 'utf8'))[0];
+  const draft = draftIssue(issue, root, runner, result);
+  assert.equal(draft.request.cards.length, 2); assert.equal(draft.request.cards[0].function, 'increment');
+  assert.equal(draft.request.cards[1].function, '_add');
+  assert.deepEqual(draft.request.connections.map(x => [x.from, x.to]), [['source-1', 'source-2']]);
+  assert.equal(draft.request.finding.status, 'unreviewed'); assert.equal(diagnostics.mode, 'source');
+});
+test('re-import preserves edited drafts and unresolved citations', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async t => {
+  const os = require('node:os');
+  const p = require('../extension/protocol');
+  const { importReport } = require('../extension/report');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-import-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.cpSync(path.join(__dirname, '../examples/project'), root, { recursive: true });
+  const file = path.join(root, 'report.md');
+  fs.writeFileSync(file, fs.readFileSync(path.join(__dirname, '../examples/report.md'), 'utf8') + '\n**Extra**: src/Missing.sol:42\n');
+  const first = await importReport(file, root, process.env.FLOWBOARD_EXTENSION_PATH);
+  assert.equal(first.issues[0].unresolved.length, 1);
+  const relative = '.flowboard/findings/I-01.json';
+  const draft = p.readJson(path.join(root, relative)); draft.finding.summary = 'Human-edited evidence';
+  p.atomicJson(root, relative, draft);
+  const second = await importReport(file, root, process.env.FLOWBOARD_EXTENSION_PATH);
+  assert.equal(second.issues[0].draftPreserved, true);
+  assert.equal(p.readJson(path.join(root, relative)).finding.summary, 'Human-edited evidence');
+});

@@ -1,0 +1,40 @@
+{
+  "name": "flowboard-triage",
+  "displayName": "Flowboard Triage",
+  "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
+  "version": "0.6.1",
+  "publisher": "local",
+  "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
+  "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "main": "./extension.js",
+  "extensionKind": ["workspace"],
+  "extensionDependencies": ["anchabadze.solidity-flowboard"],
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": { "untrustedWorkspaces": { "supported": false } },
+  "contributes": {
+    "commands": [
+      { "command": "flowboardTriage.importReport", "title": "Flowboard Triage: Import Report" },
+      { "command": "flowboardTriage.report", "title": "Flowboard Triage: Open Findings" },
+      { "command": "flowboardTriage.refresh", "title": "Flowboard Triage: Refresh Source Map" },
+      { "command": "flowboardTriage.doctor", "title": "Flowboard Triage: Diagnose Setup" },
+      { "command": "flowboardTriage.submit", "title": "Flowboard Triage: Open Finding JSON" },
+      { "command": "flowboardTriage.process", "title": "Flowboard Triage: Process Pending Request" }
+    ],
+    "configuration": {
+      "title": "Flowboard Triage",
+      "properties": {
+        "flowboardTriage.analysisMode": {
+          "type": "string", "enum": ["source", "slither"], "default": "source",
+          "scope": "resource",
+          "description": "Source mode needs no compiler. Slither mode also runs the local project build; source navigation is heuristic in either mode."
+        },
+        "flowboardTriage.slitherPath": {
+          "type": "string", "default": "", "scope": "machine",
+          "description": "Absolute path to a Slither executable. Otherwise use the project's isolated .flowboard/tools/slither-venv, then PATH. No shell arguments."
+        }
+      }
+    }
+  }
+}

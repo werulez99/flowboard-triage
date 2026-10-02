@@ -1,0 +1,13 @@
+# Security and privacy
+
+Treat repositories, report text and extension packages as untrusted until reviewed. Open only trusted workspaces. Default import indexes source without running a compiler or model API. Optional Slither mode may execute project build configuration and produce build/graph files; use it only with suitable project trust and isolation.
+
+Report Markdown is formatted using DOM text nodes, never evaluated as raw HTML. Scripts/images and external/javascript link navigation are not enabled; source-reference buttons are checked against workspace containment and line bounds. Reading view is bounded at 200,000 characters; Copy original retains full finding text. Input JSON is bounded; source paths must resolve within the workspace; output directories cannot be symlinked out of the project. These are defense-in-depth controls, not a hardened sandbox against a hostile process concurrently mutating filesystem paths. The upstream extension itself is trusted code and its optional AI/CLI features have their own behavior.
+
+Findings, source references and reviewer judgments are sensitive. `.flowboard/` is local runtime data; keep it out of public repositories unless you explicitly intend to publish it. This package does not transmit reports to a model provider; your chosen coding assistant may do so according to its settings and policies.
+
+Evidence explanations, specification/test references and checkmarks are reviewer assertions. Source hashes and line checks bind an entry to local source text; they do not validate its interpretation, external references or bug validity. Evidence paths use the same workspace containment checks. Changed-source evidence is retained as needing re-review, not silently rebound. Copy review brief puts potentially sensitive report/review details on the system clipboard; review that text before sharing it.
+
+Local board snapshots, archived drafts/snapshots and assessment history may retain full source text or old report details after a fresh map replaces the view. They are not automatically redacted or erased. Only reviewed finding drafts with relative source paths should be considered for sharing. Keep the analyzed commit and disclosure permission explicit. A live-source change blocks review saving/expansion; stale snapshots are archived, not silently considered current evidence.
+
+Do not publish vulnerabilities or private engagement details in public bug reports. Until the project owner sets up a private GitHub reporting channel, arrange a private contact with the repository maintainer. A diagram or status `confirmed` does not replace independent source/runtime review.

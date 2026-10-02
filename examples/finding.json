@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "demo-counter",
+  "finding": {
+    "title": "Review the counter update flow",
+    "reportedSeverity": "Info",
+    "status": "unreviewed",
+    "confidence": "low",
+    "summary": "This is an ordinary source-navigation demo, not a validated bug.",
+    "expectedBehavior": "increment calls _add and increases counter.",
+    "actualBehavior": "To be checked against the source.",
+    "openQuestions": ["Are unrestricted counter increments intended?"],
+    "evidence": ["src/Demo.sol:8", "src/Demo.sol:12"]
+  },
+  "cards": [
+    { "id": "entry", "file": "src/Demo.sol", "line": 8, "function": "increment", "description": "Public counter entry. Passes the supplied amount to the internal helper; public access is a specification question, not a demonstrated bug." },
+    { "id": "update", "parentId": "entry", "file": "src/Demo.sol", "line": 12, "function": "_add", "description": "Adds the amount to stored counter state. This fictional fixture illustrates source comprehension, not an exploit.", "edgeKind": "call", "reason": "increment contains _add(amount). This demonstrates a direct internal call, not a bug." }
+  ]
+}

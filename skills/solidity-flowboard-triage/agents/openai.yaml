@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solidity Flowboard Triage"
+  short_description: "Review Solidity findings with linked source cards"
+  default_prompt: "Use $solidity-flowboard-triage to review this finding and show its source flow."

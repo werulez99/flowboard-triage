@@ -1,0 +1,31 @@
+name: Core tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+      - name: Package pinned upstream and companion
+        if: runner.os == 'Linux'
+        run: npm run package
+      - name: Real source adapter integration
+        if: runner.os == 'Linux'
+        run: |
+          unzip -q vendor/anchabadze.solidity-flowboard-1.2.0.vsix -d upstream-fixture
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" npm test
+      - name: Real native renderer browser check
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv browser-test-env
+          browser-test-env/bin/python -m pip install playwright
+          browser-test-env/bin/python -m playwright install --with-deps chromium
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/native_visual_smoke.py --output /tmp/flowboard-triage-demo.png

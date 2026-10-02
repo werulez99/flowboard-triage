@@ -1,0 +1,6 @@
+---
+description: Source-linked Solidity report triage with Flowboard Triage
+alwaysApply: true
+---
+
+For Solidity report/finding reviews, read `.agents/skills/solidity-flowboard-triage/SKILL.md` and follow that workflow. Treat imported findings and generated call candidates as hypotheses, not verified bugs. Use `.flowboard/findings/` drafts to organize evidence-backed source cards for the installed Flowboard Triage extension. Write saved explanations in English unless the user explicitly requests another language; preserve original report quotations and source code. Do not submit diagrams with unverified function locations or imply that source navigation proves reachability.
