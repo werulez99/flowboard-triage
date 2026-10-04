@@ -7,8 +7,7 @@
   else root.FlowboardInline = api;
 })(globalThis, function() {
   'use strict';
-  function lineMap(code, startLine, rendered) {
-    if (typeof code !== 'string' || !Number.isSafeInteger(startLine) || startLine < 1) return null;
+  function sourceLines(code, startLine) {
     const clean = [], numbers = []; let block = false;
     for (const [offset, line] of code.split('\n').entries()) {
       let out = '', comment = false, quote = '', i = 0;
@@ -25,22 +24,31 @@
       if (!out.trim() && comment && line.trim()) continue;
       clean.push(out); numbers.push(startLine + offset);
     }
-    return clean.join('\n') === rendered ? numbers : null;
+    return { code: clean.join('\n'), numbers };
   }
-  const categories = { behavior: 'Behavior', claim: 'Reported concern', impact: 'Consequence', guard: 'Counterevidence / guard', question: 'Open question' };
+  function cleanCode(code) {
+    if (typeof code !== 'string') throw new Error('Source code must be text.');
+    return sourceLines(code, 1).code;
+  }
+  function lineMap(code, startLine, rendered) {
+    if (typeof code !== 'string' || !Number.isSafeInteger(startLine) || startLine < 1) return null;
+    const result = sourceLines(code, startLine);
+    return result.code === rendered ? result.numbers : null;
+  }
+  const categories = { behavior: 'What this code does', claim: 'Why it matters to the report', impact: 'Impact', guard: 'Why the report may be incorrect', question: 'Still unclear' };
   function category(item) { return item.category || (item.stance === 'supports' ? 'claim' : item.stance === 'contradicts' ? 'guard' : 'behavior'); }
   function forSource(evidence, hint) {
     return (evidence || []).filter(item => item.source && !item.needsReview && item.source.sourceHash &&
-      item.source.sourceHash === hint.sourceHash && item.source.file === hint.file && item.source.line >= hint.line && item.source.line <= hint.endLine);
+      item.source.sourceHash === hint.sourceHash && item.source.file === hint.file && item.source.line >= hint.line && (item.source.endLine || item.source.line) <= hint.endLine);
   }
   function placement(item, hints) {
-    if (item.needsReview) return 'Historical evidence — re-review before placing on current code.';
-    if (!item.source) return 'Reference-only evidence — no source line to display.';
-    if (!item.source.sourceHash) return 'Unbound source — inspect and bind before displaying inline.';
+    if (item.needsReview) return 'Code has changed. Check this note again.';
+    if (!item.source) return 'This note links to a reference, not a code line.';
+    if (!item.source.sourceHash) return 'This code location has not been checked yet.';
     const sameFile = hints.filter(hint => hint.file === item.source.file);
-    if (!sameFile.length) return 'Source file is not on the visible map.';
-    if (!sameFile.some(hint => hint.sourceHash === item.source.sourceHash)) return 'Source hash differs from the visible map — re-review required.';
-    if (!sameFile.some(hint => forSource([item], hint).length)) return 'Source line is outside the functions currently on the map.';
+    if (!sameFile.length) return 'This file is not on the board.';
+    if (!sameFile.some(hint => hint.sourceHash === item.source.sourceHash)) return 'Code has changed. Check this note again.';
+    if (!sameFile.some(hint => forSource([item], hint).length)) return 'These lines are outside the functions on the board.';
     return null;
   }
   // A reading outline of supplied fields, not inferred execution or exploit steps.
@@ -48,11 +56,11 @@
     const blocks = [];
     if (finding.summary) blocks.push({ label: 'Reported claim', text: finding.summary });
     for (const text of (finding.preconditions || []).slice(0, 6)) blocks.push({ label: 'Stated condition', text });
-    if (finding.expectedBehavior) blocks.push({ label: 'Intended rule · review notes', text: finding.expectedBehavior });
-    if (finding.actualBehavior) blocks.push({ label: 'Source behavior · review notes', text: finding.actualBehavior });
-    if (finding.impact) blocks.push({ label: 'Stated consequence · requires review', text: finding.impact });
-    for (const text of (finding.openQuestions || []).slice(0, 6)) blocks.push({ label: 'Unresolved', text });
+    if (finding.expectedBehavior) blocks.push({ label: 'Expected behavior', text: finding.expectedBehavior });
+    if (finding.actualBehavior) blocks.push({ label: 'What the code does', text: finding.actualBehavior });
+    if (finding.impact) blocks.push({ label: 'Reported impact', text: finding.impact });
+    for (const text of (finding.openQuestions || []).slice(0, 6)) blocks.push({ label: 'Still unclear', text });
     return blocks;
   }
-  return { lineMap, categories, category, forSource, placement, story };
+  return { lineMap, cleanCode, categories, category, forSource, placement, story };
 });

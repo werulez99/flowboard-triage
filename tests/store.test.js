@@ -73,6 +73,25 @@ test('malformed snapshots are rejected before reaching the native renderer', t =
   assert.throws(() => store.writeBoard(root, 'I-01', { cards: [null], edges: [] }, 'source'), /card/);
   assert.throws(() => store.writeBoard(root, 'I-01', { cards: [], edges: [], camera: { scale: 'bad' } }, 'source'), /camera/);
 });
+test('cached native annotation shape is bounded without promoting model comments into evidence', t => {
+  const root = workspace(t), card = { id: 'source', fsPath: path.join(root, 'src/Demo.sol'), showAnnotations: true,
+    summary: 'An unverified optional explanation.', annotations: [{ line: 1, comment: 'A fictional observation.' }] };
+  const state = { cards: [card], edges: [], notes: [] };
+  store.writeBoard(root, 'native-comments', state, 'source');
+  assert.deepEqual(store.readBoard(root, 'native-comments').state, state, 'Valid legacy native comments remain usable and unchanged.');
+  for (const patch of [{ annotations: {} }, { annotations: [null] }, { annotations: [{ line: 1, comment: {} }] },
+    { annotations: [{ line: 0, comment: 'bad position' }] }, { annotations: [{ line: 1.5, comment: 'not a source row' }] },
+    { annotations: [{ line: 1, comment: 'x'.repeat(16001) }] }, { annotations: Array(2001).fill(card.annotations[0]) },
+    { summary: {} }, { summary: 'x'.repeat(64001) }, { showAnnotations: 'yes' }]) {
+    assert.throws(() => store.writeBoard(root, 'bad-comments', { ...state, cards: [{ ...card, ...patch }] }, 'source'), /cached native annotations/);
+  }
+  store.writeBoard(root, 'empty-comments', { ...state, cards: [{ ...card, summary: null, annotations: null, showAnnotations: false }] }, 'source');
+  const malformed = { state: { ...state, cards: [{ ...card, annotations: {} }] } };
+  p.atomicJson(root, '.flowboard/boards/bad-comments.json', malformed);
+  assert.throws(() => store.readBoard(root, 'bad-comments'), /cached native annotations/);
+  const backup = store.archiveBoardFile(root, 'bad-comments');
+  assert.deepEqual(p.readWorkspaceJson(root, backup).state.cards[0].annotations, {}, 'Original corrupt bytes remain recoverable, not silently repaired as current evidence.');
+});
 test('graph layout follows calls even when citations are in reverse order, and survives cycles', () => {
   const nodes = [{ id: 'callee', code: 'function callee() {}' }, { id: 'caller', code: 'function caller() { callee(); }' }];
   layoutGraph(nodes, [{ from: 'caller', to: 'callee' }]);

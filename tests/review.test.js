@@ -160,7 +160,7 @@ test('map refresh retains old evidence/hash as stale and resets review checkmark
 test('review brief contains both sides, version uncertainty and a reason rather than an invented validity score', () => {
   const value = finding(); value.triage.evidence.push({ ...entry('supports'), id: 'e-2', note: 'A reported claim needs comparison with the fictional source.' });
   const brief = review.brief(value); assert.match(brief, /contradicts:/); assert.match(brief, /supports:/);
-  assert.match(brief, /Source \/ report version/); assert.match(brief, /Decision explanation/); assert.doesNotMatch(brief, /\d+%/);
+  assert.match(brief, /Code and report version/); assert.match(brief, /Why this result/); assert.doesNotMatch(brief, /\d+%/);
 });
 test('direct UI saves enforce the same overall JSON size bound as imported requests', () => {
   const request = structuredClone(example);

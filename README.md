@@ -2,7 +2,7 @@
 
 A source-linked Solidity review workspace for developers and auditors, built on the original Solidity Flowboard canvas.
 
-Import an audit report, select a finding, inspect its function cards and connection rationale, and record an evidence-backed assessment with your coding assistant. Version **0.7.0** adds claim-by-claim review: intended rule, individual report statements, evidence for/against each statement and exact-line source focus. It retains the original Solidity Flowboard canvas engine, source highlighting, minimap, notes, linking and Undo, with readable inline explanations and a resizable companion panel.
+Import an audit report, read the code and compare the evidence for and against its findings. Version **0.14.0** prepares all imported findings in a durable background queue when a provider is enabled. Checked walkthroughs stay private until the entire report is ready. **Previous step** and **Next step** guide the original Solidity Flowboard function cards, exact lines and adjacent explanations; they do not replace the native graph. Navigation, notes, positions and Undo remain available. An AI interpretation is not a verified finding.
 
 This is an independent, MIT-licensed companion, not an official Anchabadze release. Source indexing is heuristic. A diagram helps you understand a claim; it does not establish vulnerability validity or runtime reachability.
 
@@ -10,46 +10,115 @@ This is an independent, MIT-licensed companion, not an official Anchabadze relea
 
 Download the installation ZIP from [GitHub Releases](https://github.com/werulez99/flowboard-triage/releases). The separate `-source.zip` contains the English public sources without installation binaries. This is a preview release: heuristic source navigation and reviewer judgments still need independent checking.
 
+For an unreleased checkout, run `npm run package` and use its versioned files in `dist/`. A locally built version is not necessarily published on GitHub Releases.
+
 1. Extract the release ZIP. Open your Solidity project in Cursor or VS Code.
-2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.7.0.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live.
+2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.14.0.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live. Installation does not reload an already running extension; reload the editor when your work is saved.
 3. Reload the editor window. Open only a workspace you trust.
-4. Run **Flowboard Triage: Import Report** and choose a `.txt` or `.md` report. The first mapped finding opens in the native canvas.
-5. **Overview** opens beside the source cards with the claim, behavior comparison, evidence balance and an unanswered review question. Choose **Inspect** on a card for its role, conditions and adjacent relationships. **Review** edits the assessment. **Flow** searches mapped functions and explains connections; **Report** formats the original text with checked source links. Missing maps open the Report explanation.
+4. Run **Flowboard Triage: Import Report** and choose a `.txt` or `.md` report. The findings list opens first. With a configured provider, every legitimate finding is queued without needing selection; indexing runs in a worker and is reused. Re-importing retains saved reviews.
+5. Choose **Walkthrough** or **Read code**. Until every finding is checked, a compact status dock shows actual progress or the reason preparation stopped; the existing code canvas stays available. When the report is published, the selected function opens at readable scale with its checked explanation. **Read report** retains the complete original text. Optional edits live in **More → Edit review**.
 6. For an existing import, run **Flowboard Triage: Open Findings**. For setup problems, run **Flowboard Triage: Diagnose Setup** and read the Output channel.
+
+If import appears to do nothing after choosing a file, check **Output → Flowboard Triage**. Version 0.13.1 and earlier mapped the entire report before opening it, which could block a large workspace for minutes. Version 0.13.2 imports the list first. The log records activation version/path, picker cancellation or failure, and completed import. It does not log report contents. A new package still needs a user-controlled window reload before an already active extension host uses it.
 
 Each finding has its own saved canvas. Switching replaces the visible map, rather than appending clusters, and isolates Undo. The original extension's independent canvas and saved state are not cleared or modified.
 
 No compiler, Slither, model API key or paid service is required for default source mode. The adapter is pinned to **Solidity Flowboard 1.2.0** because upstream has no stable external integration API. Another dependency version produces an explicit setup error.
 
+## Checked walkthroughs in 0.14
+
+The backend privately prepares every imported finding, including those never selected. A report is published only when every legitimate finding has a current checked artifact and no import ambiguity remains. Step 1 then opens on the native function canvas unless the researcher deliberately started exploring. **Previous step** and **Next step** reveal full functions, exact lines and adjacent actor/condition/input/state explanations. Typed scenario connections are separate from the static exploration graph.
+
+An unavailable provider, unresolved dependency or incomplete explanation produces a compact docked status, never a replacement page or partial generated guide. **Read report** and **Explore code** remain available. **Pause**, **Resume preparation** and **Cancel** retain accepted stages. The default allowance is 12 model requests shared by the entire report; explicit Resume adds another configured allowance. Large reports can need many allowances. Codex usage is recorded where available but does not have a dollar cap. The AI opinion separates **Preliminary assessment**, **Why**, **Decisive code**, and **What remains** from the saved researcher judgment. Source-based explanations are not debugger traces or proof. Import supports up to 1,000 findings within 4 MiB.
+
+See [Guided reading](docs/GUIDED-READING.md) for report links, keyboard controls, saved progress, freshness checks and verification limits.
+
+## Automatic source review
+
+Open **Statements → Enable AI code review** once for a trusted workspace, choose an already authenticated local **Codex CLI** or **Claude CLI**, and accept the data-sharing notice. Alternatively set `flowboardTriage.semanticProvider` to `codex` or `claude`. The default is `none`; enabling a provider sends each imported finding and relevant code excerpts to that provider under your account, within the shared report limit. No credentials are copied into project files. A remote workspace needs the CLI and authentication on that host.
+
+Import or reopening the workspace resumes the durable report queue. Each job saves generation, performs bounded source checks and challenges the explanation with the added code. A timeout resumes at the accepted stage. Compact checks and targeted repairs avoid copying the complete model again. Up to two further checks require newly obtained local code; no progress stops the loop. There is no prompt copying, JSON submission or manual graph assembly. A published finding reopens without another model call. Provider failure retains private drafts and usable raw code navigation.
+
+- **Claims** presents the expected property's basis, actor, implementation and conditions; exact supporting/opposing evidence; and the next unresolved question. Interpretations with matching quotes remain provisional, not source-verified conclusions.
+- **State transitions** connect predicted before/after state to source evidence and transaction boundaries. They are not an executed trace. Claim/source selection uses the same investigation; inline explanations and editor links select exact original statements.
+- **Source checks** obtain callers, callee candidates, symbols or identifier occurrences. Content-matched existing solc build-info supplies declaration references and branch context when available. External dispatch, storage aliases and deployment configuration can remain unresolved.
+- **Existing checks** let you inspect and explicitly run an indexed repository regression with fixed Forge arguments, local shape A, forks and FFI disabled. Results distinguish no tests, setup/compilation failure and observed assertions. This is trusted repository code, not a security sandbox. No new tests, exploit sequences or model-authored shell commands are generated.
+- **Correct a premise** preserves your correction as an unsupported researcher premise, reopens affected conclusions and reruns bounded review. Generated work saves independently of your manual **Review** assessment.
+
+Codex uses saved CLI authentication, read-only isolated execution and disabled tool features; a non-text action event rejects the response. It has a 240-second timeout per pass, not a dollar cap. Claude disables tools/MCP and has a 180-second timeout with `semanticBudgetUSD` (default $1, per pass). Account usage charges/limits still apply. Exact CLI versions can affect compatibility; authentication and schema errors are shown, not disguised as completed review.
+
+See [Investigation runtime and limits](docs/INVESTIGATION.md) for implementation entry points, schema, freshness and verification boundaries. This is a bounded source investigation of the selected allegation, not autonomous auditing, complete semantic verification or a deployment verdict.
+
 **0.5.1 compatibility fix:** fixes `CANNOT use API proposal: tunnels` when opening the native panel in Cursor. The adapter now preserves lazy API descriptors instead of eagerly spreading editor namespaces. No proposed APIs, development mode or special launch flags are required. Regression coverage includes frozen API objects and proposal-gated getters; the previous plain-object editor mocks did not model those getters. Reload the editor window after upgrading.
 
-## Claim-by-claim review in 0.7
+## Researcher workflow in 0.8
+
+Open a finding without preparing JSON or assembling a graph:
+
+1. **Overview** labels the allegation as unverified, opens source at readable scale and asks the next unresolved question. **Prepared reading context** quotes the mapped statements, lists call-site implementation boundaries and offers alternative source matches even when old citations happen to land in unrelated functions.
+2. **Statements** starts from a few report paragraphs, all unreviewed. Select a statement to read its evidence and counterevidence before opening optional editing forms. Unlinked report statements do not acquire guessed code explanations.
+3. **Inspect** opens a function's immediate context. Unknown implementations stay unresolved; competing targets remain alternatives. Adding a source candidate creates an independent card, not an invented execution edge. Calls are listed in source order, not a claim that all branches execute together.
+4. **+ Evidence** accepts an exact line or focused span with a source hash. Choose whether the note is a checked source observation, inference, report assertion, test reference or question. Report assertions/questions are context only. Test references do not claim a test was executed.
+5. **Back/Forward** restores the previous claim, panel and camera. Switching/reopening restores the reading context and checkpoints unfinished notes separately from a saved assessment. Source changes keep the camera in place, display **SOURCE CHANGED**, and require refresh/re-review.
+
+Important fixes: legacy draft identity now follows the selected filename/library ID; native header/modifier links use the same freshness/session checks as evidence links; source clicks navigate once; late saves and snapshots cannot overwrite a newer session. Refresh considers indexed dependencies, not just the original report anchors. Cached source text is never authoritative.
+
+An index-version upgrade can invalidate an older map even when Solidity has not changed. Previous layouts and notes are archived under `.flowboard/board-history/`; prior judgments are shown as historical until refreshed and reviewed again. This does not mean the reported bug was fixed. Saved assessments are not silently overwritten.
+
+The 0.8 mechanical workflow remains available without a provider. In 0.9, automatic generation/challenge is a separate, connected path described above; complete compiler dispatch analysis, automatic semantic proof and vulnerability reproduction are not implemented. **Ask AI** remains an optional clipboard handoff. An inaccessible or unsearched dependency is not evidence that a recovery route cannot exist. Lexical modifier/inheritance candidates are not compiler-proven authorization.
+
+The retained native **Code comments** action can use upstream's configured Claude CLI. Its output is an unverified explanation, kept separate from the evidence ledger. It is not a challenge-stage result or source proof; source navigation remains available if that optional action fails.
+
+### Reproduce the workflow checks
+
+With the pinned dependency unpacked and Playwright/Chromium installed:
+
+```sh
+FLOWBOARD_EXTENSION_PATH=/path/to/solidity-flowboard-1.2.0 npm test
+FLOWBOARD_EXTENSION_PATH=/path/to/solidity-flowboard-1.2.0 python scripts/native_visual_smoke.py --output /tmp/native.png
+FLOWBOARD_EXTENSION_PATH=/path/to/solidity-flowboard-1.2.0 python scripts/workflow_browser.py --output /tmp/workflow.png
+FLOWBOARD_EXTENSION_PATH=/path/to/solidity-flowboard-1.2.0 python scripts/workflow_browser.py --complex --width 1366 --height 768 --output /tmp/complex.png
+FLOWBOARD_EXTENSION_PATH=/path/to/solidity-flowboard-1.2.0 python scripts/usability_browser.py --output-prefix /tmp/usability
+```
+
+The workflow harness exercises the actual importer, source catalog, board controller, native renderer, source navigation, evidence binding/save, switching, controller recreation and source-change blocking. Editor IO is shimmed; this is not an Electron extension-host test. Its default cases are fictional and do not validate a real protocol. `--workspace /path/to/project --finding H-01` opens existing material read-only without writing that project's runtime state. Keep screenshots of private source private.
+
+`scripts/investigation_browser.py --workspace /path/to/project --finding H-01 --provider codex --record-investigation --output /tmp/investigation.json` exercises normal selection, the real configured provider, generated-draft persistence, exact evidence navigation, state transitions and reopening. `--run-test <existing-function>` additionally authorizes the host shim's confirmation for that selected regression; `--correction '<scope correction>'` exercises reassessment. Without `--record-investigation`, external-workspace runs do not save drafts. This harness still shims editor IO; its screenshots are the actual native webview, not proof of a full Cursor session.
+
+The `--complex` fixture imports a normal report against 16 ordinary functions with branches and shared helpers. It checks readable initial focus, alternative targets, history, optional whole-map Fit, and restored source/history after reopening. Set `FLOWBOARD_TRIAGE_EXTENSION_PATH` to an installed companion directory to exercise its exact modules and webview assets; the harness reports that path and version. Without it, the harness uses the checkout's `extension/`.
+
+The same 1366x768 fictional claim case put the first evidence entry at y=1388 in the v0.7 frontend and y=630 in the initial 0.8 reading-layout pass. These are observed layout coordinates, not a time-saving estimate or user-study score. The scripts generate current screenshots and assertions for light/dark/high-contrast and narrow views; `usability_browser.py --baseline-ref 12b5412` can render the older frontend for comparison.
+
+## Claim-by-claim review
 
 Read the argument before deciding whether the finding is valid:
 
-1. Establish the **intended rule** and its provenance. A rule asserted only by the report remains visibly unverified.
-2. Open **Claims**, or select one statement in **Report → Review selected text**. Ask your assistant to prepare a source-checked breakdown through **Ask AI**; import alone does not perform semantic review.
-3. Select a claim to focus its linked source. Only exact, hash-matching evidence lines are highlighted. Other cards dim; **Show full map** restores the complete map. No source binding is guessed from prose.
-4. Read the observed behavior, permissions/state, consequence, counterevidence and unanswered questions. Compact reading summaries come before optional editing fields. Inline notes and the function's **Selected claim** story explain why each linked statement matters.
+1. Establish the **Expected behavior** and what it is based on. A rule from the report alone remains unverified.
+2. Open **Statements** to inspect the report statements prepared on import/open, or select text in **Read report → Review selected text**. Code matches help discovery; they do not decide whether a statement is true.
+3. Select a statement to focus its linked code. Only exact, hash-matching evidence lines are highlighted. Other cards dim; **All functions** restores the overview. No line numbers are guessed from prose.
+4. Read what the code does, when it happens, opposing evidence and open questions. Explanations below the continuous code name both the issue and statement they relate to. Optional editing fields stay collapsed.
 5. Assess the individual statement as unreviewed, supported, contradicted, mixed or unresolved. One report statement may be supported while another remains unresolved. Evidence stance for a specific claim is separate from the overall finding stance.
-6. Set the overall finding assessment in **Review**, explain the decision and save. **Copy review brief** includes the individual claims, evidence links, provenance and gaps. Claim labels never automatically set the finding verdict.
+6. Set the overall issue result in **More → Edit review**, explain the decision and save. **Copy review brief** includes statements, references and open questions. Statement results never automatically set the issue result. Reading and automatic preparation do not require Save.
 
 Changing linked evidence, the intended rule or the claim explanation resets affected claim states to unreviewed. Removing evidence unlinks it without silently keeping a supported claim. Source-map refresh retains historical explanations/hashes while marking evidence and claims for re-review. Older drafts still work without a claim breakdown. Save guards, concurrent-edit protection and the Cursor compatibility fix remain in place.
 
-The bundled skill and AI handoff prompt describe the new schema. This extension does not run an AI model, execute exploits or generate missing attack sequences. The assistant and human reviewer supply the reasoning; the tool makes its source bindings and uncertainty inspectable.
+The bundled skill and AI handoff prompt describe the manual review schema. The optional 0.9 provider writes a separate, provisional investigation schema. Neither path executes exploits or generates missing attack sequences; the researcher remains responsible for the final assessment.
 
 Try the fictional example: open `examples/project` as the editor workspace, run **Flowboard Triage: Open Finding JSON**, and select `examples/claim-review.json` from the bundle. It includes inline observations, a source-behavior claim and an unresolved specification question. It deliberately does not declare a bug.
 
-## Inline source explanations
+## Code explanations in 0.10
 
-Read short explanations directly between the original function's code lines. Each note has a distinct category: **Behavior**, **Reported concern**, **Consequence**, **Counterevidence / guard** or **Open question**. Category is not a verdict: the evidence retains its independent supports/contradicts/context stance.
+Read continuous Solidity, then expand **Explanations** below it. A small **Note** marker and line links open the relevant explanation without moving the camera. Notes explain what the code does, why it matters to the report and what is still unclear. They name the issue or statement they support or argue against; supporting a statement does not confirm a bug.
 
-- Click an original line number to start an exact-line note, or use **+ Evidence**. Notes can collapse, open the exact source or reopen their editor in Review.
-- Only evidence bound to the current source hash appears inline. Hidden comment lines have a separate labeled section; uncertain display mappings never attach a note to an approximate statement. Cached layouts cannot replace the displayed current source text.
-- **Notes on/off** controls clutter. **Arrange** spaces cards using their actual displayed dimensions; native Undo can revert the layout. Existing sticky notes are not moved.
-- Expand **Review story** under the selected function (initially the first card) for bullet points covering the supplied claim, conditions, intended/observed behavior, consequence and unanswered questions. This is finding-level context, not a synthesized execution or exploit sequence.
+- **Read code** is a deliberate return to 100% reading size. **All functions** is a separate overview and may use a smaller scale for a large board.
+- Function headers keep the name, file and line range visible. A compact location bar stays available when reading deeper lines. Code formatting is preserved; long lines scroll horizontally instead of shrinking the text.
+- Only notes matching the current file hash receive line markers. Hidden comment lines and display mismatches retain an exact editor link without guessed placement. The original native comment filter remains; generated AI commentary is moved below code and labeled as unverified.
+- Line links and note counts remain visible while explanations are collapsed. Changing tabs or opening a note does not move the camera. At narrow widths, **Read code** closes the sidebar without losing the selected statement.
+- **More** keeps native drawing, notes, search and other secondary actions available. **Arrange functions** uses displayed card dimensions; native **Undo** restores positions. Optional edits use **More → Add code note** on a function, a line number, or **Edit review**.
 
-The assistant/reviewer writes source-checked explanations; the extension displays them without invoking a model. Import alone does not generate trustworthy semantic annotations. Save Review to persist edits; opening another finding still protects unsaved work. Upgrading the extension requires Reload Window; the 0.5.1 Cursor API compatibility fix is retained.
+See [Reading-workbench changes and verification](docs/READING-WORKBENCH.md). Stored field names, IDs, enum values and protocol messages are unchanged. Existing report quotations and saved researcher text are not rewritten during an upgrade.
+
+Manual explanations come from the assistant/reviewer. Optional generated explanations are visibly provisional even when the extension checks their exact quotations. Import alone does not generate trustworthy semantic annotations. Save Review to persist manual assessment edits; automatic investigation drafts save separately. Opening another finding still protects unsaved work. Upgrading the extension requires Reload Window; the 0.5.1 Cursor API compatibility fix is retained.
 
 **0.6.1 refinements:** the review story links directly to current source observations; the Review ledger explains historical, unbound, off-map and mismatching-hash entries. Category and evidence stance appear together on each inline note. Function roles are readable on the cards, not only in tooltips. Collapsed notes remain collapsed while editing or toggling visibility, and connection geometry is recalculated after annotation layout changes. Save acknowledgments clear unsaved labels. AI skills default saved explanations to English; imported report text is preserved verbatim.
 
@@ -94,7 +163,7 @@ Import creates unreviewed source maps, not proven attack paths:
 - Candidate links, reviewer-established source calls and state relationships use different line styles and explanatory tooltips. Neither a source call nor Slither success proves that the finding is reachable or exploitable.
 - Missing files, stale hashes/revisions or unmapped findings remain visible with explanations; no fictitious call steps are inserted.
 
-A valid line in a newer checkout can still point at the wrong function. Verify the report revision and the claim even if all references map. Informational/design findings need not have an attack path. Description discovery is deterministic lexical retrieval, not AI reasoning or complete Solidity semantic analysis. Conditions shown in Flow are inspection hints, not a complete permissions/reachability proof. PDF import, reports without recognizable finding boundaries, complete semantic dispatch analysis, autonomous model processing of an entire report and exploit execution are not implemented.
+A valid line in a newer checkout can still point at the wrong function. Verify the report revision and the claim even if all references map. Informational/design findings need not have an attack path. Description discovery is deterministic lexical retrieval, not complete Solidity semantic analysis. Conditions in the raw exploration graph are inspection hints, not a permissions/reachability proof. PDF import, complete semantic dispatch analysis and exploit execution are not implemented. Ambiguous report sections block publication instead of disappearing from the count.
 
 For an existing import, use **Refresh source map** in its drawer or **Flowboard Triage: Refresh Source Map** after selecting a finding. It rescans the current checkout, archives the previous draft and preserves saved review fields. If changed source would invalidate a definitive previous assessment, it first asks for explicit consent to mark it unreviewed. An unsuccessful search preserves the previous draft and shows an explanation; it does not force-open the old map. Re-import alone preserves existing drafts and does not upgrade their generated anchors.
 
@@ -128,7 +197,7 @@ Existing skill/rule files are preserved. For an upgrade, review and merge the bu
 
 The assistant can refine card descriptions, connection reasons and structured evidence, then submit the saved draft. The **Flow** tab makes that explanation navigable. The **Review** tab distinguishes unreviewed, confirmed bug, invalid/false positive, design decision, insufficient evidence and already fixed. Evidence labels and checkpoint answers are reviewer judgments, not tool-verified verdicts. Reported severity is not independently validated.
 
-Unsaved review text survives drawer/tab changes. Switching or refreshing with unsaved edits asks for confirmation. Saving checks for concurrent edits to the JSON draft; an older form cannot silently overwrite an assistant's update. Review history stores the previous/current assessment, bounded by 100 entries and 4 MiB per finding.
+Unfinished review text is checkpointed locally and survives switching/reopening; it is **not** silently submitted as an assessment. Restoration requires matching draft and source-map fingerprints. Conflicting earlier text, including pending evidence, stays separately recoverable instead of overwriting a new delivery. Saving checks for concurrent edits to the JSON draft; an older form cannot silently overwrite an assistant's update. Review history stores the previous/current assessment, bounded by 100 entries and 4 MiB per finding.
 
 ## Saved state, revisions and privacy
 
@@ -138,9 +207,14 @@ Add `.flowboard/` to your project's ignore rules. It contains confidential repor
 | --- | --- |
 | `.flowboard/report.json` | Active report index and original finding text |
 | `.flowboard/findings/<id>.json` | Editable review draft with relative source paths |
+| `.flowboard/investigations/<id>.json` | Source-bound generated draft, scoped evidence, corrections, provider audit and existing-test observations |
+| `.flowboard/report-preparation.json` | Durable report jobs, stage checkpoints, shared usage and atomic publication manifest |
+| `.flowboard/report-preparation.lock.json` | Local worker ownership; interrupted work recovers after host restart |
+| `.flowboard/recovery/investigation-*.json` | Previous generated drafts when source/report context changes |
 | `.flowboard/request.json` | Latest delivery request to the editor |
 | `.flowboard/status.json` | Matching request ID and analyzing/ready/error state |
-| `.flowboard/boards/<id>.json` | Per-finding cards, layout, notes and camera |
+| `.flowboard/view-status.json` | Library selection progress, separate from delivery acknowledgment |
+| `.flowboard/boards/<id>.json` | Cards, layout, notes, camera, reading context and unfinished working copy |
 | `.flowboard/history/<id>.json` | Local assessment history |
 | `.flowboard/board-history/<id>/` | Archived snapshots when source/flow changed |
 | `.flowboard/draft-history/<id>/` | Previous editable drafts before map refresh |
@@ -213,6 +287,6 @@ The extension uses `local.flowboard-triage` as its sideloaded VSIX identity. A p
 
 ## Privacy and licensing
 
-The importer/renderer does not contact an AI provider. Your chosen coding assistant has its own data policy. Original Flowboard's optional AI annotations remain a separate, explicit action governed by upstream behavior; delayed annotation results are isolated to their finding session. Dependency downloads and optional pip installation use the network.
+Default source-only import/navigation does not contact an AI provider. Enabling `semanticProvider` prepares every imported finding in the background, sending its report text, bounded code, corrections and recorded experiment context through the configured authenticated CLI. The shared report allowance, provider data policies and account usage limits apply. Closing the webview does not cancel preparation; pausing or cancelling does. A stopped extension host cannot execute work and resumes from checkpoints when reopened. Private `.flowboard/` data is never a packaging input. Original Flowboard's optional AI annotations remain a separate explicit action; they do not become challenge evidence. Dependency downloads and optional pip installation use the network.
 
 Our code is MIT licensed. Solidity Flowboard is © Zurab Anchabadze, separately MIT licensed, redistributed unmodified with its license. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [SECURITY.md](SECURITY.md).

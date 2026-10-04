@@ -16,6 +16,8 @@ test('public release is English and excludes local translations, handoffs and ru
   assert.ok(files.includes('LICENSE')); assert.ok(files.includes('THIRD_PARTY_NOTICES.md'));
   assert.ok(files.includes('extension/webview/inline-review.js'));
   assert.ok(!files.some(name => /README\.bg|HANDOFF|^dist\/|^vendor\/|\.flowboard/.test(name)));
+  const baseline = require('../scripts/fixtures/quality-cases/frozen.json');
+  assert.doesNotMatch(baseline.baselineExtension, /[/\\]/, 'Public baseline metadata records the extension version, not a private machine path.');
 });
 test('release refuses credential-like data without printing its contents', t => {
   const root = fixture(t), token = 'gh' + 'p_' + 'x'.repeat(36);

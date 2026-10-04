@@ -17,6 +17,18 @@ test('plain numbered issue headings and duplicate heading guards', () => {
   assert.equal(duplicates[1].id, 'H-01-2'); assert.equal(duplicates[1].warnings.length, 1);
   assert.throws(() => parseReport('unstructured prose'), /No findings/);
 });
+test('reports above the former 300-finding limit remain individually addressable', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async t => {
+  const os = require('node:os'), { importReport } = require('../extension/report'), store = require('../extension/store');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-large-report-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.cpSync(path.join(__dirname, '../examples/project'), root, { recursive: true });
+  const report = Array.from({length:301}, (_,i) => `## I-${i+1}: Demo.increment bookkeeping statement ${i+1}\n**Location**: src/Demo.sol:8\n\nCheck this report statement separately.\n`).join('\n');
+  fs.writeFileSync(path.join(root, 'report.md'), report);
+  await importReport(path.join(root, 'report.md'), root, process.env.FLOWBOARD_EXTENSION_PATH);
+  const library = store.library(root); assert.equal(library.length, 301);
+  assert.equal(library.at(-1).id, 'I-301'); assert.match(store.readDraft(root, 'I-301').finding.title, /301/);
+  assert.throws(() => parseReport(Array.from({length:1001}, (_,i) => `## I-${i+1}: Separate issue\n`).join('')), /1,000/);
+});
 test('real pinned upstream source indexing maps harmless fixture without invoking Slither', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async () => {
   const { analyze } = require('../extension/runner-adapter');
   const { draftIssue } = require('../extension/report');

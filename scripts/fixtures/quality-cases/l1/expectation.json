@@ -1,0 +1,7 @@
+{
+  "kind": "independently read fictional layout case, not part of the old held-out benchmark",
+  "beforeProviderRun": true,
+  "entry": "LongPreview::previewCompletedStepsWithAReadableLongSignature(uint256)",
+  "reading": "The named uint256 return starts at zero. All 24 if conditions require requestedThreshold >= a positive constant. At requestedThreshold=0 none executes, and the function returns zero. There are no calls, writes or modifiers. The alleged 24 return is contradicted for the stated input.",
+  "required": ["full original function", "conditions remain separate from unconditional execution", "zero result is a source prediction, not a debugger trace", "exact lines after scrolling and wrapping"]
+}

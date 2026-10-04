@@ -34,7 +34,7 @@ function matching(text, start, open = '(', close = ')') {
 const escaped = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function functionParts(code, name) {
   const clean = lexicalCode(code);
-  const keyword = ['constructor', 'receive', 'fallback'].includes(name) ? escaped(name) : `function\\s+${escaped(name)}`;
+  const keyword = ['constructor', 'receive', 'fallback'].includes(name) ? escaped(name) : `(?:function|modifier)\\s+${escaped(name)}`;
   const occurrences = [...clean.matchAll(new RegExp(`\\b${keyword}\\s*\\(`, 'g'))];
   if (occurrences.length !== 1) return null;
   const start = occurrences[0].index, paren = clean.indexOf('(', start), endParams = matching(clean, paren);
@@ -59,17 +59,22 @@ function guards(parts) {
   }
   return result;
 }
-function stateStatements(clean, contract) {
+function stateStatements(clean, contract, withSpans = false) {
   const result = [], open = clean.indexOf('{', contract.start);
   if (open < 0) return result;
   let depth = 0, start = open + 1;
-  const add = text => { if (!/^\s*(?:function|constructor|receive|fallback|modifier|struct|enum|event|error|using|type)\b/.test(text)) result.push(text); };
+  const add = (from, to) => {
+    const text = clean.slice(from, to);
+    if (!/^\s*(?:function|constructor|receive|fallback|modifier|struct|enum|event|error|using|type)\b/.test(text) && /\S/.test(text)) {
+      result.push(withSpans ? { text, start: from + text.search(/\S/), end: to } : text);
+    }
+  };
   for (let i = open + 1; i < contract.end; i++) {
     if (clean[i] === '{') {
-      if (depth === 0) add(clean.slice(start, i)); depth++;
+      if (depth === 0) add(start, i); depth++;
     } else if (clean[i] === '}') {
       depth--; if (depth === 0) start = i + 1;
-    } else if (clean[i] === ';' && depth === 0) { add(clean.slice(start, i + 1)); start = i + 1; }
+    } else if (clean[i] === ';' && depth === 0) { add(start, i + 1); start = i + 1; }
   }
   return result;
 }
@@ -77,4 +82,4 @@ function scanVariables(text, knownTypes, target) {
   const pattern = /\b([A-Za-z_$][\w$]*)\s+(?:(?:public|private|internal|external|constant|immutable|override|memory|storage|calldata|payable)\s+)*([A-Za-z_$][\w$]*)\s*[;=,)]/g;
   for (const match of text.matchAll(pattern)) if (knownTypes.has(match[1]) || /^(?:u?int\d*|bytes\d*|address|bool|string)$/.test(match[1])) target.set(match[2], match[1]);
 }
-module.exports = { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables };
+module.exports = { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables, matching };

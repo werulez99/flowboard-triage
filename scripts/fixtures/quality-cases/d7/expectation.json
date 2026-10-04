@@ -1,0 +1,9 @@
+{
+  "independentlyReadBeforeProvider": true,
+  "relevant": ["PageCounter::recordPage()", "PageCounter::_increase(address)", "PageCounter::pages (state)"],
+  "call": "recordPage passes msg.sender to the internal _increase reader argument",
+  "calculation": "pages[reader] += 2; checked Solidity addition, rollback on overflow",
+  "rule": "README.md requires exactly one additional page per successful call",
+  "scope": "Successful ordinary calls only; no deployed instance or financial impact",
+  "expected": "Supported source-level page-count defect; not a vulnerability or exploit test"
+}

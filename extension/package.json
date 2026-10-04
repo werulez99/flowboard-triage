@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.7.0",
+  "version": "0.14.0",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
@@ -25,6 +25,26 @@
     "configuration": {
       "title": "Flowboard Triage",
       "properties": {
+        "flowboardTriage.semanticProvider": {
+          "type": "string", "enum": ["none", "claude", "codex"], "default": "none", "scope": "resource",
+          "description": "Opt in to background source-only review of every finding in the imported report. Sends report sections and bounded code excerpts to your configured CLI account under a shared report request limit. Claude has a per-pass USD cap; Codex has a timeout, not a USD cap. Tools/hooks/apps are disabled. 'none' keeps offline code/report exploration usable."
+        },
+        "flowboardTriage.codexPath": {
+          "type": "string", "default": "", "scope": "machine",
+          "description": "Absolute Codex CLI path without arguments. Empty uses codex on PATH. Requires authenticated CLI supporting ignore-user-config, ephemeral and structured output."
+        },
+        "flowboardTriage.claudePath": {
+          "type": "string", "default": "", "scope": "machine",
+          "description": "Absolute Claude CLI executable path, without arguments. Empty uses claude on PATH. Requires an authenticated CLI with safe-mode support."
+        },
+        "flowboardTriage.semanticBudgetUSD": {
+          "type": "number", "default": 1, "minimum": 0.25, "maximum": 5, "scope": "resource",
+          "description": "Maximum Claude budget per request. Each preparation uses generation, challenge, at most one response repair and two new-code checks, subject to the shared report request limit. Resume retains accepted stages."
+        },
+        "flowboardTriage.reportRequestLimit": {
+          "type": "integer", "default": 12, "minimum": 1, "maximum": 10000, "scope": "resource",
+          "description": "Shared model-request allowance for the entire imported report, not each finding. Preparation pauses at this limit and saves accepted stages. Resume explicitly adds another allowance. Claude's per-request USD cap also applies; Codex account charges/limits still apply."
+        },
         "flowboardTriage.analysisMode": {
           "type": "string", "enum": ["source", "slither"], "default": "source",
           "scope": "resource",

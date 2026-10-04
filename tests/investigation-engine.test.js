@@ -1,0 +1,241 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const engine = require('../extension/investigation-engine');
+const { analyze } = require('../extension/runner-adapter');
+const { SourceCatalog } = require('../extension/source');
+const { loadCompiler } = require('../extension/compiler-context');
+const experiment = require('../extension/experiment');
+const native = process.env.FLOWBOARD_EXTENSION_PATH;
+
+async function fixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-investigation-test-'));
+  fs.cpSync(path.join(__dirname, '../examples/project'), root, { recursive: true });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const prepared = await analyze(native, root, { mode: 'source' });
+  const catalog = new SourceCatalog(root, prepared.runner, prepared.result);
+  const request = structuredClone(require('../examples/finding.json'));
+  request.findingId = 'ordinary-reading';
+  request.finding.summary = 'Review whether the ordinary increment helper subtracts the requested amount.';
+  const draft = engine.create({ findingId: request.findingId, request, catalog });
+  return { root, catalog, request, draft, findingId: request.findingId, current: () => true };
+}
+// Controlled model-output fixture: tests protocol plumbing, not AI quality and
+// not a real security finding. The live-provider walkthrough is separate.
+function response(input) {
+  const unit = input.sources.find(unit => unit.name === 'Demo::_add');
+  return {
+    property: { text: 'Ordinary counter increments should add the input amount.', basis: 'report-assumption', evidence: [] },
+    claims: [{ id: 'normal-counter', allegation: 'The helper subtracts the input.', actor: 'Any caller', entry: unit.id,
+      implementation: 'Demo::_add in the supplied fictional checkout', conditions: ['The ordinary checked addition succeeds.'],
+      requiredFacts: ['The operator would have to subtract instead of add.'], supportsIf: 'A subtraction operation.', contradictsIf: 'An addition assignment.',
+      status: input.phase === 'challenge' ? 'contradicted' : 'unresolved', reason: 'The exact statement is addition assignment, not subtraction.', evidence: ['addition'],
+      unknowns: ['No deployment context is supplied.'], nextQuestion: 'Does the report describe a different revision?' }],
+    evidence: [{ id: 'addition', claimId: 'normal-counter', sourceId: unit.id, line: 13, endLine: 13,
+      quote: '        counter += amount;', stance: 'contradicts', explanation: 'The += operator adds amount to counter; it contradicts subtraction for this specific helper.' }],
+    explanationReviews: input.phase === 'challenge' ? [{ evidenceId: 'addition', result: 'kept', reason: 'The quoted += statement is addition, not subtraction. This check does not establish a deployment or intended specification.', checkedSourceIds: [unit.id] }] : [],
+    transitions: [{ id: 'counter-update', claimId: 'normal-counter', label: 'Counter assignment', before: 'Stored counter value', after: 'Prior counter plus amount, if the checked operation succeeds', timing: 'within-transaction', conditions: ['No overflow'], evidence: ['addition'] }],
+    questions: [{ id: 'entry-caller', claimId: 'normal-counter', text: 'Which caller reaches this helper?', action: 'callers', target: unit.id, why: 'A helper alone is not a reachable entry point.' }],
+    conclusion: { status: 'contradicted-in-scope', text: 'The inspected fictional helper adds, not subtracts. No vulnerability verdict is made.', limitations: ['No deployed instance reviewed.'] }
+  };
+}
+
+test('normal investigation advances generation, bounded source checks and challenge; drafts reopen without a human verdict', { skip: !native }, async t => {
+  const context = await fixture(t), phases = [], invocations = [];
+  const result = await engine.advance({ ...context, provider: 'codex', publish: async draft => phases.push(draft.phase),
+    invoke: async input => {
+      invocations.push(input.phase);
+      const saved = engine.read(context.root, context.findingId);
+      assert.equal(saved.phase, input.phase === 'generate' ? 'generating' : 'challenging', 'Draft is saved BEFORE the provider is invoked.');
+      return { value: response(input), audit: { phase: input.phase, provider: 'controlled-test-fixture', outcome: 'completed' } };
+    } });
+  assert.deepEqual(invocations, ['generate', 'challenge']);
+  assert.deepEqual(phases, ['generating', 'checking-source', 'challenging', 'blocked']);
+  assert.equal(result.publication.ready, false, 'An old partial model response is saved privately, not published as a complete guide.');
+  assert.equal(result.claims[0].status, 'contradicted');
+  assert.equal(result.evidence[0].quoteVerified, true);
+  assert.equal(result.evidence[0].interpretationVerified, false);
+  assert.equal(result.transitions[0].observed, false);
+  assert.equal(result.conclusion.humanReviewed, false);
+  assert.equal(result.conclusion.status, 'insufficient-evidence');
+  assert.deepEqual(engine.read(context.root, context.findingId).evidence, result.evidence);
+  assert.equal(result.challengeChanges[0].before, 'unresolved');
+  assert.equal(result.challengeChanges[0].after, 'contradicted');
+  assert.ok(result.actions.some(action => action.kind === 'callers'));
+  assert.ok(result.actions.findIndex(action => action.kind === 'callers') < result.actions.findIndex(action => action.kind === 'code-completion'), 'Explicit questions take priority over generic helper completion within the same bound.');
+  assert.equal(result.actions.at(-1).outcome, 'context-already-available', 'An unchanged follow-up is recorded but does not trigger another provider request.');
+});
+test('the normal engine applies a compact challenge while retaining the unresolved scope and exact source check', { skip: !native }, async t => {
+  const context = await fixture(t), inputs = [];
+  const format = require('../extension/challenge-format'), { schema } = require('../extension/semantic-provider');
+  const result = await engine.advance({ ...context, provider: 'codex', publish: async () => {}, invoke: async input => {
+    inputs.push(input.phase);
+    let value = response(input);
+    if (input.phase === 'challenge') {
+      value.property.documentation = [];
+      const fields = format.schemaFor(schema).properties;
+      value = { mode: format.MODE, changes: Object.fromEntries(Object.keys(fields.changes.properties).map(key => [key, value[key] ?? null])),
+        causal: Object.fromEntries(Object.keys(fields.causal.properties).map(key => [key, key === 'checks' ? [] : null])), explanationReviews: value.explanationReviews };
+      // This intentionally old fixture has no causal explanation. It must fail
+      // the complete-result check instead of inheriting an invented ready route.
+    }
+    return { value, audit: { phase: input.phase, provider: 'controlled-delta-fixture', outcome: 'completed' } };
+  } });
+  assert.equal(result.phase, 'blocked');
+  assert.match(result.error, /incomplete explanation/);
+  assert.equal(result.evidence[0].source.line, 13);
+  assert.equal(result.claims[0].status, 'unresolved');
+  assert.deepEqual(inputs, ['generate', 'challenge', 'challenge'], 'The structural repair is still bounded.');
+});
+test('model references must quote exact supplied source; a valid path cannot validate a fabricated interpretation', { skip: !native }, async t => {
+  const context = await fixture(t), units = engine.makeContext(context.catalog, context.request).units;
+  const output = response({ sources: units, phase: 'challenge' });
+  output.evidence[0].quote = 'counter -= amount;';
+  assert.throws(() => engine.accept(output, context.draft, units), /does not quote/);
+  output.evidence[0].quote = '        counter += amount;'; output.evidence[0].line = 900;
+  assert.throws(() => engine.accept(output, context.draft, units), /outside/);
+  output.evidence[0].line = 13; output.claims[0].evidence = [];
+  assert.equal(engine.accept(output, context.draft, units).claims[0].status, 'unresolved');
+});
+test('source changes and finding switches suppress late generated evidence, including saved results', { skip: !native }, async t => {
+  for (const change of ['source', 'selection']) {
+    const context = await fixture(t); let active = true, release;
+    const phases = [];
+    const job = engine.advance({ ...context, provider: 'codex', current: () => active, publish: async draft => phases.push(draft.phase),
+      invoke: input => new Promise(resolve => { release = () => resolve({ value: response(input), audit: { phase: input.phase, outcome: 'completed' } }); }) });
+    await new Promise(resolve => setImmediate(resolve));
+    if (change === 'source') fs.appendFileSync(path.join(context.root, 'src/Demo.sol'), '\n// Changed while reading.\n'); else active = false;
+    release(); await job;
+    assert.deepEqual(phases, ['generating']);
+    const saved = engine.read(context.root, context.findingId);
+    assert.equal(saved.evidence.length, 0);
+    assert.equal(saved.runs.length, 0);
+  }
+});
+test('provider failure preserves preparation and a partial draft; never becomes a completed pass', { skip: !native }, async t => {
+  const context = await fixture(t);
+  const result = await engine.advance({ ...context, provider: 'codex', publish: async () => {}, invoke: async () => { throw new Error('Authentication expired'); } });
+  assert.equal(result.phase, 'blocked'); assert.match(result.error, /Authentication/);
+  assert.ok(result.sources.length); assert.equal(result.evidence.length, 0);
+  assert.equal(engine.read(context.root, context.findingId).phase, 'blocked');
+});
+test('one invalid model location gets one bounded evidence-linked repair, never host-guessed relocation', { skip: !native }, async t => {
+  const context = await fixture(t), inputs = [];
+  const draft = await engine.advance({ ...context, provider: 'codex', publish: async () => {}, invoke: async input => {
+    inputs.push(input); const value = response(input);
+    if (inputs.length === 1) value.evidence[0].quote = '        counter -= amount;';
+    return { value, audit: { phase: input.phase, provider: 'controlled-test-fixture', outcome: 'completed' } };
+  } });
+  assert.equal(inputs.length, 3, 'At most generation, one repair and challenge.');
+  assert.match(JSON.stringify(inputs[1].hostReview), /does not quote/);
+  assert.equal(draft.evidence[0].quote, '        counter += amount;');
+  assert.equal(draft.runs[0].resultAccepted, false);
+  assert.equal(draft.phase, 'blocked', 'Repairing a location alone does not satisfy the explanation gate.');
+});
+test('saved investigation revisions reject competing writes and tampered source excerpts', { skip: !native }, async t => {
+  const context = await fixture(t), draft = context.draft;
+  draft.sources = engine.makeContext(context.catalog, context.request).units;
+  draft.revision++; engine.write(context.root, draft);
+  const earlier = engine.read(context.root, context.findingId), later = engine.read(context.root, context.findingId);
+  later.revision++; later.phase = 'corrected'; engine.write(context.root, later);
+  earlier.revision++; earlier.phase = 'blocked';
+  assert.throws(() => engine.write(context.root, earlier), /another view/);
+  assert.equal(engine.read(context.root, context.findingId).phase, 'corrected');
+  later.sources[0].code = later.sources[0].code.replace('function', 'fallback');
+  assert.throws(() => engine.validateCurrent(context.catalog, later), /does not match/);
+  const packet = engine.modelSources(draft.sources);
+  assert.ok(packet[0].code.startsWith('8 | '));
+  assert.equal(packet[0].sourceHash, undefined, 'Compiler/source hashes are not repeated on every model-visible reference.');
+});
+test('researcher correction invalidates only its dependent scope and predictions without validating itself', { skip: !native }, async t => {
+  const context = await fixture(t), units = engine.makeContext(context.catalog, context.request).units;
+  Object.assign(context.draft, engine.accept(response({ sources: units, phase: 'challenge' }), context.draft, units));
+  context.draft.claims.push({ ...structuredClone(context.draft.claims[0]), id: 'another-scope' });
+  engine.correct(context.draft, { claimId: 'normal-counter', field: 'conditions', value: 'Review only the ordinary public entry point.' });
+  assert.equal(context.draft.claims[0].status, 'unresolved');
+  assert.equal(context.draft.claims[1].status, 'contradicted');
+  assert.equal(context.draft.transitions[0].needsReassessment, true);
+  assert.equal(context.draft.corrections[0].origin, 'researcher');
+  assert.equal(context.draft.corrections[0].independentlySupported, false);
+  assert.equal(context.draft.conclusion.status, 'insufficient-evidence');
+});
+test('a rejected retry preserves challenge-only evidence and records a completed but rejected model response', { skip: !native }, async t => {
+  const context = await fixture(t);
+  const draft = await engine.advance({ ...context, provider: 'codex', publish: async () => {}, invoke: async input => ({ value: response(input), audit: { provider: 'controlled-test-fixture', phase: input.phase, outcome: 'completed' } }) });
+  const extra = structuredClone(draft.sources.find(unit => unit.id === draft.evidence[0].sourceId));
+  extra.id = 'challenge-only-source'; draft.sources.push(extra);
+  draft.evidence[0].sourceId = extra.id; draft.claims[0].entry = extra.id;
+  draft.checkpoint.stage = 'challenge'; // A retry of an interrupted check, not a no-progress completed blocker.
+  draft.revision++; engine.write(context.root, draft);
+  const result = await engine.advance({ ...context, draft, provider: 'codex', publish: async () => {}, invoke: async input => {
+    const pending = engine.read(context.root, context.findingId);
+    assert.equal(pending.sources.some(unit => unit.id === extra.id), true, 'Previous evidence remains coherent during generation.');
+    const value = response(input); value.evidence[0].quote = 'fabricated statement';
+    return { value, audit: { provider: 'controlled-test-fixture', phase: input.phase, outcome: 'completed' } };
+  } });
+  assert.equal(result.phase, 'blocked');
+  const reopened = engine.read(context.root, context.findingId);
+  assert.equal(reopened.evidence[0].sourceId, extra.id);
+  assert.equal(reopened.runs.at(-1).outcome, 'completed');
+  assert.equal(reopened.runs.at(-1).resultAccepted, false);
+  const corrupted = structuredClone(reopened); corrupted.transitions[0].evidence = 'not an array';
+  fs.writeFileSync(path.join(context.root, '.flowboard/investigations', context.findingId + '.json'), JSON.stringify(corrupted));
+  assert.throws(() => engine.read(context.root, context.findingId), /state transition/);
+  const invalidLimits = { ...reopened, readingLimits: { length: 1 } };
+  fs.writeFileSync(path.join(context.root, '.flowboard/investigations', context.findingId + '.json'), JSON.stringify(invalidLimits));
+  assert.throws(() => engine.read(context.root, context.findingId), /code-reading limits/);
+});
+test('existing regression classifier distinguishes no tests, lint diagnostics, setup failure and observed assertions', () => {
+  assert.equal(experiment.classify('{}', 'No tests found', 0).outcome, 'no-tests-executed');
+  assert.equal(experiment.classify('', 'Compiler run failed', 1).outcome, 'compilation-failure');
+  const successful = JSON.stringify({ 'test/Ordinary.t.sol:Ordinary': { test_results: { 'test_increment()': { status: 'Success', kind: { Unit: { gas: 12345 } } } } } });
+  const observed = experiment.classify(successful, 'error: unresolved symbol in advisory source lint', 0);
+  assert.equal(observed.outcome, 'passed'); assert.equal(observed.tests[0].gas, 12345);
+  assert.equal(experiment.classify(JSON.stringify({ fixture: { test_results: { 'setUp()': { status: 'Failure', reason: 'setup reverted' } } } }), '', 1).outcome, 'setup-failure');
+  assert.throws(() => experiment.command({ kind: 'test-source', name: 'test_example', source: { file: '../../outside.t.sol' } }), /existing test/);
+  const args = experiment.command({ kind: 'test-source', name: 'Ordinary::test_increment', source: { file: 'test/Ordinary.t.sol' } });
+  assert.equal(args.at(-1), '^test_increment\\(');
+  assert.ok(!args.includes('--ffi'));
+});
+test('compiler artifacts require every input to match and map UTF-8 byte locations without inventing external dispatch', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-compiler-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'src')); fs.mkdirSync(path.join(root, 'out/build-info'), { recursive: true });
+  const source = '// Unicode: \u2192\ncontract Ordinary {\n function read() external {}\n}\n';
+  const base = 'interface IBase {}\n';
+  fs.writeFileSync(path.join(root, 'src/Ordinary.sol'), source); fs.writeFileSync(path.join(root, 'src/Base.sol'), base);
+  const start = Buffer.byteLength(source.slice(0, source.indexOf('function')));
+  const build = { solcVersion: 'fixture', input: { sources: { 'src/Ordinary.sol': { content: source }, 'src/Base.sol': { content: base } } }, output: { sources: {
+    'src/Ordinary.sol': { id: 0, ast: { id: 1, nodeType: 'SourceUnit', src: `0:${Buffer.byteLength(source)}:0`, nodes: [{ id: 2, nodeType: 'FunctionDefinition', name: 'read', visibility: 'external', src: `${start}:27:0` }] } }
+  } } };
+  fs.writeFileSync(path.join(root, 'out/build-info/fixture.json'), JSON.stringify(build));
+  const compiler = loadCompiler(root); assert.equal(compiler.available, true);
+  assert.equal(compiler.facts('src/Ordinary.sol', 3, 'read').declaration.line, 3);
+  fs.appendFileSync(path.join(root, 'src/Base.sol'), '// dependency changed\n');
+  assert.equal(loadCompiler(root).available, false);
+});
+test('compiler call facts retain mutually exclusive branch conditions and do not resolve member dispatch', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-branch-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'src')); fs.mkdirSync(path.join(root, 'out/build-info'), { recursive: true });
+  const source = 'contract Ordinary {\n function choose(bool yes) external { if (yes) { add(); } else { this.read(); } }\n function add() internal {}\n function read() external {}\n}\n';
+  fs.writeFileSync(path.join(root, 'src/Ordinary.sol'), source);
+  const span = (text, from = 0) => `${source.indexOf(text, from)}:${text.length}:0`;
+  const call = (expression, target, member = false) => ({ nodeType: 'FunctionCall', src: span(expression + '();'), expression: { nodeType: member ? 'MemberAccess' : 'Identifier', referencedDeclaration: target } });
+  const branch = { nodeType: 'IfStatement', src: span('if (yes) { add(); } else { this.read(); }'), condition: { nodeType: 'Identifier', src: span('yes', source.indexOf('if')) },
+    trueBody: { nodeType: 'Block', src: span('{ add(); }'), statements: [call('add', 3)] },
+    falseBody: { nodeType: 'Block', src: span('{ this.read(); }'), statements: [call('this.read', 4, true)] } };
+  const ast = { id: 1, nodeType: 'SourceUnit', src: `0:${source.length}:0`, nodes: [
+    { id: 2, nodeType: 'FunctionDefinition', name: 'choose', visibility: 'external', src: span('function choose(bool yes) external { if (yes) { add(); } else { this.read(); } }'), body: { nodeType: 'Block', statements: [branch] } },
+    { id: 3, nodeType: 'FunctionDefinition', name: 'add', visibility: 'internal', src: span('function add() internal {}') },
+    { id: 4, nodeType: 'FunctionDefinition', name: 'read', visibility: 'external', src: span('function read() external {}') }
+  ] };
+  fs.writeFileSync(path.join(root, 'out/build-info/fixture.json'), JSON.stringify({ input: { sources: { 'src/Ordinary.sol': { content: source } } }, output: { sources: { 'src/Ordinary.sol': { id: 0, ast } } } }));
+  const facts = loadCompiler(root).facts('src/Ordinary.sol', 2, 'choose');
+  assert.deepEqual(facts.calls.map(call => call.relationship), ['internal-call', 'declaration-reference']);
+  assert.deepEqual(facts.calls.map(call => call.conditions[0].branch), ['then', 'else']);
+  assert.deepEqual(facts.calls.map(call => call.conditions[0].expression), ['yes', 'yes']);
+});

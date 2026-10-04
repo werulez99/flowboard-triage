@@ -30,6 +30,44 @@ test('comments and string contents are not executable calls or definitions', () 
   const clean = lexicalCode(source); assert.equal(clean.length, source.length); assert.doesNotMatch(clean, /ghost|fake/);
   assert.match(clean, /real\("\s*"\)/); assert.equal(functionParts(source, 'ghost'), null);
 });
+test('GitHub-style colon-L citations and receiver calls keep their different identities', { skip: !native }, async t => {
+  const root = workspace(t);
+  write(root, 'pragma solidity ^0.8.20;\ncontract NamedHook {\n function inspect() external { manager.take(currency, recipient, fee); }\n}');
+  const c = await catalog(root);
+  const report = parseReport('### [I-01] NamedHook.inspect differs from its rule\n**Location**: src/Fixture.sol:L3-L3\n**Description**\nThe call manager.take(currency, recipient, fee) needs context.')[0];
+  assert.deepEqual(report.locations, [{ file: 'src/Fixture.sol', line: 3 }]);
+  const draft = draftIssue(report, root, c.runner, c.result, undefined, c);
+  assert.equal(draft.request.cards[0].function, 'inspect');
+  assert.ok(!draft.warnings.some(w => /No exact definition.*manager.take/.test(w)), 'A member expression is not searched as a declaration signature.');
+  const absent = parseReport('### [I-01] MissingHook.inspect differs from its rule\nDescription: inspect the swap fee in the manager.')[0];
+  const blocked = draftIssue(absent, root, c.runner, c.result, undefined, c);
+  assert.equal(blocked.request, null); assert.match(blocked.applicability.blockers[0], /MissingHook/);
+});
+test('unresolved modifier metadata cannot pass an undefined path into path.relative', { skip: !native }, async t => {
+  const root = workspace(t);
+  write(root, 'pragma solidity ^0.8.20;\ncontract Partial is AbsentBase {\n function act() external onlyOwner { }\n}');
+  const c = await catalog(root), fn = c.functions.find(fn => fn.contract === 'Partial' && fn.name === 'act');
+  const request = { finding: { title: 'Partial.act caller check', summary: 'Check the missing inherited guard.' }, cards: [{ id: 's', file: 'src/Fixture.sol', line: 3, function: 'act' }] };
+  const prepared = require('../extension/investigation').prepareInvestigation(c, request);
+  assert.ok(fn); assert.ok(prepared.contexts.length);
+  assert.ok(prepared.missing.some(text => /onlyOwner.*(guard|declaration)|guard.*onlyOwner/.test(text)), 'The unavailable guard remains explicit instead of crashing.');
+});
+test('an explicit local import disambiguates duplicate library names without proving external dispatch', { skip: !native }, async t => {
+  const root = workspace(t);
+  for (const side of ['right', 'other']) {
+    fs.mkdirSync(path.join(root, 'lib', side), { recursive: true });
+    fs.writeFileSync(path.join(root, 'lib', side, 'Maths.sol'), `pragma solidity ^0.8.20;\nlibrary Maths {\n function advance(uint256 x) internal pure returns(uint256) { return x + ${side === 'right' ? 1 : 2}; }\n}`);
+  }
+  fs.writeFileSync(path.join(root, 'remappings.txt'), '@right/=lib/right/\n');
+  write(root, 'pragma solidity ^0.8.20;\nimport {Maths} from "@right/Maths.sol";\ncontract Uses {\n function next(uint256 x) external pure returns(uint256) { return Maths.advance(x); }\n}');
+  const c = await catalog(root), fn = c.functions.find(fn => fn.contract === 'Uses');
+  const definitions = c.mentioned({ contract: 'Maths', name: 'advance' });
+  assert.equal(definitions.length, 2);
+  const candidates = c.relevantDefinitions(definitions, fn.file);
+  assert.equal(candidates.length, 1); assert.equal(c.relative(candidates[0].file), 'lib/right/Maths.sol');
+  assert.match(c.code(candidates[0]), /x \+ 1/);
+  const links = c.callLinks(fn); assert.equal(links[0].candidates.length, 1); assert.equal(c.relative(links[0].candidates[0].file), 'lib/right/Maths.sol');
+});
 test('no-line prose with a bare name discovers anchors plus actual source neighbors', { skip: !native }, async t => {
   const root = workspace(t), c = await catalog(root);
   const issue = parseReport('### [I-01] Counter update\nThe increment operation changes the Demo counter. No vulnerability claim.')[0];
@@ -173,7 +211,8 @@ test('changed source needs consent before resetting a definitive prior review', 
   const root = workspace(t), file = path.join(root, 'report.md');
   fs.writeFileSync(file, '### [I-01] Counter review\nThe increment operation updates the Demo counter.');
   await importReport(file, root, native);
-  const old = store.readDraft(root, 'I-01'); old.finding.status = 'invalid'; old.finding.evidence = ['src/Demo.sol:8 — fictional intended behavior']; store.writeDraft(root, 'I-01', old);
+  const old = store.readDraft(root, 'I-01'); delete old.finding.triage; // legacy assessment without structured review
+  old.finding.status = 'invalid'; old.finding.evidence = ['src/Demo.sol:8 — fictional intended behavior']; store.writeDraft(root, 'I-01', old);
   fs.appendFileSync(path.join(root, 'src/Demo.sol'), '\n// source changed\n');
   await assert.rejects(refreshFindingMap(root, 'I-01', native), error => error.code === 'REVIEW_RESET_REQUIRED');
   assert.equal(store.readDraft(root, 'I-01').finding.status, 'invalid');
@@ -197,7 +236,8 @@ test('an unsuccessful refresh does not replace or reset saved review work', { sk
 test('changed anchors need consent before carrying a definitive verdict onto a new map', { skip: !native }, async t => {
   const root = workspace(t), file = path.join(root, 'report.md');
   fs.writeFileSync(file, '### [I-01] Counter review\nThe increment operation updates the Demo counter.'); await importReport(file, root, native);
-  const old = store.readDraft(root, 'I-01'); old.finding.status = 'invalid'; old.finding.evidence = ['Fictional intended behavior'];
+  const old = store.readDraft(root, 'I-01'); delete old.finding.triage; // legacy assessment remains readable
+  old.finding.status = 'invalid'; old.finding.evidence = ['Fictional intended behavior'];
   old.cards.push({ id: 'reviewer-context', file: 'src/Demo.sol', line: 3, kind: 'context' }); store.writeDraft(root, 'I-01', old);
   await assert.rejects(refreshFindingMap(root, 'I-01', native), error => error.code === 'REVIEW_RESET_REQUIRED');
   assert.deepEqual(store.readDraft(root, 'I-01'), old);

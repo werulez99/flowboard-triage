@@ -22,6 +22,7 @@ test('line mapping matches the real pinned native comment filter', { skip: !proc
   const fn = vm.runInNewContext('(' + source.slice(start, source.indexOf('\n/**', start)) + ')');
   for (const raw of ['// heading\nfunction f() {}', '/* a\n\n b */\nf();\nf();', 'x/* comment */++; // tail\n\n// end', 'string s = "a\\\"//b";\r\n// tail\r\nx();']) {
     const clean = fn(raw), mapping = inline.lineMap(raw, 11, clean);
+    assert.equal(inline.cleanCode(raw), clean, 'Provider input is regenerated with exactly the pinned native comment filter.');
     assert.ok(mapping); assert.equal(mapping.length, clean.split('\n').length);
     assert.ok(mapping.every((line, i) => line >= 11 && (!i || line > mapping[i - 1])));
   }
@@ -42,16 +43,16 @@ test('review story labels supplied claims and unknowns without inventing interme
   const finding = { summary: 'Reported counter behavior.', impact: 'Stated consequence.', openQuestions: ['Which rule is intended?'] };
   const story = inline.story(finding);
   assert.deepEqual(story.map(item => item.text), [finding.summary, finding.impact, finding.openQuestions[0]]);
-  assert.match(story[1].label, /requires review/); assert.deepEqual(inline.story({}), []);
+  assert.match(story[1].label, /Reported impact/); assert.deepEqual(inline.story({}), []);
 });
 test('placement diagnostics distinguish stale, unbound, off-map and current evidence', () => {
   const hint = { file: 'src/Demo.sol', line: 8, endLine: 14, sourceHash: 'a'.repeat(64) };
   const entry = { id: 'e', stance: 'context', note: 'Counter update.', source: { file: hint.file, line: 13, sourceHash: hint.sourceHash } };
   assert.equal(inline.placement(entry, [hint]), null);
-  assert.match(inline.placement(entry, []), /not on the visible map/);
-  assert.match(inline.placement({ ...entry, needsReview: true }, [hint]), /Historical/);
-  assert.match(inline.placement({ ...entry, source: undefined }, [hint]), /Reference-only/);
-  assert.match(inline.placement({ ...entry, source: { ...entry.source, sourceHash: undefined } }, [hint]), /Unbound/);
+  assert.match(inline.placement(entry, []), /not on the board/);
+  assert.match(inline.placement({ ...entry, needsReview: true }, [hint]), /Code has changed/);
+  assert.match(inline.placement({ ...entry, source: undefined }, [hint]), /links to a reference/);
+  assert.match(inline.placement({ ...entry, source: { ...entry.source, sourceHash: undefined } }, [hint]), /not been checked/);
   assert.match(inline.placement({ ...entry, source: { ...entry.source, line: 99 } }, [hint]), /outside the functions/);
-  assert.match(inline.placement({ ...entry, source: { ...entry.source, sourceHash: 'b'.repeat(64) } }, [hint]), /hash differs/);
+  assert.match(inline.placement({ ...entry, source: { ...entry.source, sourceHash: 'b'.repeat(64) } }, [hint]), /Code has changed/);
 });

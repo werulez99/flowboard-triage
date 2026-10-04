@@ -128,7 +128,7 @@ function evidenceSources(root, triage, stamp = false) {
     const absolute = fs.realpathSync(path.resolve(realRoot, item.source.file));
     if (!contained(realRoot, absolute) || !absolute.endsWith('.sol') || !fs.statSync(absolute).isFile()) fail('Evidence source escapes the workspace or is not Solidity.');
     const source = fs.readFileSync(absolute, 'utf8');
-    if (item.source.line > source.split(/\r?\n/).length) fail(`Evidence line outside ${item.source.file}.`);
+    if ((item.source.endLine || item.source.line) > source.split(/\r?\n/).length) fail(`Evidence line outside ${item.source.file}.`);
     const hash = crypto.createHash('sha256').update(source).digest('hex');
     if (item.source.sourceHash && item.source.sourceHash !== hash) fail(`Stale evidence source: ${item.source.file}. Re-review the evidence, not just its hash.`);
     if (stamp) item.source.sourceHash = hash;

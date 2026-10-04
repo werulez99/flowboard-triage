@@ -31,3 +31,6 @@ jobs:
           browser-test-env/bin/python -m pip install playwright
           browser-test-env/bin/python -m playwright install --with-deps chromium
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/native_visual_smoke.py --output /tmp/flowboard-triage-demo.png
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/workflow_browser.py --output /tmp/flowboard-triage-workflow.png
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/workflow_browser.py --complex --width 1366 --height 768 --output /tmp/flowboard-triage-complex.png
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/usability_browser.py --output-prefix /tmp/flowboard-triage-usability

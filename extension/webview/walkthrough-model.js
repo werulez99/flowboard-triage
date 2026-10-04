@@ -1,0 +1,105 @@
+// Shared presentation policy. Exact references are location checks, not proof
+// of model reasoning. No provider calls, code search or researcher mutations.
+(function(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.FlowboardWalkthrough = api;
+})(globalThis, function() {
+  'use strict';
+  function paragraphs(report = '') {
+    const result = [];
+    const expression = /[^\r\n]+(?:\r?\n(?![ \t]*\r?\n)[^\r\n]+)*/g;
+    for (const match of report.matchAll(expression)) {
+      const start = match.index, end = start + match[0].length;
+      result.push({ id: `p-${start}-${end}`, start, end, text: report.slice(start, end) });
+    }
+    return result;
+  }
+  // Exact original text for the guided reader, including developer comments.
+  // Segment comments without interpreting comment-like strings as comments.
+  function originalLines(code) {
+    let block = false, quote = null, escaped = false;
+    return code.replace(/\r\n/g, '\n').split('\n').map(line => {
+      const pieces = []; let start = 0, comment = block;
+      const flush = end => { if (end > start) pieces.push({ text: line.slice(start, end), comment }); start = end; };
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i], next = line[i + 1];
+        if (block) { if (char === '*' && next === '/') { i++; flush(i + 1); block = false; comment = false; } continue; }
+        if (quote) { if (escaped) escaped = false; else if (char === '\\') escaped = true; else if (char === quote) quote = null; continue; }
+        if (char === '"' || char === "'") { quote = char; continue; }
+        if (char === '/' && next === '/') { flush(i); comment = true; break; }
+        if (char === '/' && next === '*') { flush(i); comment = true; block = true; i++; }
+      }
+      flush(line.length); return pieces;
+    });
+  }
+  function reportLink(report, reference) {
+    const paragraph = paragraphs(report).find(item => item.id === reference?.paragraphId);
+    if (!paragraph) return null;
+    const phrase = typeof reference.phrase === 'string' ? reference.phrase : '';
+    const offset = phrase ? paragraph.text.indexOf(phrase) : -1;
+    // Repeated phrases do not provide an unambiguous phrase-level reference.
+    return { ...paragraph, phrase: offset >= 0 && paragraph.text.indexOf(phrase, offset + 1) < 0 ? phrase : '',
+      phraseStart: offset >= 0 && paragraph.text.indexOf(phrase, offset + 1) < 0 ? paragraph.start + offset : null };
+  }
+  function exact(entry, unit) {
+    const source = entry?.source;
+    return !!(unit && source && source.file === unit.source.file && source.sourceHash === unit.source.sourceHash &&
+      Number.isSafeInteger(source.line) && Number.isSafeInteger(source.endLine) && source.line >= unit.source.line &&
+      source.endLine >= source.line && source.endLine <= unit.source.endLine && entry.quote ===
+      unit.code.split('\n').slice(source.line - unit.source.line, source.endLine - unit.source.line + 1).join('\n'));
+  }
+  function assessment(draft, stale = false) {
+    if (stale) return { result: 'unavailable', label: 'Code or report changed', why: 'Refresh the review before relying on these notes.', remaining: [] };
+    const states = { preparing: 'Preparing review', generating: 'Reading code', 'checking-source': 'Reading related code', challenging: 'Checking explanations',
+      'provider-required': 'AI review is off', blocked: 'AI review unavailable', corrected: 'Review needs updating' };
+    if (!draft || draft.phase !== 'ready') return { result: 'unavailable', label: states[draft?.phase] || 'Review not available',
+      why: draft?.phase === 'blocked' ? 'The review could not finish. Available code and saved notes are still accessible.' :
+        draft?.phase === 'provider-required' ? 'Enable the configured provider in Statements to prepare the automatic explanation.' : 'Code navigation is available while the review is prepared.', remaining: [] };
+    const proposed = draft.walkthrough?.assessment;
+    const evidence = draft.evidence || [], unresolved = draft.claims.some(item => item.status === 'unresolved' || item.needsReassessment);
+    let result = proposed?.result || 'unclear';
+    if (unresolved || result === 'valid' && (draft.property.basis === 'report-assumption' || !(draft.property.evidence?.length || draft.property.documentation?.length) || !evidence.some(item => item.stance === 'supports')) ||
+      result === 'invalid' && !evidence.some(item => item.stance === 'contradicts')) result = 'unclear';
+    if (!['valid', 'invalid', 'unclear'].includes(result)) result = 'unclear';
+    const ordered = [...draft.claims.filter(item => item.status === 'unresolved'), ...draft.claims.filter(item => item.status !== 'unresolved')];
+    const remaining = [...new Set([...(ordered.flatMap(item => item.unknowns || [])), ...(draft.conclusion?.limitations || [])])];
+    if (draft.readingLimits?.length) remaining.push(`The review reached its code-reading limit. Available locally but still unread: ${draft.readingLimits.join('; ')}.`);
+    if (proposed?.result && result !== proposed.result) remaining.unshift('The proposed issue result is not established across the checked paths and expected behavior.');
+    if (!proposed) remaining.unshift('This saved review has scoped statement results, but no separate assessment of the whole issue.');
+    return { result, label: { valid: 'Appears valid', invalid: 'Appears invalid', unclear: 'Still unclear' }[result],
+      why: `${proposed?.result && result !== proposed.result ? 'The proposed issue result still needs checking across its paths and expected rule. ' : ''}${draft.causal?.summary || proposed?.why || draft.conclusion?.text || 'Read the scoped evidence before deciding.'}`, remaining,
+      supports: evidence.find(item => item.id === proposed?.supportingEvidence && item.stance === 'supports') || evidence.find(item => item.stance === 'supports'),
+      contradicts: evidence.find(item => item.id === proposed?.opposingEvidence && item.stance === 'contradicts') || evidence.find(item => item.stance === 'contradicts') };
+  }
+  function build(draft, report) {
+    if (!draft || draft.phase !== 'ready' || !draft.publication?.ready || draft.publication.policy !== 'checked-explanation-v3' || !draft.causal) return null;
+    if (typeof draft.walkthrough?.reportText === 'string' && draft.walkthrough.reportText !== report) return null;
+    const units = new Map(draft.sources.map(item => [item.id, item]));
+    const valid = draft.evidence.filter(item => exact(item, units.get(item.sourceId)) && item.explanationReview &&
+      ['kept', 'repaired', 'added'].includes(item.explanationReview.result));
+    const steps = [];
+    for (const id of draft.causal.order) {
+      const event = draft.causal.events.find(item => item.id === id), entry = valid.find(item => item.id === event?.evidenceId);
+      const claim = entry && draft.claims.find(item => item.id === event.claimId && item.id === entry.claimId);
+      if (!claim || !units.get(entry.sourceId)?.complete) return null;
+      steps.push({ ...event, kind: 'code', claim, evidence: entry, unit: units.get(entry.sourceId), report: reportLink(report, event),
+        handoff: draft.causal.relationships.find(item => item.to === id && item.from === steps.at(-1)?.id), transitions: [] });
+    }
+    if (!steps.length) return null;
+    // No invented closing step: the last checked event stays beside its code.
+    return { key: [draft.findingId, draft.snapshot.sourceDigest, draft.snapshot.reportHash, draft.revision].join(':'), findingId: draft.findingId,
+      report, snapshot: draft.snapshot, steps, draft, summary: draft.causal.summary, scope: draft.causal.scope };
+  }
+  function relationship(previous, next, connections, cardFor) {
+    if (next?.handoff) return `${({call:'Call', callback:'Callback', return:'Return', branch:'Branch', data:'Data dependency', 'later-transaction':'Later transaction', context:'Context detour'})[next.handoff.kind]} · ${next.handoff.explanation}${next.handoff.binding ? ' ' + next.handoff.binding : ''}`;
+    if (!previous?.unit || !next?.unit) return 'No further execution route is established here.';
+    if (previous.unit.id === next.unit.id) return 'Another checked statement in the same function.';
+    const a = cardFor(previous.unit), b = cardFor(next.unit);
+    const edge = connections.find(item => item.from === a && item.to === b) || connections.find(item => item.from === b && item.to === a);
+    if (!edge) return 'Next reading location. A direct call between these functions has not been established.';
+    const from = edge.from === a ? previous.unit.name : next.unit.name, to = edge.to === b ? next.unit.name : previous.unit.name;
+    return `${edge.kind === 'call' ? `Call: ${from} → ${to}` : edge.kind === 'state-dependency' ? 'Shared data, not a call' : 'Possible connection; implementation or conditions need checking'}. ${edge.reason || ''}`;
+  }
+  return { paragraphs, reportLink, originalLines, exact, assessment, build, relationship };
+});

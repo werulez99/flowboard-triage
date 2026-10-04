@@ -3,7 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const p = require('./protocol');
-const { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables } = require('./solidity-text');
+const { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables, matching } = require('./solidity-text');
+const { functionSignature } = require('./report-content');
+function projectConfigurationStamp(root) {
+  return ['foundry.toml', 'remappings.txt'].map(name => {
+    try { return name + ':' + crypto.createHash('sha256').update(fs.readFileSync(path.join(root, name))).digest('hex'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; return name + ':absent'; }
+  }).join('|');
+}
 function sourceDocument(file) {
   const text = fs.readFileSync(file, 'utf8');
   const starts = [0];
@@ -20,6 +27,8 @@ function signature(code) {
 class SourceCatalog {
   constructor(root, runner, result) {
     this.root = fs.realpathSync(root); this.runner = runner; this.result = result;
+    this.projectConfigurationStamp = result.projectConfigurationStamp || projectConfigurationStamp(this.root);
+    this.analysisConfiguration = { mode: result.analysisConfiguration?.mode || 'source', slitherPath: result.analysisConfiguration?.slitherPath || '' };
     this.documents = new Map(); this.parts = new Map(); this.links = new Map(); this.functions = []; this.byKey = new Map(); this.methods = new Map(); this.candidateCache = new Map(); this.sourceStamps = new Map(result.sourceStamps || []);
     const seenDefinitions = new Set();
     for (const methods of result.overloadsByContract.values()) for (const overloads of methods.values()) for (const fn of overloads) {
@@ -42,6 +51,7 @@ class SourceCatalog {
     }
   }
   assertFresh() {
+    if (projectConfigurationStamp(this.root) !== this.projectConfigurationStamp) throw new Error('Project configuration changed since this flow was indexed. Refresh the investigation before relying on its source map.');
     for (const [file, stamp] of this.sourceStamps) {
       const stat = fs.statSync(file);
       if (stat.size !== stamp.size || stat.mtimeMs !== stamp.modified) throw new Error('Source changed since this flow was indexed. Reload the finding before expanding or saving a review.');
@@ -77,14 +87,140 @@ class SourceCatalog {
       const startLine = Math.max(1, card.line - 3), endLine = Math.min(document.lineCount, card.line + 7);
       return { name: 'Source context', kind: 'context', file: document.uri.fsPath, startLine, endLine, calls: [], memberCalls: [], modifiers: [], contract: null };
     }
-    const fn = this.functionAt(card.file, card.line, card.function);
+    const fn = this.functionAt(card.file, card.line, card.function) || this.modifierAt(card.file, card.line, card.function);
     if (!fn) throw new Error(`No unique function at ${card.file}:${card.line}. Use a context card for declarations/ambiguous minified source, or inspect the old revision.`);
     if (card.function && fn.name !== card.function) throw new Error(`Expected ${card.function}, found ${fn.name}. Source changed; re-check the line.`);
     const parts = this.anatomy(fn);
     if (!parts) throw new Error(`No unique Solidity declaration for ${fn.name} at ${card.file}:${card.line}; comments/string literals and overlapping declarations are not source functions.`);
     const scoped = this.scopeFor(fn), locals = new Map(); scanVariables(parts.declaration, this.knownTypes, locals);
     return { ...fn, ...this.runner.flowboardClassifyCallSites(scoped, fn.contract, this.runner.flowboardCallSites(parts.body), locals),
-      modifiers: fn.modifierNames ? this.runner.resolveModifiers(this.result, fn.contract, fn.modifierNames) : fn.modifiers || [] };
+      modifiers: this.modifiersFor(fn) };
+  }
+  modifiersFor(fn) {
+    if (!fn.modifierNames?.length) return fn.modifiers || [];
+    return fn.modifierNames.map(name => {
+      const definitions = this.modifierDefinitions(fn.contract, name, fn.file);
+      return definitions.length === 1 ? definitions[0] : { name, unresolved: true };
+    });
+  }
+  modifierDefinitions(contract, name, fromFile) {
+    this.importContext ||= new (require('./source-imports').ImportContext)(this);
+    const files = [...this.importContext.files(fromFile)], seen = new Set(); let level = [contract];
+    while (level.length) {
+      const candidates = [], next = new Set();
+      for (const type of level) {
+        if (seen.has(type)) continue; seen.add(type);
+        for (const base of this.result.contractBases.get(type) || []) next.add(base);
+        for (const file of files) {
+          for (const definition of this.localModifiers(file)) if (definition.contract === type && definition.name === name) candidates.push(definition);
+        }
+      }
+      if (candidates.length) return candidates; // competing inherited guards stay ambiguous
+      level = [...next];
+    }
+    return [];
+  }
+  localModifiers(file) {
+    this.localModifierCache ||= new Map();
+    if (this.localModifierCache.has(file)) return this.localModifierCache.get(file);
+    const doc = this.document(this.relative(file)), clean = lexicalCode(doc.text), definitions = [];
+    for (const owner of this.runner.flowboardContracts(clean)) {
+      for (const match of clean.slice(owner.start, owner.end).matchAll(/\bmodifier\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
+        const start = owner.start + match.index, paren = clean.indexOf('(', start), parameters = matching(clean, paren);
+        const open = clean.indexOf('{', parameters), end = matching(clean, open, '{', '}');
+        if (parameters < 0 || open < 0 || end < 0 || end > owner.end) continue;
+        definitions.push({ name: match[1], contract: owner.name, kind: 'modifier', file: doc.uri.fsPath,
+          startLine: clean.slice(0, start).split('\n').length, endLine: clean.slice(0, end).split('\n').length,
+          modifiers: [], calls: [], memberCalls: [] });
+      }
+    }
+    this.localModifierCache.set(file, definitions); return definitions;
+  }
+  modifierAt(file, line, name) {
+    const doc = this.document(file), local = this.localModifiers(this.document(file).uri.fsPath).filter(item => item.startLine === line && (!name || item.name === name));
+    if (local.length) return local.length === 1 ? local[0] : null;
+    const definitions = [];
+    for (const [contract, modifiers] of this.result.modifiersByContract || []) for (const [modifierName, value] of modifiers) {
+      const modifier = { ...value, name: modifierName };
+      if (typeof modifier.file !== 'string' || !Number.isSafeInteger(modifier.startLine)) continue;
+      if (path.resolve(modifier.file) !== doc.uri.fsPath || modifier.startLine !== line || name && modifier.name !== name) continue;
+      const code = doc.lines.slice(line - 1).join('\n'), clean = lexicalCode(code);
+      if (!new RegExp(`^\\s*modifier\\s+${escaped(modifier.name)}\\b`).test(clean)) continue;
+      const open = clean.indexOf('{'), end = matching(clean, open, '{', '}');
+      if (open < 0 || end < 0) continue;
+      definitions.push({ ...modifier, contract, kind: 'modifier', endLine: line + clean.slice(0, end).split('\n').length - 1, modifiers: [], calls: [], memberCalls: [] });
+    }
+    return definitions.length === 1 ? definitions[0] : null;
+  }
+  stateDeclarations(file, contract) {
+    const doc = this.document(file);
+    this.declarationCache ||= new Map();
+    if (!this.declarationCache.has(doc.uri.fsPath)) {
+      const clean = lexicalCode(doc.text), declarations = [];
+      for (const owner of this.runner.flowboardContracts(clean)) for (const span of stateStatements(clean, owner, true)) {
+        let end = span.text.length, depth = 0;
+        for (let i = 0; i < span.text.length; i++) {
+          if ('(['.includes(span.text[i])) depth++;
+          else if (')]'.includes(span.text[i])) depth--;
+          else if (span.text[i] === '=' && depth === 0) { end = i; break; }
+        }
+        const symbol = [...span.text.slice(0, end).matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].at(-1)?.[1];
+        if (!symbol || !span.text.trimEnd().endsWith(';')) continue;
+        declarations.push({ name: `${symbol} (state)`, symbol, contract: owner.name, kind: 'context', file: doc.uri.fsPath,
+          startLine: clean.slice(0, span.start).split('\n').length, endLine: clean.slice(0, span.end - 1).split('\n').length,
+          calls: [], memberCalls: [], modifiers: [] });
+      }
+      this.declarationCache.set(doc.uri.fsPath, declarations);
+    }
+    return this.declarationCache.get(doc.uri.fsPath).filter(item => !contract || item.contract === contract);
+  }
+  functionDeclarations(contract, name, fromFile) {
+    // The native index omits bodyless interface/abstract declarations. Read
+    // their exact signatures as context, never as executable implementations.
+    this.importContext ||= new (require('./source-imports').ImportContext)(this);
+    const files = fromFile ? this.importContext.files(fromFile) : this.sourceStamps.keys();
+    const found = [];
+    for (const file of files) {
+      const doc = this.document(this.relative(file));
+      if (!new RegExp(`\\b(?:contract|interface)\\s+${escaped(contract)}\\b`).test(doc.text)) continue;
+      const clean = lexicalCode(doc.text);
+      for (const owner of this.runner.flowboardContracts(clean).filter(item => item.name === contract)) {
+        for (const match of clean.slice(owner.start, owner.end).matchAll(new RegExp(`\\bfunction\\s+${escaped(name)}\\s*\\(`, 'g'))) {
+          const start = owner.start + match.index, paren = clean.indexOf('(', start), close = matching(clean, paren);
+          if (close < 0) continue;
+          let end = close + 1;
+          while (end < owner.end && clean[end] !== ';' && clean[end] !== '{') end++;
+          if (clean[end] !== ';') continue;
+          found.push({ name, contract, kind: 'context', contextKind: 'declaration', file: doc.uri.fsPath,
+            startLine: clean.slice(0, start).split('\n').length, endLine: clean.slice(0, end).split('\n').length,
+            calls: [], memberCalls: [], modifiers: [] });
+        }
+      }
+    }
+    return found;
+  }
+  resolveUnit(unit) {
+    if (unit.contextKind === 'declaration') {
+      const file = this.document(unit.source.file).uri.fsPath;
+      const candidates = this.functionDeclarations(unit.contract, unit.name.split('::').pop(), file).filter(item =>
+        item.file === file && item.startLine === unit.source.line && item.endLine === unit.source.endLine);
+      if (candidates.length !== 1) throw new Error('The interface declaration no longer matches this code. Recheck the note.');
+      return candidates[0];
+    }
+    if (unit.contextKind === 'state') {
+      const definitions = this.stateDeclarations(unit.source.file, unit.contract).filter(item =>
+        item.startLine === unit.source.line && item.endLine === (unit.declarationEndLine || unit.source.endLine) && `${item.contract}::${item.name}` === unit.name);
+      if (definitions.length !== 1) throw new Error('The saved declaration no longer matches this code. Recheck the note.');
+      return definitions[0];
+    }
+    if (unit.contextKind === 'excerpt') {
+      const doc = this.document(unit.source.file), endLine = unit.declarationEndLine || unit.source.endLine;
+      if (unit.source.line < 1 || endLine > doc.lineCount || endLine < unit.source.line) throw new Error('Code details are outside the current file.');
+      return { name: 'Code details', kind: 'context', file: doc.uri.fsPath, startLine: unit.source.line, endLine, contract: null, calls: [], memberCalls: [], modifiers: [] };
+    }
+    const fn = this.resolveCard({ file: unit.source.file, line: unit.source.line, function: unit.name.split('::').pop() });
+    if (unit.contract && fn.contract !== unit.contract || unit.signature && this.hints(fn).identity.signature !== unit.signature) throw new Error('The saved function identity does not match this contract and signature. Recheck the note; no similar function was substituted.');
+    return fn;
   }
   relative(file) { return path.relative(this.root, file).split(path.sep).join('/'); }
   code(fn) { return this.document(this.relative(fn.file)).lines.slice(fn.startLine - 1, fn.endLine).join('\n'); }
@@ -118,10 +254,41 @@ class SourceCatalog {
     // Never let another function's parameter/local variable overwrite this
     // function's contract state types, a limitation in the native flat index.
     const own = this.stateByFile.get(`${fn.file}:${fn.contract}`);
-    return own ? { ...this.stateResult, varTypesByContract: new Map(this.stateResult.varTypesByContract).set(fn.contract, own) } : this.stateResult;
+    this.importContext ||= new (require('./source-imports').ImportContext)(this);
+    this.structScope ||= new Map();
+    if (!this.structScope.has(fn.file)) {
+      const definitions = new Map();
+      for (const file of this.importContext.files(fn.file)) {
+        const clean = lexicalCode(this.document(this.relative(file)).text);
+        for (const match of clean.matchAll(/\bstruct\s+([A-Za-z_$][\w$]*)\s*\{/g)) {
+          const open = clean.indexOf('{', match.index), close = matching(clean, open, '{', '}');
+          if (close < 0) continue;
+          const fields = new Map([...clean.slice(open + 1, close).matchAll(/\b([A-Za-z_$][\w$.]*)(?:\[\])?\s+([A-Za-z_$][\w$]*)\s*;/g)].map(item => [item[2], item[1].split('.').pop()]));
+          const all = definitions.get(match[1]) || []; all.push(fields); definitions.set(match[1], all);
+        }
+      }
+      const fields = new Map();
+      for (const [name, definitionsForName] of definitions) {
+        const unique = new Set(definitionsForName.map(value => JSON.stringify([...value])));
+        // Competing imported structs remain unresolved. An unrelated test's
+        // project-global first match must never choose the receiver's type.
+        if (unique.size === 1) fields.set(name, definitionsForName[0]);
+      }
+      this.structScope.set(fn.file, fields);
+    }
+    return { ...this.stateResult, structFields: this.structScope.get(fn.file),
+      ...(own ? { varTypesByContract: new Map(this.stateResult.varTypesByContract).set(fn.contract, own) } : {}) };
   }
   named(name, files) {
     return this.functions.filter(fn => fn.name === name && (!files?.size || files.has(fn.file)) && this.anatomy(fn));
+  }
+  mentioned(mention, files) {
+    return this.named(mention.name, files).filter(fn => (!mention.contract || fn.contract === mention.contract) &&
+      (!mention.signature || functionSignature(this.anatomy(fn).header, fn.name) === mention.signature));
+  }
+  relevantDefinitions(candidates, from) {
+    this.importContext ||= new (require('./source-imports').ImportContext)(this);
+    return this.importContext.narrow(candidates, from);
   }
   candidates(name, contract, isSuper, argCount) {
     const key = JSON.stringify([name, contract, !!isSuper, argCount ?? null]);
@@ -133,6 +300,12 @@ class SourceCatalog {
     const type = qualified ? qualified[0] : contract, method = qualified ? qualified[1] : name;
     const resolved = this.runner.resolveCall(this.result, method, type, isSuper, true, argCount);
     if (!resolved) return [];
+    const permitted = new Set(), visitType = owner => { if (permitted.has(owner)) return; permitted.add(owner); for (const base of this.result.contractBases.get(owner) || []) visitType(base); };
+    visitType(type);
+    for (const implementer of this.result.implementers.get(type) || []) permitted.add(implementer);
+    // The native lookup can fall back to an unrelated global name. That is not
+    // an implementation of this receiver or an unqualified internal call.
+    if (!permitted.has(resolved.contract)) return [];
     if (argCount != null && resolved.paramCount != null && resolved.paramCount !== argCount) return [];
     const hasMethod = owner => (this.methods.get(`${owner}::${method}`) || []).some(fn => argCount == null || fn.paramCount === argCount);
     const inherited = new Set(), visited = new Set();
@@ -184,11 +357,25 @@ class SourceCatalog {
       const re = new RegExp(`\\b${escaped(site.name)}\\s*\\(`, 'g'); re.lastIndex = cursor;
       const occurrence = re.exec(parts.body); if (!occurrence) continue;
       cursor = occurrence.index + occurrence[0].length;
-      let name = site.name, arity = site.argCount, memberCandidates = null;
+      // Events, custom errors, type conversions and ABI helpers are not
+      // external implementation boundaries. Preserve real new/receiver calls.
+      const before = parts.body.slice(0, occurrence.index);
+      if (/\b(?:emit|revert)\s+(?:[\w$]+\.)?$/.test(before) || !site.isNew && !site.recv && this.knownTypes.has(site.name) ||
+          site.recv === 'abi' || ['bytes', 'string'].includes(site.recv) && site.name === 'concat') continue;
+      if (site.recv && ['wrap', 'unwrap'].includes(site.name)) {
+        this.valueTypes ||= new Set([...this.sourceStamps.keys()].flatMap(file => [...lexicalCode(this.document(this.relative(file)).text).matchAll(/\btype\s+([A-Za-z_$][\w$]*)\s+is\s+/g)].map(match => match[1])));
+        if (this.valueTypes.has(site.recv)) continue;
+      }
+      if (['vm', 'console', 'console2'].includes(site.recv) && /(?:^|\/)(?:test|tests|script|scripts|lib)\//.test(this.relative(fn.file))) continue;
+      // Namespaced struct construction is data construction, not an external
+      // call obligation. The type must actually exist in the parsed index.
+      if (site.recv && /^[A-Z]/.test(site.recv) && (this.result.structs.has(site.name) || this.result.structs.has(`${site.recv}.${site.name}`))) continue;
+      let name = site.name, arity = site.argCount, memberCandidates = null, receiverTypes = [];
       if (site.isNew) name = `${site.name}::constructor`;
       else if (site.recv && !['this', 'super'].includes(site.recv)) {
         memberCandidates = [];
-        for (const type of this.receiverTypes(fn, parts, scoped, site)) {
+        receiverTypes = this.receiverTypes(fn, parts, scoped, site);
+        for (const type of receiverTypes) {
           const direct = this.candidates(`${type}::${site.name}`, fn.contract, false, arity);
           if (direct.length) memberCandidates.push(...direct);
           else for (const library of new Set([...(this.result.usingFor.get(type) || []), ...this.result.usingForWildcard])) {
@@ -196,13 +383,18 @@ class SourceCatalog {
           }
         }
         memberCandidates = [...new Map(memberCandidates.map(value => [this.key(value), value])).values()];
-        if (!memberCandidates.length) continue;
         name = `${memberCandidates.length === 1 ? memberCandidates[0].contract : site.recv}::${site.name}`;
       }
-      const candidates = memberCandidates || this.candidates(name, fn.contract, site.recv === 'super', arity);
-      if (!candidates.length) continue;
+      const candidates = this.relevantDefinitions(memberCandidates || this.candidates(name, fn.contract, site.recv === 'super', arity), fn.file);
+      // Unknown external implementations are a visible boundary, not a reason
+      // to silently remove the call from a researcher's source context. Keep
+      // ordinary Solidity builtins out of this dependency list.
+      if (!candidates.length && !site.recv && /^(?:require|assert|revert|keccak256|sha256|ripemd160|ecrecover|addmod|mulmod|blockhash|gasleft|selfdestruct|type|address|payable|bool|string|bytes\d*|u?int\d*)$/.test(site.name)) continue;
       const line = fn.startLine + parts.clean.slice(0, parts.bodyStart + occurrence.index).split('\n').length - 1;
-      links.push({ name, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.recv ? site.recv + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates });
+      const target = candidates.length === 1 ? candidates[0] : null, targetHeader = target && this.anatomy(target)?.header;
+      const established = !site.recv && !site.isNew && target && target.contract === fn.contract && /\b(internal|private)\b/.test(targetHeader || '') && !/\bvirtual\b/.test(targetHeader || '') && !new RegExp(`\\b${escaped(site.name)}\\b`).test(parts.header.slice(parts.header.indexOf('(')));
+      links.push({ name, receiverTypes, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.recv ? site.recv + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates,
+        relationship: established ? 'call' : 'hypothesis', resolution: established ? 'direct-internal' : candidates.length > 1 ? 'ambiguous' : candidates.length ? 'declaration-candidate' : 'unresolved' });
     }
     this.links.set(key, links); return links;
   }
@@ -215,8 +407,8 @@ class SourceCatalog {
         if (matches.length !== 1) continue;
         const b = fns.findIndex(fn => fn.kind !== 'context' && fn.file === matches[0].file && fn.startLine === matches[0].startLine && fn.name === matches[0].name && fn.contract === matches[0].contract);
         if (b < 0 || a === b) continue;
-        connections.push({ from: cards[a].id, to: cards[b].id, kind: 'hypothesis',
-          reason: `${this.relative(fns[a].file)}:${site.line} contains ${site.expression}, resolving to ${matches[0].contract || ''}::${matches[0].name} at ${this.relative(matches[0].file)}:${matches[0].startLine}. Source call candidate; runtime reachability and finding relevance remain unreviewed.` });
+        connections.push({ from: cards[a].id, to: cards[b].id, kind: site.relationship,
+          reason: `${this.relative(fns[a].file)}:${site.line} contains ${site.expression}. ${site.relationship === 'call' ? 'Calls the non-virtual internal function' : 'Possible target'} ${matches[0].contract || ''}::${matches[0].name} at ${this.relative(matches[0].file)}:${matches[0].startLine}. ${site.relationship === 'call' ? 'Check guards and branches; this is not a complete transaction sequence.' : 'The running implementation and branch remain to check.'}` });
       }
     }
     return connections.filter((edge, index, all) => all.findIndex(other => other.from === edge.from && other.to === edge.to) === index);
@@ -236,7 +428,9 @@ class SourceCatalog {
     const checked = connections.map(edge => {
       const from = byId.get(edge.from), to = byId.get(edge.to);
       const exists = from && to && from.kind !== 'context' && to.kind !== 'context' && this.callLinks(from).some(site => site.candidates.length === 1 && this.key(site.candidates[0]) === this.key(to));
-      if (exists) { sourceCalls++; return edge; }
+      const direct = exists && this.callLinks(from).some(site => site.relationship === 'call' && site.candidates.length === 1 && this.key(site.candidates[0]) === this.key(to));
+      if (exists) sourceCalls++;
+      if (direct || edge.kind !== 'call') return edge;
       if (edge.kind !== 'call') return edge;
       warnings.push(`The declared call ${edge.from} → ${edge.to} was not found as a unique direct source call. It is displayed as a hypothesis, not a verified call.`);
       return { ...edge, kind: 'hypothesis', reason: `${edge.reason || ''} Source check: no unique direct call found; inspect dispatch/helpers/modifiers or correct this relationship.`.trim() };
@@ -245,7 +439,7 @@ class SourceCatalog {
   }
   hints(fn) {
     const parts = fn.kind === 'context' ? null : this.anatomy(fn), header = parts?.header || '';
-    return { signature: signature(header), visibility: header.match(/\b(external|public|internal|private)\b/)?.[1] || 'unspecified',
+    return { signature: signature(header), identity: { contract: fn.contract, signature: functionSignature(header, fn.name), key: this.key(fn) }, visibility: header.match(/\b(external|public|internal|private)\b/)?.[1] || 'unspecified',
       modifiers: (fn.modifiers || []).map(x => x.name), readOnly: /\b(view|pure)\b/.test(header),
       context: fn.kind === 'context', guards: guards(parts), file: this.relative(fn.file), line: fn.startLine, endLine: fn.endLine,
       sourceHash: crypto.createHash('sha256').update(this.document(this.relative(fn.file)).text).digest('hex'),
@@ -259,7 +453,8 @@ class SourceCatalog {
     // Invalidate those snapshots when ANY indexed dependency changes, not only
     // the report's cited files. Conservative invalidation is safer than stale code.
     const index = [...this.sourceStamps].sort(([a], [b]) => a.localeCompare(b)).map(([file, stamp]) => [this.relative(file), stamp.size, stamp.modified]);
-    return crypto.createHash('sha256').update(JSON.stringify({ engine: 'source-occurrences-v3', anchors, index })).digest('hex');
+    return crypto.createHash('sha256').update(JSON.stringify({ engine: 'source-occurrences-v4', anchors, index,
+      projectConfiguration: this.projectConfigurationStamp, analysisConfiguration: this.analysisConfiguration })).digest('hex');
   }
 }
-module.exports = { SourceCatalog, sourceDocument, signature };
+module.exports = { SourceCatalog, sourceDocument, signature, projectConfigurationStamp };

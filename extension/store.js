@@ -14,6 +14,13 @@ function sameDraft(a, b) {
 function findingKey(request) { return request.findingId || `finding-${crypto.createHash('sha256').update(request.finding.title).digest('hex').slice(0, 20)}`; }
 function draftPath(id) { p.identifier(id, 'finding ID'); return `.flowboard/findings/${id}.json`; }
 function readDraft(root, id) { return p.validate(p.readWorkspaceJson(root, draftPath(id))); }
+function selectedDraft(request, id) {
+  p.identifier(id, 'selected finding ID');
+  if (request.findingId && request.findingId !== id) throw new Error('The selected draft declares a different finding ID. Correct the ID before opening; no other finding was loaded.');
+  // Legacy files may have no findingId. Their filename/library key is identity,
+  // not the title-derived fallback used for a brand-new standalone submission.
+  return { ...structuredClone(request), findingId: id };
+}
 function writeDraft(root, id, request, preserve = false) {
   const relative = draftPath(id);
   if (preserve && fs.existsSync(path.join(root, relative))) return readDraft(root, id);
@@ -30,13 +37,13 @@ function archiveDraft(root, id, request) {
 }
 function readReport(root) {
   const bundle = p.readWorkspaceJson(root, '.flowboard/report.json', 12 * 1024 * 1024);
-  if (!Array.isArray(bundle.issues) || bundle.issues.length > 300) throw new Error('Invalid report index.');
+  if (!Array.isArray(bundle.issues) || bundle.issues.length > 1000) throw new Error('Invalid report index: expected at most 1,000 findings.');
   for (const issue of bundle.issues) {
     p.identifier(issue?.id, 'report finding ID');
-    try { issue.request = readDraft(root, issue.id); issue.status = issue.request.finding.status; }
+    try { issue.request = readDraft(root, issue.id); issue.status = issue.request.finding.status; issue.mappingPending = false; }
     catch (error) {
       issue.request = null;
-      issue.draftError = error.message;
+      if (!(issue.mappingPending && error.code === 'ENOENT')) issue.draftError = error.message;
     }
   }
   return bundle;
@@ -46,7 +53,7 @@ function library(root) {
     const finding = issue.request?.finding, ready = finding?.triage ? review.readiness(finding) : null;
     const anchors = (issue.request?.cards || []).map(card => ({ file: card.file, line: card.line, function: card.function || '' }));
     return { id: issue.id, displayId: issue.displayId, title: issue.title, severity: issue.severity,
-      status: issue.status || 'unreviewed', mapped: !!issue.request, unresolved: issue.unresolved?.length || 0,
+      status: issue.status || 'unreviewed', mapped: !!issue.request, mappingPending: !!issue.mappingPending && !issue.draftError, unresolved: issue.unresolved?.length || 0,
       reviewGaps: ready?.gaps.length || 0, staleEvidence: ready?.outdated || 0,
       files: [...new Set(anchors.map(card => card.file))], anchors };
   }); }
@@ -56,6 +63,7 @@ function readBoard(root, id) {
   p.identifier(id, 'board finding ID');
   try {
     const value = p.readWorkspaceJson(root, `.flowboard/boards/${id}.json`, 8 * 1024 * 1024);
+    if (value.reviewSourceFingerprint !== undefined && (typeof value.reviewSourceFingerprint !== 'string' || !value.reviewSourceFingerprint || value.reviewSourceFingerprint.length > 128)) throw new Error('Invalid saved review source fingerprint.');
     validateBoard(root, value.state); return value;
   } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
@@ -68,7 +76,60 @@ function validateBoard(root, state) {
   }
   for (const edge of state.edges) if (!edge || typeof edge.from !== 'string' || typeof edge.to !== 'string') throw new Error('Invalid board connection.');
   if (state.camera) for (const key of ['scale', 'panX', 'panY']) if (state.camera[key] !== undefined && !Number.isFinite(state.camera[key])) throw new Error('Invalid board camera.');
+  if (state.view !== undefined) {
+    const view = state.view, tabs = ['findings', 'brief', 'flow', 'review', 'report', 'claims', 'help'];
+    const id = value => typeof value === 'string' && value.length <= 400;
+    const failView = () => { throw new Error('Invalid investigation view checkpoint.'); };
+    if (!view || typeof view !== 'object' || Array.isArray(view) || view.version !== 1 || JSON.stringify(view).length > 100000) failView();
+    if (view.drawerTab !== undefined && !tabs.includes(view.drawerTab)) failView();
+    for (const key of ['selectedCard', 'activeClaim', 'activeInvestigationClaim']) if (view[key] !== undefined && view[key] !== null && !id(view[key])) failView();
+    for (const key of ['claimFocus', 'spotlight', 'inlineVisible']) if (view[key] !== undefined && typeof view[key] !== 'boolean') failView();
+    if (view.navigation !== undefined && (!Array.isArray(view.navigation) || view.navigation.length > 60 || !view.navigation.every(id))) failView();
+    if (view.navigationIndex !== undefined && (!Number.isSafeInteger(view.navigationIndex) || view.navigationIndex < -1 || view.navigationIndex >= (view.navigation?.length || 0))) failView();
+    if (view.navigationViews !== undefined && (!Array.isArray(view.navigationViews) || view.navigationViews.length > 60 || view.navigationViews.some(value => !value ||
+      !tabs.includes(value.drawerTab) || !Number.isFinite(value.scrollTop) || value.scrollTop < 0 || value.scrollTop > 10000000 ||
+      ['selectedCard', 'activeClaim'].some(key => value[key] !== null && !id(value[key])) ||
+      ['claimFocus', 'spotlight'].some(key => typeof value[key] !== 'boolean') ||
+      !value.camera || ['scale', 'panX', 'panY'].some(key => !Number.isFinite(value.camera[key]) || Math.abs(value.camera[key]) > 10000000)))) failView();
+    if (view.walkthrough != null) {
+      const guide = view.walkthrough;
+      if (!id(guide.key) || !Number.isSafeInteger(guide.index) || guide.index < 0 || guide.index > 40 ||
+        !['closed', 'guided', 'explore', 'detour'].includes(guide.mode) || typeof guide.opinion !== 'boolean') failView();
+      if (guide.detour != null && !id(guide.detour)) failView();
+      for (const position of [guide.return, guide.position].filter(item => item != null)) {
+        if (!id(position.selectedCard || '') || !tabs.includes(position.drawerTab) || !Number.isSafeInteger(position.guideIndex) || position.guideIndex < 0 || position.guideIndex > 40 ||
+          typeof position.drawerOpen !== 'boolean' || !position.camera ||
+          ['scale', 'panX', 'panY'].some(key => !Number.isFinite(position.camera[key]) || Math.abs(position.camera[key]) > 10000000) ||
+          ['scrollTop', 'scrollLeft', 'scrollTopCode'].some(key => !Number.isFinite(position[key]) || position[key] < 0 || position[key] > 10000000)) failView();
+        const source = position.checkedLocation;
+        if (position.guideScroll !== undefined && (!Number.isFinite(position.guideScroll) || position.guideScroll < 0 || position.guideScroll > 10000000)) failView();
+        if (position.codeScroll !== undefined && (!Number.isFinite(position.codeScroll) || position.codeScroll < 0 || position.codeScroll > 10000000)) failView();
+        if (position.wrap !== undefined && typeof position.wrap !== 'boolean') failView();
+        if (source && (typeof source.file !== 'string' || !/^[a-f0-9]{64}$/.test(source.sourceHash) || !Number.isSafeInteger(source.line) || !Number.isSafeInteger(source.endLine) || source.line < 1 || source.endLine < source.line)) failView();
+      }
+    }
+    for (const key of ['scroll', 'disclosures']) if (view[key] !== undefined) {
+      const entries = view[key];
+      if (!Array.isArray(entries) || entries.length > (key === 'scroll' ? tabs.length : 1000) || entries.some(entry =>
+        !Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || entry[0].length > 1000 ||
+        (key === 'scroll' ? !tabs.includes(entry[0]) || !Number.isFinite(entry[1]) || entry[1] < 0 || entry[1] > 10000000 : typeof entry[1] !== 'boolean'))) failView();
+    }
+  }
+  if (state.workingCopy !== undefined && state.workingCopy !== null && !review.workingCopy(state.workingCopy, '')) throw new Error('Invalid review working copy.');
+  if (state.recoveries !== undefined && (!Array.isArray(state.recoveries) || state.recoveries.length > 5 || state.recoveries.some(copy => !review.workingCopy(copy, '')))) throw new Error('Invalid earlier working copies.');
   for (const card of state.cards) for (const key of ['name', 'code', 'fsPath']) if (card[key] !== undefined && typeof card[key] !== 'string') throw new Error('Invalid source card text.');
+  for (const card of state.cards) {
+    // These are optional, unverified native model comments, not source-bound
+    // evidence. A hand-edited/corrupt cache must not crash annotations.map in
+    // the pinned renderer before the investigation can acknowledge loading.
+    if (card.summary !== undefined && card.summary !== null && (typeof card.summary !== 'string' || card.summary.length > 64000) ||
+        card.showAnnotations !== undefined && typeof card.showAnnotations !== 'boolean' ||
+        card.annotations !== undefined && card.annotations !== null && (!Array.isArray(card.annotations) || card.annotations.length > 2000 ||
+          card.annotations.some(item => !item || typeof item !== 'object' || Array.isArray(item) ||
+            !Number.isSafeInteger(item.line) || item.line < 1 || item.line > 1000000 || typeof item.comment !== 'string' || item.comment.length > 16000))) {
+      throw new Error('Invalid cached native annotations.');
+    }
+  }
   // Reject any source card pointing outside this workspace, including restored cards.
   for (const card of state.cards) if (card.fsPath) {
     const absolute = fs.realpathSync(card.fsPath);
@@ -98,10 +159,10 @@ function archiveBoardFile(root, id) {
   if (!fs.existsSync(target)) fs.writeFileSync(target, bytes, { flag: 'wx', mode: 0o600 });
   return relative;
 }
-function writeBoard(root, id, state, fingerprint) {
+function writeBoard(root, id, state, fingerprint, reviewSourceFingerprint = fingerprint) {
   p.identifier(id, 'board finding ID');
   validateBoard(root, state);
-  const value = { version: 1, fingerprint, updatedAt: new Date().toISOString(), state };
+  const value = { version: 1, fingerprint, reviewSourceFingerprint, updatedAt: new Date().toISOString(), state };
   if (Buffer.byteLength(JSON.stringify(value)) > 8 * 1024 * 1024) throw new Error('Board snapshot is larger than 8 MiB.');
   p.atomicJson(root, `.flowboard/boards/${id}.json`, value);
 }
@@ -129,6 +190,6 @@ function saveReview(root, id, patch, expectedFingerprint) {
 }
 function reviewPrompt(id) {
   p.identifier(id, 'finding ID');
-  return `Use $solidity-flowboard-triage to review ${id} in .flowboard/findings/${id}.json. Read the skill, original report and relevant source. Identify the intended rule before assessing the reported deviation; record its provenance in finding.triage.ruleOrigin, distinguishing report assertions from independently checked specifications/tests/implementation. Split the report into focused statements in finding.triage.claims, preserving its meaning. For each claim, record observed behavior, permissions/state, consequence/uncertainty, decision reason and remaining questions. Link actual ledger evidence IDs with a claim-specific supports/contradicts/context stance and an explanation of relevance. Claim states are unreviewed/supported/contradicted/mixed/unresolved; they do not set the finding verdict. Inspect version, permissions/state, actual reads/writes and call targets; actively look for guards/specification/implementations that contradict the claim. If no usable citations exist, check description-search candidates against source; search scores are not bug confidence. Add explained supports/contradicts/context entries to finding.triage.evidence with real relative source lines/hashes or specification/test references, checkpoint reasoning and a decisionReason. For inline explanations, use short notes at the exact original statement line with category behavior, claim, impact, guard or question; distinguish report assertions from source observations. Do not guess a source line from summary prose. Fill expectedBehavior, actualBehavior and openQuestions for the finding-level Review story. Annotate each relevant source card/connection so the reviewer can navigate the argument. Keep unchecked areas and deployment/specification uncertainty explicit. This is source review, not exploit execution or speculative attack-chain generation. Save the draft first, then submit a fresh delivery and report actual rendering. Distinguish confirmed, invalid, design-decision, insufficient-evidence and already-fixed; a graph or checkmark is not proof. Unsaved UI edits are not included; read the saved draft and respect concurrent edits.`;
+  return `Use $solidity-flowboard-triage to review ${id} in .flowboard/findings/${id}.json. Read the skill, original report and relevant source. Identify the intended rule before assessing the reported deviation; record its provenance in finding.triage.ruleOrigin, distinguishing report assertions from independently checked specifications/tests/implementation. Split the report into focused statements in finding.triage.claims, preserving its meaning. For each claim, record observed behavior, permissions/state, consequence/uncertainty, decision reason and remaining questions. Link actual ledger evidence IDs with a claim-specific supports/contradicts/context stance and an explanation of relevance. Claim states are unreviewed/supported/contradicted/mixed/unresolved; they do not set the finding verdict. Inspect version, permissions/state, actual reads/writes and call targets; actively look for guards/specification/implementations that contradict the claim. If no usable citations exist, check description-search candidates against source; search scores are not bug confidence. Add explained supports/contradicts/context entries to finding.triage.evidence with real relative source lines/hashes or specification/test references, checkpoint reasoning and a decisionReason. Write visible explanations in simple English using short sentences: what this code does, why it matters to the report, and what is still unknown. Avoid internal labels such as provenance, ledger, source binding or semantic verification in displayed text. Keep quotations, code, names, paths, IDs and enum values unchanged. Explanations appear below continuous code. For code explanations, use short notes at the exact original statement line with category behavior, claim, impact, guard or question; distinguish report assertions from source observations. Do not guess a source line from summary prose. Fill expectedBehavior, actualBehavior and openQuestions for the finding-level Review story. Annotate each relevant source card/connection so the reviewer can navigate the argument. Keep unchecked areas and deployment/specification uncertainty explicit. This is source review, not exploit execution or speculative attack-chain generation. Save the draft first, then submit a fresh delivery and report actual rendering. Distinguish confirmed, invalid, design-decision, insufficient-evidence and already-fixed; a graph or checkmark is not proof. Unsaved UI edits are not included; read the saved draft and respect concurrent edits.`;
 }
-module.exports = { findingKey, draftPath, readDraft, writeDraft, archiveDraft, sameDraft, readReport, library, readBoard, writeBoard, archiveBoard, archiveBoardFile, saveReview, reviewPrompt, editable };
+module.exports = { findingKey, selectedDraft, draftPath, readDraft, writeDraft, archiveDraft, sameDraft, readReport, library, readBoard, writeBoard, archiveBoard, archiveBoardFile, saveReview, reviewPrompt, editable };

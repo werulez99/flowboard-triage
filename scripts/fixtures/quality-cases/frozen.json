@@ -1,0 +1,40 @@
+{
+  "recordedAt": "2026-10-03T13:28:59.939Z",
+  "expectationsRecordedBeforeProvider": true,
+  "development": [
+    "d1",
+    "d2",
+    "d3",
+    "d4",
+    "d5",
+    "d6"
+  ],
+  "heldOut": [
+    "h1",
+    "h2",
+    "h3"
+  ],
+  "files": {
+    "d1/project/src/PointBook.sol": "8bbeb2e12c7f92d37d3d70212ab98c266885960774822bd813cc40d75ff8e035",
+    "d1/report.md": "dfef6cbe8db6bbcdc6ffb3549a2fb8333217d6a53aa3fd829066fcbfe5366ed2",
+    "d2/project/src/AssignmentBook.sol": "83606f5220a832f68de841370edcb43e8a0533ab13ef30b495455bc2c06c0383",
+    "d2/report.md": "5db950f929422e5bbebc1bb2aceba0d4949a6b73d96c697d670c7ff6391cad6a",
+    "d3/project/src/ReviewQueue.sol": "825ff3b70a7f932acce41a5296756d2079b4837ed266540cca57f689fea47b6f",
+    "d3/report.md": "53719d508ad103afdc05e9ba95b0908b70b5f9feca99b4a190dd06e29eea3818",
+    "d4/project/src/Paths.sol": "2c1de5a9d897d275b4a99bc3903a9254a0b58f39193dfa6dd95c2aade80c5578",
+    "d4/report.md": "f5521d9e69216a38abef579eb20685b10ed8235302d4970173f78026c260995e",
+    "d5/project/src/QueueBook.sol": "adbda2fa41f299e88920b08d9ef71041a0ecd7e27fc90b5c3fd874436531c73c",
+    "d5/report.md": "18d691cbb155844a5e486684d4832df071ab8c7c124ff9e14bd147b5d0b8dca8",
+    "d6/project/src/PointAccrual.sol": "95f0fe6bc513d3a415d5dcd1cff14e2a553c9692f03746d4d014922672bfc9c2",
+    "d6/report.md": "7a387abd71820ff51d1744eda34a616b864c6bd7fcebb20b0760a70c3b8bf731",
+    "expectations.json": "d64d47cdb902d4bbc849e851077d87ea5dcb3888e5754c07c3b45337489df2e2",
+    "h1/project/src/QuotaBook.sol": "5e6064bcf059572750f5cfc02b277039bdeb2c1abb64356a08fb8c24d2888054",
+    "h1/report.md": "90244d566dffa07b9188a50e5686c0d262070fd4323cf58cabcedb0669df8ebd",
+    "h2/project/src/TicketBook.sol": "4529a87f7545ffde0119f08e2b5946d7ec0642cec3009167cf3bf2e0347569a2",
+    "h2/report.md": "b313852e3b10e4421c2e92d78963ba9c2da982aaf1af5f71687564fb23856797",
+    "h3/project/src/RemoteCounter.sol": "9c19396b49e91bb8e61139c8168cd204140f6ccaf071794d6d145bc1fba66af3",
+    "h3/report.md": "3813e478548f375c21fd2bf246d8c44703c85544cb273bdc507157f07a478141"
+  },
+  "baselineExtension": "local.flowboard-triage-0.11.0",
+  "baselineVsixHash": "69d759ddf46967cd5459cf36f3f89b1606b2e889f109485c96baee18c9300346"
+}

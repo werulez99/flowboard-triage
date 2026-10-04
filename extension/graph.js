@@ -30,7 +30,7 @@ function layoutGraph(nodes, connections) {
       node.x = x; node.y = y;
       // Native Flowboard shows the complete function: reserve the whole height,
       // including modifier/trait rows, so long functions cannot overlap.
-      y += node.code.split('\n').length * 20 + 230 + (node.reviewNoteHeight || 0);
+      y += node.code.split('\n').length * 24 + 260 + (node.reviewNoteHeight || 0);
     }
     x += widths.get(column) + 110;
   }

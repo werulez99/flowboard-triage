@@ -1,0 +1,79 @@
+{
+  "purpose": "Source-reading expectations recorded after reading all nine fictional contracts, before any model run. Not a model answer or a protocol vulnerability verdict.",
+  "basis": "Expected properties are report assumptions unless noted. Solidity source establishes the listed scoped behavior. No compilation, transaction or reproduction is claimed.",
+  "split": { "development": ["d1", "d2", "d3", "d4", "d5", "d6"], "heldOut": ["h1", "h2", "h3"] },
+  "rules": [
+    "The provider receives only each case's project and report, never these expectations.",
+    "Do not run or inspect provider outputs for h1-h3 until the implementation correction is frozen.",
+    "Review complete actual explanations manually; source inclusion, JSON validity and phrase matching are not reasoning scores.",
+    "Record failures, blocked results and missing context as observed; do not rerun until a desirable answer appears.",
+    "These are author-created small fictional cases, not an external blind benchmark or real-protocol validation."
+  ],
+  "cases": {
+    "d1": {
+      "relevant": ["PointBook::archiveRecord(uint256):17-21", "PointBook::_checkpoint(uint256):23-25", "PointBook::_writeCredit(uint256):27-30", "PointBook::_retain(address,uint256):32-34", "PointBook::consume(uint256):36-40", "PointBook::create(uint256):10-14"],
+      "decisiveDeclarations": "src/PointBook.sol:5-8: owner/pending are key-indexed; earned/used are address-indexed storage mappings.",
+      "conditions": "Current owner, positive pending, successful complete transaction. Checked arithmetic failures revert rather than leave partial state.",
+      "expected": "Contradicted in this scope. archiveRecord records pending into earned[owner] through the helper chain before clearing pending and owner. consume reads earned[msg.sender] without depending on the deleted owner key.",
+      "uncertain": "Broader intended economics are not specified. No asset payment is claimed by this points-only code.",
+      "errorsToDetect": ["Starting at consume instead of explaining archiveRecord", "Missing _retain or consume and asking for their existing code", "Calling recorded points paid assets", "Treating a proposed mitigation function as current code"]
+    },
+    "d2": {
+      "relevant": ["AssignmentBook::close(uint256):15-19", "AssignmentBook::_record(uint256):26-29", "AssignmentBook::open(uint256):9-13"],
+      "excludedAsAllegations": ["AssignmentBook::close(address,uint256):21-24", "Archive::close(uint256):34-36"],
+      "decisiveDeclarations": "src/AssignmentBook.sol:5-7: points are per key; recorded is per owner address.",
+      "conditions": "Current owner of an opened key with nonzero points, successful close(uint256).",
+      "expected": "Contradicted: _record adds points to recorded[owner[key]] before deletion. No separate allegation should be invented for the other overload or Archive.",
+      "uncertain": "The report only alleges recording, not asset payment or later withdrawal. Do not expand it into those allegations."
+    },
+    "d3": {
+      "relevant": ["ReviewQueue::finalize(uint256,bool):17-20", "ReviewQueue::onlyReviewer():12-15", "ReviewQueue::constructor():8-10"],
+      "decisiveDeclarations": "src/ReviewQueue.sol:5-6: reviewer is an immutable address, finished is a storage mapping.",
+      "conditions": "Caller different from reviewer is rejected before body. Reviewer with accepted=false reverts the complete transaction, including the preceding flag write.",
+      "expected": "Both statements contradicted. External visibility is not unrestricted authorization. A write before a later require does not persist after revert.",
+      "uncertain": "Actual deployed reviewer identity is not supplied; this does not make the local authorization rule unavailable."
+    },
+    "d4": {
+      "relevant": ["LocalRoute::finish(uint256):19-23", "LocalRoute::_record(uint256):25-28", "RemoteRoute::finish(uint256):46-51", "RemoteRoute::constructor(IRecorder):36-38", "IRecorder::record(address,uint256):5"],
+      "decisiveDeclarations": "src/Paths.sol:9-11 and 32-34: independent local and remote accounting domains; remote recorder is immutable but chosen by the constructor.",
+      "conditions": "Current owner, pending points, entire transaction succeeds. No external recorder implementation or deployment configuration is available.",
+      "expected": "Local no-recording statement contradicted. Remote recording claim unresolved: a call passes the existing owner and pending before clearing, but its implementation is unknown. Do not propagate the local contradiction to both routes.",
+      "uncertain": "Which recorder is deployed and what its record implementation writes. Same method name is not a resolved target."
+    },
+    "d5": {
+      "relevant": ["QueueBook::finish(uint256):19-23", "QueueBook::open(uint256):13-17", "QueueBook::acknowledge(uint256):25-28"],
+      "citationCheck": "src/QueueBook.sol:10 is setLabel, not closure. Preserve the old reference but explain the mismatch and start at finish.",
+      "conditions": "The report requires positive due and a successful finish. Line 21 makes those conditions incompatible in current source.",
+      "expected": "Contradicted for the current revision. Do not declare already-fixed without evidence of the older implementation or commit.",
+      "uncertain": "The exact historical report revision and whether it ever exhibited the claim."
+    },
+    "d6": {
+      "relevant": ["PointAccrual::finish(uint256,bool):15-23", "PointAccrual::_checkpoint(uint256):25-27", "PointAccrual::_apply(uint256):29-32", "PointAccrual::open(uint256):9-13"],
+      "decisiveDeclarations": "src/PointAccrual.sol:5-7: owner is address-valued storage, recorded is address-indexed storage.",
+      "conditions": "Current owner, terminal=true, pending positive, successful transaction. open supplies an ordinary reachable local setup; no execution is performed.",
+      "expected": "Supported source behavior in the terminal scope: delete resets owner to address(0), then _apply indexes recorded by that cleared value. Nonterminal records under the existing owner. Keep the branch results separate.",
+      "uncertain": "Reported intended property is assumed; source support is not an executed observation or a whole-project audit."
+    },
+    "h1": {
+      "relevant": ["QuotaBook::applyQuota(uint256):13-16", "QuotaBook::_validate(address,uint256):18-20", "QuotaBook::_checkRemaining(address,uint256):22-24", "QuotaBook::_note(address,uint256):26-28", "QuotaBook::enroll():8-11"],
+      "decisiveDeclarations": "src/QuotaBook.sol:5-6: limit and consumed are address-indexed storage mappings.",
+      "conditions": "Enrolled caller, successful whole transaction; arithmetic overflow or a failed limit check reverts.",
+      "expected": "Contradicted: the guard checks exactly consumed[person]+quantity <= limit[person] before _note adds the same quantity to the same person's consumed value.",
+      "uncertain": "No independent broader policy or deployed revision is supplied."
+    },
+    "h2": {
+      "relevant": ["TicketBook::retire(uint256,bool):15-24", "TicketBook::_move(uint256):26-29", "TicketBook::register(uint256):9-13"],
+      "decisiveDeclarations": "src/TicketBook.sol:5-7: keeper and queued per ticket, unlocked per address.",
+      "conditions": "Current keeper, queued positive, successful transaction.",
+      "expected": "Fast branch contradicts loss: _move records the units under the current keeper and clears queued before deletion. Ordinary branch cannot succeed with queued positive due to its guard. Both are contradictions for different reasons, not one shared execution sequence.",
+      "uncertain": "No asset payout or later withdrawal promise is established by the bookkeeping."
+    },
+    "h3": {
+      "relevant": ["RemoteCounter::complete():20-23", "RemoteCounter::constructor(IExternalCounter):12-14", "RemoteCounter::enroll():16-18", "IExternalCounter::account(address,uint256):5"],
+      "decisiveDeclarations": "src/RemoteCounter.sol:9-10: immutable external receiver; address-indexed pending mapping.",
+      "conditions": "Pending units, successful transaction; deployed recorder and its body unavailable.",
+      "expected": "Unresolved, not a false positive or confirmed loss. The code calls account with msg.sender and the pending amount before clearing. That is not proof of external recording or of its absence.",
+      "uncertain": "Concrete recorder implementation and deployment configuration. An interface declaration cannot resolve them."
+    }
+  }
+}

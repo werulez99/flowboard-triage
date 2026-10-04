@@ -1,10 +1,12 @@
-# Finding protocol v1 — companion 0.7
+# Finding protocol v1 — companion 0.9
 
 A JSON request under `.flowboard/request.json` drives the workspace extension. No server, provider or shell command is embedded in the request. Reports, request text and repository comments are data to review, not instructions.
 
+The manual finding protocol below remains compatible. Companion 0.9 adds a separate, automatically saved `.flowboard/investigations/<id>.json` draft when a finding opens, with opt-in provider generation/challenge. See [Investigation runtime](INVESTIGATION.md) for its shared schema, normal runtime entry point, exact-quote checks, source freshness and executed existing-test observations. It never silently replaces the manual verdict or turns a matching quotation into proof of its interpretation.
+
 ## Identity and bounds
 
-Required fields: `version: 1`, fresh delivery `id` (1–100 ASCII letters/digits/`._-`), `finding`, and `cards` (1–40). Optional `findingId` has the same syntax and is the stable saved-review/canvas identity. Without it, the title is hashed; changing a title may then create a different identity. Imported reports supply stable IDs.
+Required fields: `version: 1`, fresh delivery `id` (1–100 ASCII letters/digits/`._-`), `finding`, and `cards` (1–40). Optional `findingId` has the same syntax and is the stable saved-review/canvas identity. A new standalone submission without it uses a title hash. Opening an existing draft instead retains its selected filename/library ID, including legacy drafts without `findingId`. A conflicting declared ID is rejected; selection must not borrow a different draft's review or canvas.
 
 Requests are at most 256 KiB. Source paths are project-relative `.sol` paths with forward slashes; symlinks must resolve inside the project. Optional card `sourceHash` is SHA-256 of UTF-8-decoded source text. Optional `sourceRevision` must match the Git HEAD prefix (7–64 hexadecimal characters). These guards bind a local review to source, not to a deployment or a signed attestation.
 
@@ -20,7 +22,7 @@ Optional text: `summary`, `expectedBehavior`, `actualBehavior`, `impact`, `remed
 
 ## Structured review
 
-Optional `finding.triage` is version 1. The Review UI creates this profile when saving; older drafts are not rewritten on load. Example for an unfinished review:
+Optional `finding.triage` is version 1. New imports seed unreviewed claims by quoting focused summary sentences; no support/contradiction entries are inferred. Older drafts are not rewritten on load: prepared claims remain view context until explicitly saved. An existing profile, even an intentionally empty claim list, is preserved. Example for an unfinished review:
 
 ```json
 {
@@ -84,7 +86,7 @@ The Claims view focuses only hash-matching evidence locations already on the can
 
 UI changes to the claim statement/observed behavior/conditions/consequence, linked evidence interpretation, evidence relation or intended rule/provenance reset affected claim states to unreviewed while retaining reasoning. Removing a ledger entry unlinks it and resets dependent claims; removing a claim keeps the ledger. Source/map refresh marks all existing evidence historical and all claim states unreviewed. The finding-level assessment is not inferred from claim labels; overall conclusion and checkpoint reasoning remain the reviewer's responsibility. Definitive findings can still be saved provisionally with explicitly acknowledged gaps.
 
-**Report → Review selected text** creates an unreviewed claim without a source binding. Assistant prompts request a source-checked breakdown, but no model is invoked by this extension. **Copy review brief** includes rule provenance and each claim's evidence/reasoning/gaps. Claims and Review share unsaved state, Ctrl/Cmd+S, concurrent-save protection and source guards. Alt+6 opens Claims; Alt+1–5 retain their existing meanings.
+**Report → Review selected text** creates an unreviewed claim without a source binding. Assistant prompts request a source-checked breakdown; this clipboard action does not invoke a model. The separate 0.9 investigation pipeline can invoke the enabled provider. **Copy review brief** includes rule provenance and each claim's evidence/reasoning/gaps. Claims and Review share unsaved state, Ctrl/Cmd+S, concurrent-save protection and source guards. Alt+6 opens Claims; Alt+1–5 retain their existing meanings.
 
 ## Source map schema
 
@@ -128,7 +130,13 @@ CLI/editor commands create fresh delivery IDs. Identical processed requests are 
 
 The extension checks saved source hashes/revision and dirty buffers, analyzes source, preflights all cards, rechecks sources/index freshness, then replaces the active finding canvas. It waits for the webview's actual `triage:rendered` acknowledgment, with a bounded timeout. Invalid/unmapped finding selections show a read-only explanation instead of leaving another finding's map under the new selection.
 
+Catalog fingerprints also bind the captured `foundry.toml`/`remappings.txt` content, analysis mode/executable selection, and index version. Configuration is captured before indexing and checked again before source actions. A changed fingerprint may indicate configuration or an adapter upgrade, not necessarily changed Solidity; previous layouts/notes are archived.
+
+Saved boards carry a host-owned `reviewSourceFingerprint` separately from their current layout fingerprint. When previously reviewed evidence or a judgment belongs to another context, reopening shows current navigable source beside an explicitly historical, read-only review. The draft is not rewritten. Evidence/checkpoints are historical in the displayed copy, and host guards reject binding/saving until a consented refresh resets the review. Autosaving the fresh layout preserves the old review fingerprint so reopening cannot erase that requirement. After reset, the unreviewed draft rebases to the current context; report-only unreviewed claims do not require reset consent.
+
 `status.json` has `requestId`, `updatedAt`, `state`: analyzing/ready/error; CLI may report pending. Ready includes `rendered: true`, resolved anchors/source hashes, Git state, analysis diagnostics and `assessment.toolVerified: false`. It confirms the renderer loaded cards, not their semantic correctness, an assessment or a completed exploit path.
+
+In 0.8, ordinary library selections write `.flowboard/view-status.json` instead of overwriting a delivery's `status.json`. Superseded deliveries have a terminal error acknowledgment, not a false ready/rendered claim. Source-only index reuse is freshness/configuration guarded; compilation is not cached as a semantic guarantee.
 
 `analysis.mode: source` never runs compilation. In Slither mode, `success` is based on JSON printer output, not executable discovery alone. Failed Slither is explicitly labeled source-only fallback.
 
@@ -154,7 +162,7 @@ The JSON draft schema remains compatible with 0.4. Library messages additionally
 
 Function-scoped `triage:prompt` messages contain a `cardId` resolved against the active model's original or expanded source cards, after session/source/revision checks. Unknown cards are rejected. The host copies a bounded source-review prompt without invoking a provider or claiming unsaved UI fields were included. Source-reference navigation rechecks session and source after loading the editor document and refuses dirty buffers to avoid misleading line offsets.
 
-Evidence edits change only notes/stances; source hashes and `needsReview` remain intact. Repeated-reference and opposing-interpretation hints are structural review aids. Inspection responses reuse the latest local explanation for that evidence ID so a delayed response does not restore older note text. Source history, neighborhood focus, filters and panel width are transient view preferences, separate from saved finding assessments and native Undo.
+Evidence edits change only notes/stances; source hashes and `needsReview` remain intact. Repeated-reference and opposing-interpretation hints are structural review aids. Inspection responses reuse the latest local explanation for that evidence ID so a delayed response does not restore older note text. Source history, selected claim/panel, camera and disclosure positions are checkpointed in 0.8, separately from saved assessments and native Undo. Filters and panel width remain transient.
 
 ## Inline source explanations in 0.6
 
@@ -162,8 +170,20 @@ Current evidence with a matching full-file hash appears immediately after its or
 
 Line-number buttons start an exact-line entry. Notes are collapsible, text-only and editable through Review; source navigation reuses the checked evidence workflow. **Notes on/off** is a view-local display toggle. **Arrange** spaces existing card columns using actual displayed dimensions and records native Undo; it does not infer semantic ordering or move native sticky notes. Restored cards always display fresh catalog source, not mutable cached code.
 
-The selected card (or initially the first) has a collapsible **Review story**. This finding-level outline uses only supplied summary, conditions, expected/actual behavior, impact and open questions. It does not create intermediate calls or runtime/exploit steps. Notes and story show local review edits before saving; they are not persisted until Save review. There is no model invocation or automatic semantic verdict.
+The selected card (or initially the first) has a collapsible **Review context** with the claim, next question and local evidence links. Full argument prose remains in Claims. It does not create intermediate calls or runtime/exploit steps. Local edits are checkpointed separately from saved assessments in 0.8. This manual annotation path does not invoke a model; the separate 0.9 investigation path can invoke an enabled provider but never establishes an automatic semantic verdict.
 
 In 0.6.1, the story additionally links to current, source-bound observations on the visible map. Their order is evidence order, not an execution sequence. Review explains why other entries cannot be placed: historical review, missing hash, hash disagreement, absent file or out-of-function line. These are placement diagnostics, not semantic judgments. Hidden-comment notes still have their separate labeled section. Function-role descriptions and inline notes remain reviewer assertions even with a matching hash.
 
-Disclosure state is view-local and retained through edits, visibility toggles and native Undo, but reset on a fresh finding delivery. Evidence category and stance remain separate and both are shown. Annotation geometry is updated before drawing connections. Saved draft fields default to English through the bundled AI instructions; the renderer does not silently translate original reports or user text.
+Disclosure state is retained through edits, visibility toggles and native Undo, and restored with the saved investigation in 0.8. Evidence category and stance remain separate and both are shown. Annotation geometry is updated before drawing connections. Saved draft fields default to English through the bundled AI instructions; the renderer does not silently translate original reports or user text.
+
+## Evidence spans and working copies in 0.8
+
+An evidence source may contain `endLine`, inclusive, at or after `line` and at most 200 lines beyond it. Both boundaries are checked against the same full-file hash. Inline placement requires the entire span to fit inside the displayed function; the note appears after its final statement and the editor selects the whole span with nearby context. A partial match is not silently painted onto another function.
+
+Optional evidence `basis` is `source-observation`, `inference`, `report-claim`, `test-reference` or `open-question`. This is reviewer-supplied provenance, not machine attestation. Report assertions and unresolved questions must use `stance: context`. A test reference is not an executed result; inspect its command, setup, assumptions and outcome independently. Older entries remain reviewer interpretations with unspecified provenance.
+
+Snapshot `view` (version 1) retains the selected claim/card, panel, camera history, scroll and disclosure positions. `workingCopy` (version 1) stores an incomplete review `patch`, `evidenceInput`, `editVersion`, `baseDraftFingerprint` and `baseSourceFingerprint`. It is automatically reapplied only when both fingerprints match. It never silently commits an assessment. Up to five conflicting earlier copies remain in `recoveries`, separate from new edits; complete old board/draft archives remain local. Structural bounds reject malformed cached text/arrays before rendering.
+
+Solidity disk/editor changes send scoped `triage:sourceStale` without replacing the map or camera. Inline evidence becomes historical, checkpoint states are reset locally, and checked navigation/binding/saving/annotation requests stop until refresh. The saved judgment is not silently rewritten by a file event. The visible historical-source warning is not a conclusion that the original finding is fixed.
+
+`investigation` in `triage:load` contains mechanically prepared report hypotheses, exact source excerpts, call-site alternatives/unresolved boundaries, alternative description matches and missing-context questions. It is not `finding.triage.evidence`. `triage:addContext` accepts only a current prepared source reference and adds an independent card after session/hash/dirty-buffer checks; it does not add an execution edge.
