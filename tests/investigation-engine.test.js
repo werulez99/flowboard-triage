@@ -214,8 +214,15 @@ test('compiler artifacts require every input to match and map UTF-8 byte locatio
   fs.writeFileSync(path.join(root, 'out/build-info/fixture.json'), JSON.stringify(build));
   const compiler = loadCompiler(root); assert.equal(compiler.available, true);
   assert.equal(compiler.facts('src/Ordinary.sol', 3, 'read').declaration.line, 3);
+  const alias = path.join(root, 'workspace-alias');
+  fs.symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const aliased = loadCompiler(alias);
+  assert.equal(aliased.available, true);
+  assert.equal(aliased.facts('src/Ordinary.sol', 3, 'read').declaration.file, 'src/Ordinary.sol');
+  assert.equal(aliased.file, 'out/build-info/fixture.json');
   fs.appendFileSync(path.join(root, 'src/Base.sol'), '// dependency changed\n');
   assert.equal(loadCompiler(root).available, false);
+  assert.equal(loadCompiler(alias).available, false, 'Canonicalizing the workspace must not weaken dependency freshness.');
 });
 test('compiler call facts retain mutually exclusive branch conditions and do not resolve member dispatch', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-branch-test-'));

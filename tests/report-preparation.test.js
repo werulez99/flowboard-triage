@@ -53,9 +53,11 @@ test('phase group is accounted as context; ambiguous sections block instead of d
 });
 test('a unique full path can reconcile citation case, but colliding files cannot', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-case-path-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(root, 'src')); fs.mkdirSync(path.join(root, 'Src')); const a = path.join(root, 'src/Gate.sol'), b = path.join(root, 'Src/GATE.sol');
+  fs.mkdirSync(path.join(root, 'src')); const a = path.join(root, 'src/Gate.sol'), b = path.join(root, 'Src/GATE.sol');
   fs.writeFileSync(a, code);
   assert.equal(mapFile(root, 'SRC/Gate.sol', [a]), 'src/Gate.sol');
+  if (fs.existsSync(path.join(root, 'Src'))) { t.diagnostic('Case-folding volume: a second path differing only by case cannot exist. Unique-path reconciliation checked.'); return; }
+  fs.mkdirSync(path.join(root, 'Src'));
   fs.writeFileSync(b, code); assert.equal(mapFile(root, 'SRC/Gate.sol', [a,b]), null);
 });
 test('cold import prepares all findings without a selected board; private ready artifacts cross one atomic report barrier', { skip: !native }, async t => {

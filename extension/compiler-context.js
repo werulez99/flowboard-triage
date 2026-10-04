@@ -17,6 +17,10 @@ function walk(node, visitor, parent = null, ancestors = []) {
 }
 function loadCompiler(root) {
   const absent = reason => ({ available: false, reason, functions: [], facts: () => null, references: () => [] });
+  // macOS temporary/workspace paths may traverse /var -> /private/var.
+  // Relative source identities must use the same canonical root as inputs.
+  try { root = fs.realpathSync(root); }
+  catch { return absent('The compiler workspace cannot be read.'); }
   let files;
   try {
     const folder = fs.realpathSync(path.join(root, 'out/build-info'));

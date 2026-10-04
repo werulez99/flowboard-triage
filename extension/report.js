@@ -82,7 +82,15 @@ function mapFile(root, supplied, files = []) {
   for (const relative of candidates) {
     try {
       const absolute = fs.realpathSync(path.resolve(root, relative));
-      if (p.contained(fs.realpathSync(root), absolute) && absolute.endsWith('.sol') && fs.statSync(absolute).isFile()) return relative;
+      const stat = fs.statSync(absolute);
+      if (p.contained(fs.realpathSync(root), absolute) && absolute.endsWith('.sol') && stat.isFile()) {
+        // On a case-folding filesystem an existing path may retain the report's
+        // spelling. Use indexed casing only when it names this very same file.
+        const indexed = files.filter(file => path.relative(root, file).split(path.sep).join('/').toLowerCase() === relative.toLowerCase()).filter(file => {
+          try { const candidate = fs.statSync(file); return candidate.dev === stat.dev && candidate.ino === stat.ino; } catch { return false; }
+        });
+        return indexed.length === 1 ? path.relative(root, indexed[0]).split(path.sep).join('/') : path.relative(fs.realpathSync(root), absolute).split(path.sep).join('/');
+      }
     } catch { /* unresolved citation */ }
   }
   const matches = files.filter(file => file.endsWith('/' + clean) || path.basename(file) === clean);
