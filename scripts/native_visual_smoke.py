@@ -28,7 +28,7 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         if route == '/':
             body, kind = fixture['html'].encode(), 'text/html'
-        elif route in ['/native/flowboard.js', '/tool/triage.js', '/tool/report-view.js', '/tool/review-model.js', '/tool/inline-review.js', '/tool/claim-model.js', '/tool/claim-view.js', '/tool/investigation-view.js', '/tool/reading-model.js', '/tool/walkthrough-model.js']:
+        elif route in ['/native/flowboard.js', '/tool/triage.js', '/tool/report-view.js', '/tool/review-model.js', '/tool/inline-review.js', '/tool/claim-model.js', '/tool/claim-view.js', '/tool/investigation-view.js', '/tool/reading-model.js', '/tool/review-capacity.js', '/tool/walkthrough-model.js']:
             folder = upstream / 'webview' if route.startswith('/native/') else root / 'extension/webview'
             body, kind = (folder / Path(route).name).read_bytes(), 'text/javascript'
         else:
@@ -72,6 +72,7 @@ try:
         page.add_init_script('window.sent=[]; window.acquireVsCodeApi=()=>({postMessage:message=>window.sent.push(message)});')
         page.goto(origin)
         page.wait_for_function('window.sent.some(x=>x.type==="triage:ready")')
+        assert page.evaluate('!!window.FlowboardCapacity'), 'The actual renderer must load the shared review contract.'
         page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))', {'type': 'restore', 'state': None})
         page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))', fixture['message'])
         assert page.locator('.card').count() == 2
@@ -366,7 +367,13 @@ try:
         assert page.get_by_label('Report statement', exact=True).input_value() == 'The helper adds amount to the counter.'
         assert page.locator('.triage-claim-line').count() == 1
         assert page.locator('.triage-claim-line').get_attribute('data-source-line') == '13'
-        assert 78 < page.locator('.triage-claim-line').bounding_box()['y'] < 300, 'Source focus targets the line, not the center of a potentially long function.'
+        code_viewport = page.locator('#flowboard').bounding_box()
+        checked_line = page.locator('.triage-claim-line').bounding_box()
+        expected_y = code_viewport['y'] + min(140, code_viewport['height'] * .2)
+        assert abs(checked_line['y'] - expected_y) < 2, (
+            'Source focus must target the exact line near the top of the usable code viewport, '
+            f'including the status dock offset: line={checked_line}, viewport={code_viewport}')
+        assert code_viewport['y'] <= checked_line['y'] and checked_line['y'] + checked_line['height'] <= code_viewport['y'] + code_viewport['height'], 'The entire checked line must remain visible.'
         assert page.locator('.card.triage-dimmed').count() == 1
         page.locator('.triage-selected-source .triage-note-links button').click()
         assert 'Supports statement addition' in page.locator('.triage-inline-note').inner_text()

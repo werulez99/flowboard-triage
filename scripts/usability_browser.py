@@ -268,6 +268,12 @@ try:
         page.evaluate('data=>window.dispatchEvent(new MessageEvent("message",{data}))', long_case)
         page.locator('[data-reading-group="start"] button.primary').click()
         assert page.locator('.guide-preparation').is_visible()
+        # Preparation details are deliberately collapsed in the compact status
+        # dock. Exercise that real control before entering raw code exploration.
+        details = page.locator('.guide-status-row').get_by_role('button', name='Details', exact=True)
+        assert details.get_attribute('aria-expanded') == 'false'
+        details.click()
+        assert page.locator('.guide-status-row').get_by_role('button', name='Less detail', exact=True).get_attribute('aria-expanded') == 'true'
         page.locator('.guide-preparation').get_by_role('button', name='Explore code', exact=True).click()
         page.locator('.triage-flow-item').filter(has_text=long_name).first.click()
         page.locator('.triage-note-links button').click()
