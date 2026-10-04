@@ -88,3 +88,78 @@ test('a return cannot use the caller invocation but highlight a different helper
   draft.causal.events[1].invocationId = draft.causal.events[0].invocationId;
   assert.equal(policy.gate(draft).ready, true, 'An actual modifier belongs to its enclosing invocation.');
 });
+
+test('reading and returning in one invocation cannot change its execution receiver', () => {
+  const draft = checked(), capacity = require('../extension/review-capacity');
+  draft.causal.events[0].effect = 'read';
+  draft.causal.events.push({ ...draft.causal.events[0], id: 'outcome', effect: 'return', receiver: 'msg.sender', title: 'Return after the guard' });
+  draft.causal.order.push('outcome');
+  draft.causal.relationships.push({ from: 'e1', to: 'outcome', kind: 'context', explanation: 'Check the same invocation, not an additional call.', binding: '', evidence: ['guard'] });
+  draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'Synthetic identity check, not a model result.', evidence: ['guard'], documentation: [] }));
+  let result = policy.gate(draft);
+  assert.ok(result.details.some(problem => problem.kind === 'structural' && problem.target === 'event:outcome' && /changes its caller or receiver/.test(problem.reason)));
+  draft.causal.events[1].receiver = 'Guard';
+  assert.equal(policy.gate(draft).ready, true);
+  draft.causal.events[1].caller = 'Other caller';
+  assert.match(policy.gate(draft).problems.join('\n'), /changes its caller or receiver/);
+  draft.causal.events[1].invocationId = 'different-invocation';
+  assert.equal(policy.gate(draft).ready, true, 'A separate invocation may have different participants.');
+});
+
+test('all eight claims, eighteen events and thirty relationships fit fresh challenge coverage', () => {
+  const capacity = require('../extension/review-capacity'), valid = require('../extension/challenge-format').valid;
+  for (let count = 1; count <= capacity.limits.claims; count++) {
+    const draft = checked(), template = draft.causal.events[0];
+    draft.claims = Array.from({ length: count }, (_, i) => ({ id: `c${i}`, status: 'contradicted', unknowns: [] }));
+    draft.evidence = draft.claims.map((claim, i) => ({ ...draft.evidence[0], id: `g${i}`, claimId: claim.id }));
+    draft.walkthrough.assessment.opposingEvidence = 'g0';
+    draft.causal.obligations = draft.claims.flatMap((claim, i) => capacity.kinds.map(kind => ({ id: `${claim.id}-${kind}`, claimId: claim.id, kind,
+      question: `Check ${kind}`, state: 'established', reason: 'The false condition reverts.', evidence: [`g${i}`], documentation: [] })));
+    draft.causal.events = Array.from({ length: capacity.limits.events }, (_, i) => ({ ...template, id: `event${i}`, claimId: `c${i % count}`, evidenceId: `g${i % count}`,
+      phase: 'guard', conditions: ['accepted is false'], paragraphId: '', phrase: '' }));
+    draft.causal.order = draft.causal.events.map(event => event.id);
+    draft.causal.relationships = Array.from({ length: capacity.limits.relationships }, (_, i) => ({
+      from: `event${i < 17 ? i : i - 17}`, to: `event${i < 17 ? i + 1 : 17}`, kind: 'context',
+      explanation: 'Another checked condition, not an executed call.', binding: 'No call parameters: reading context.', evidence: ['g0'] }));
+    const targets = capacity.targets(draft.causal);
+    draft.causal.checks = targets.map(item => ({ target: item.key, reason: 'Controlled coverage check, not AI evidence.', evidence: draft.evidence.map(item => item.id), documentation: [] }));
+    assert.equal(draft.causal.checks.length, count * 8 + 18 + 30);
+    assert.ok(draft.causal.checks.length <= policy.schema.properties.checks.maxItems);
+    assert.equal(policy.gate(draft).ready, true, policy.gate(draft).problems.join('\n'));
+    assert.ok(valid(draft.causal, policy.schema), 'The same admitted model fits the actual provider/patch schema.');
+    draft.causal.checks.pop(); assert.equal(policy.gate(draft).ready, false, 'Capacity does not weaken complete coverage.');
+  }
+});
+test('an untyped collision cannot check an event and obligation with the same ID', () => {
+  const draft = checked(); draft.causal.events[0].id = draft.causal.obligations[0].id;
+  draft.causal.order = [draft.causal.events[0].id];
+  draft.causal.checks = draft.causal.checks.filter(item => item.target !== 'e1');
+  assert.equal(policy.gate(draft).ready, false);
+  const capacity = require('../extension/review-capacity');
+  draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'Explicit distinct coverage.', evidence: ['guard'], documentation: [] }));
+  assert.equal(policy.gate(draft).ready, true);
+});
+test('a call handoff checks the callee parameter against its exact caller argument and reference', () => {
+  const draft = checked(), capacity = require('../extension/review-capacity');
+  const caller = { ...draft.sources[0], id: 'caller', name: 'Guard::enter', source: { ...draft.sources[0].source, line: 6, endLine: 8 },
+    code: 'function enter(bool value) external {\n    finish(value);\n}', relatedCalls: [{ line: 7, receiver: 'internal', arguments: 'value', relationship: 'call', targets: [{ file: 'src/Guard.sol', line: 2 }] }] };
+  draft.sources.push(caller);
+  draft.evidence.push({ ...draft.evidence[0], id: 'call-site', sourceId: caller.id, source: { ...caller.source, line: 7, endLine: 7 }, quote: '    finish(value);', stance: 'context', note: 'Pass value as accepted.' });
+  draft.causal.events.unshift({ ...draft.causal.events[0], id: 'entry', invocationId: 'enter1', evidenceId: 'call-site', title: 'Pass the requested boolean', effect: 'intermediate' });
+  draft.causal.events[1].inputs = [{ name: 'accepted', expression: 'value', type: 'bool', units: 'boolean', origin: 'The caller argument at line 7.', evidence: ['call-site', 'guard'] }];
+  draft.causal.relationships.push({ from: 'entry', to: 'e1', kind: 'call', explanation: 'The internal call passes value to finish.', binding: 'value -> accepted', evidence: ['call-site', 'guard'] });
+  draft.causal.order = ['entry', 'e1'];
+  draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'A false value reaches the reverting guard.', evidence: ['call-site', 'guard'], documentation: [] }));
+  assert.equal(policy.gate(draft).ready, true, policy.gate(draft).problems.join('\n'));
+  draft.causal.events[1].inputs[0].expression = 'false';
+  assert.match(policy.gate(draft).problems.join('\n'), /actual argument position/);
+  draft.causal.events[1].inputs[0].expression = 'value';
+  draft.causal.events[1].inputs[0].evidence = ['guard'];
+  assert.match(policy.gate(draft).problems.join('\n'), /caller-side origin/);
+  draft.causal.events[1].inputs[0].evidence = ['call-site', 'guard'];
+  draft.causal.events[1].inputs[0].name = 'unrelated';
+  assert.match(policy.gate(draft).problems.join('\n'), /not a parameter/);
+  draft.causal.events[1].inputs[0].name = 'accepted';
+  caller.relatedCalls[0].targets = [];
+  assert.match(policy.gate(draft).problems.join('\n'), /no matching local call-site target/);
+});

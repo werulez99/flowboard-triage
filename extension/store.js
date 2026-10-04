@@ -82,6 +82,12 @@ function validateBoard(root, state) {
     const failView = () => { throw new Error('Invalid investigation view checkpoint.'); };
     if (!view || typeof view !== 'object' || Array.isArray(view) || view.version !== 1 || JSON.stringify(view).length > 100000) failView();
     if (view.drawerTab !== undefined && !tabs.includes(view.drawerTab)) failView();
+    if (view.investigationCorrection !== undefined) {
+      const correction = view.investigationCorrection;
+      if (!correction || typeof correction !== 'object' || Array.isArray(correction) || Object.keys(correction).some(key => !['field','value'].includes(key)) ||
+        correction.field !== undefined && !['property','actor','entry','implementation','conditions'].includes(correction.field) ||
+        correction.value !== undefined && (typeof correction.value !== 'string' || correction.value.length > 4000)) failView();
+    }
     for (const key of ['selectedCard', 'activeClaim', 'activeInvestigationClaim']) if (view[key] !== undefined && view[key] !== null && !id(view[key])) failView();
     for (const key of ['claimFocus', 'spotlight', 'inlineVisible']) if (view[key] !== undefined && typeof view[key] !== 'boolean') failView();
     if (view.navigation !== undefined && (!Array.isArray(view.navigation) || view.navigation.length > 60 || !view.navigation.every(id))) failView();

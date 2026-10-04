@@ -11,7 +11,7 @@
   let navigation = [], navigationIndex = -1, editingEvidence = null, renderedTab = null;
   let navigationViews = [];
   let inlineVisible = true;
-  let hintVersion = 0;
+  const hintVersions = new Map();
   let activeClaim = null, claimFocus = false, reportSelection = '';
   let investigation = null, draftFingerprint = '', sourceFingerprint = '', recoveries = [], sourceStale = false, historicalAssessment = null;
   let investigationDraft = null, visibleInvestigation = null, activeInvestigationClaim = null, investigationCorrection = {};
@@ -21,6 +21,7 @@
   let guideDetour = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true;
   let reportPreparation = null;
+  let preparationExpanded = false;
   const guidePositions = new Map();
   const checkpoints = new Map();
   const disclosureState = new Map();
@@ -48,7 +49,23 @@
       const r = row.getBoundingClientRect(), c = card.codeEl.parentElement.getBoundingClientRect(), n = note.getBoundingClientRect(), a = guideAside.getBoundingClientRect();
       if (r.bottom < c.top || r.top > c.bottom || n.bottom < a.top || n.top > a.bottom) return;
       const x = Math.min(c.right, flowboard.getBoundingClientRect().right) - 3, y = Math.max(c.top, r.top) + Math.min(r.height, 24) / 2;
+      // Overlaid explanation anchors must never draw over original code,
+      // including a neighboring card crossed by a return connection.
+      const defs = document.createElementNS(guideAnchor.namespaceURI, 'defs'), mask = document.createElementNS(guideAnchor.namespaceURI, 'mask');
+      mask.id = 'guide-outside-cards'; mask.setAttribute('maskUnits', 'userSpaceOnUse');
+      const background = document.createElementNS(guideAnchor.namespaceURI, 'rect');
+      for (const [key, value] of Object.entries({ x: 0, y: 0, width: innerWidth, height: innerHeight, fill: 'white' })) background.setAttribute(key, String(value));
+      mask.append(background);
+      for (const node of flowboard.querySelectorAll('.card')) {
+        const box = node.getBoundingClientRect();
+        if (box.right < 0 || box.left > innerWidth || box.bottom < 0 || box.top > innerHeight) continue;
+        const cutout = document.createElementNS(guideAnchor.namespaceURI, 'rect');
+        for (const [key, value] of Object.entries({ x: box.left - 2, y: box.top - 2, width: box.width + 4, height: box.height + 4, fill: 'black' })) cutout.setAttribute(key, String(value));
+        mask.append(cutout);
+      }
+      defs.append(mask); guideAnchor.append(defs);
       const line = document.createElementNS(guideAnchor.namespaceURI, 'path');
+      line.setAttribute('mask', 'url(#guide-outside-cards)');
       line.setAttribute('d', `M${x},${y} L${x + 8},${y} L${a.left + 4},${n.top + n.height / 2}`); guideAnchor.append(line);
       const step = guide?.steps[guideIndex], prior = guide?.steps[guideIndex - 1];
       if (prior?.unit && step?.handoff && prior.unit.id !== step.unit?.id) {
@@ -59,11 +76,13 @@
           const sx = Math.max(frame.left + 10, Math.min(frame.right - 10, o.right)), sy = Math.max(frame.top + 28, Math.min(frame.bottom - 28, o.top + 12));
           const targetX = Math.max(frame.left + 10, r.left), targetY = Math.max(c.top + 8, Math.min(c.bottom - 8, r.top + 12));
           const connection = document.createElementNS(guideAnchor.namespaceURI, 'path'); connection.classList.add('guide-checked-handoff');
+          connection.setAttribute('mask', 'url(#guide-outside-cards)');
           connection.setAttribute('d', `M${sx},${sy} C${sx + 30},${sy} ${targetX - 30},${targetY} ${targetX},${targetY}`);
           if (['data','context','later-transaction'].includes(step.handoff.kind)) connection.setAttribute('stroke-dasharray', '6 4');
           const label = document.createElementNS(guideAnchor.namespaceURI, 'text'); label.classList.add('guide-checked-label');
-          label.setAttribute('x', String(Math.min(frame.right - 200, Math.max(frame.left + 12, (sx + targetX) / 2))));
-          label.setAttribute('y', String(Math.max(frame.top + 18, Math.min(frame.bottom - 16, (sy + targetY) / 2 - 12))));
+          label.setAttribute('x', String(frame.left + 24));
+          label.setAttribute('y', String(frame.top + 16));
+          label.setAttribute('mask', 'url(#guide-outside-cards)');
           label.textContent = `${({ data:'Data', context:'Context', 'later-transaction':'Later transaction' })[step.handoff.kind] || step.handoff.kind} · ${prior.unit.name}`;
           guideAnchor.append(connection, label);
         }
@@ -101,6 +120,10 @@
       parent.append(controls);
       const details = element('details'); details.append(element('summary', '', 'Progress and stopped checks'));
       details.append(element('p', '', Object.entries(progress.counts || {}).map(([state, count]) => `${state}: ${count}`).join(' · ')));
+      if (progress.plan) details.append(element('p', '', `${progress.plan.eligible} queued findings · about ${progress.plan.estimatedRequests} further requests before repairs · ${progress.plan.remainingAllowance} requests left.`),
+        element('p', 'triage-muted', progress.plan.basis));
+      if (progress.plan?.estimatedRequests > progress.plan?.remainingAllowance) details.append(element('p', 'triage-warning', 'The current allowance is unlikely to finish this report. No extra requests are authorized automatically.'));
+      if (progress.concurrency) details.append(element('p', 'triage-muted', `Workers: ${progress.concurrency.configured} configured, ${progress.concurrency.achieved} used together. Provider dispatch is limited to two across local hosts.`));
       for (const job of progress.stopped || []) details.append(element('p', '', `${job.id} · ${job.stage || job.state}: ${job.reason || job.state}`));
       parent.append(details); return;
     }
@@ -123,12 +146,27 @@
   function renderPreparation() {
     const waiting = !!preparing || guideIntent === 'waiting' && (!!reportPreparation && !reportPreparation.published || !!active && (sourceStale || !FlowboardWalkthrough.build(investigationDraft, report)));
     preparationSurface.hidden = !waiting; document.body.classList.toggle('guide-preparing', waiting);
-    preparationSurface.replaceChildren();
+    const scroll = preparationSurface.scrollTop;
+    const openDetails = [...preparationSurface.querySelectorAll('details')].map(node => node.open);
+    preparationSurface.replaceChildren(); preparationSurface.classList.toggle('expanded', preparationExpanded);
     if (waiting) {
-      const title = preparing ? library.find(item => item.id === preparing)?.title || preparing : finding.title || reportPreparation?.reportName || 'Report preparation';
-      preparationSurface.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close'), element('h1', '', title));
-      if (preparing) preparationSurface.append(element('p', '', 'Opening this finding’s report and code…'));
-      else preparationContent(preparationSurface);
+      const progress = reportPreparation, state = preparationState || investigationDraft?.preparation;
+      const title = preparing ? 'Opening finding' : progress ? `${progress.mode === 'running' ? 'Preparing report' : 'Preparation incomplete'} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
+      const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
+      const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
+      row.append(heading, expand, button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
+      const selected = issueIdentifier() || preparing || 'No finding selected';
+      const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code' })[stage] || stage || 'Reading code';
+      const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
+      preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
+      const stopped = progress?.stopped?.find(job => job.id === active) || progress?.stopped?.[0];
+      const reason = progress?.reason || (!progress?.active?.length && stopped?.reason) || state?.reason;
+      if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
+      if (preparationExpanded && !preparing) {
+        const body = element('div', 'guide-status-details'); preparationContent(body); preparationSurface.append(body);
+        [...preparationSurface.querySelectorAll('details')].forEach((node, index) => { node.open = !!openDetails[index]; });
+      }
+      preparationSurface.scrollTop = scroll;
     }
   }
   function guideReveal(line) {
@@ -194,6 +232,7 @@
     const saved = guideReturn; guideReturn = null; guideMode = 'guided'; guideNavigation = null; guidePending = false; guideDetour = null;
     if (!saved) { guideGo(guideIndex); return; }
     ({ selectedCard, activeClaim, activeInvestigationClaim, claimFocus, spotlight, checkedLocation, guideIndex } = saved);
+    if (!cards.has(selectedCard)) { guideGo(guideIndex); return; }
     guideWrap = saved.wrap !== false; guideIntent = 'guided';
     drawerTab = saved.drawerTab;
     drawer.classList.toggle('visible', saved.drawerOpen); document.body.classList.toggle('triage-drawer-open', saved.drawerOpen);
@@ -225,10 +264,10 @@
     guideDetour = null;
     const step = guide.steps[guideIndex];
     activeInvestigationClaim = step.claimId || activeInvestigationClaim; activeClaim = null; claimFocus = false; spotlight = false;
-    visibleInvestigation = structuredClone(guide.draft);
+    visibleInvestigation = guide.draft;
     drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open');
     guideNavigation = null;
-    checkedLocation = null; guidePending = !!step.evidence; renderGuide(); guideAside.scrollTop = 0; redrawEdges();
+    checkedLocation = null; guidePending = !!step.evidence; guideAside.scrollTop = 0;
     const cardId = step.unit && guideCard(step.unit);
     if (cardId && step.evidence) {
       selectedCard = cardId; checkedLocation = step.evidence.source; guidePending = false;
@@ -238,15 +277,17 @@
       else if (oldCard !== cardId || !guidePositions.size) focusReadable(cards.get(cardId));
       guideReveal(step.evidence.source.line); schedulePersist();
     } else if (step.evidence) {
+      renderGuide(); redrawEdges();
       guideNavigation = crypto.randomUUID();
-      send('triage:investigationFocus', { evidenceId: step.evidence.id, claimId: step.claimId, navigationId: guideNavigation });
-    } else { checkedLocation = null; redrawEdges(); schedulePersist(); }
+      send('triage:investigationFocus', { evidenceId: step.evidence.id, claimId: step.claimId, navigationId: guideNavigation, materialize: true });
+    } else { checkedLocation = null; renderGuide(); redrawEdges(); schedulePersist(); }
   }
   function guideEvidence(entry, editor = false) {
     if (!guide || sourceStale) return;
     if (!guideReturn) guideReturn = guideCapture();
     guideMode = 'detour'; guideNavigation = crypto.randomUUID();
-    send('triage:investigationFocus', { evidenceId: entry.id, claimId: entry.claimId, navigationId: guideNavigation, editor });
+    const unit = guide.draft.sources.find(source => source.id === entry.sourceId);
+    send('triage:investigationFocus', { evidenceId: entry.id, claimId: entry.claimId, navigationId: guideNavigation, editor, materialize: !!unit && !guideCard(unit) });
     renderGuide(); schedulePersist();
   }
   function guideReport(parent, step) {
@@ -267,6 +308,7 @@
     parent.append(detail);
   }
   function renderOpinion(parent, draft = investigationDraft) {
+    if (draft?.phase !== 'ready' || draft?.preparation || reportPreparation && !reportPreparation.published) return;
     const assessment = FlowboardWalkthrough.assessment(draft, sourceStale);
     const opinion = element('div', 'guide-opinion');
     const part = (heading, key) => { const node = element('section', 'guide-ai-part'); node.dataset.part = key; node.append(element('h3', '', heading)); opinion.append(node); return node; };
@@ -364,7 +406,8 @@
       if (step.why) note.append(element('h3', '', 'Why it matters'), element('p', '', step.why));
       if (step.caller || step.actor) note.append(element('p', 'guide-caller', `Who: ${step.actor || step.caller}${step.caller && step.caller !== step.actor ? ' · Caller: ' + step.caller : ''}${step.receiver ? ' → ' + step.receiver : ''}`));
       if (step.conditions?.length) note.append(element('p', 'guide-condition', `When: ${step.conditions.join('; ')}`));
-      if (step.inputs?.length || step.changes?.length) {
+      if (step.transaction || step.invocationId) note.append(element('p', 'guide-frame', `${step.transaction || 'Source context'} · ${step.phase || 'Reading step'} · ${step.invocationId || ''}`));
+      if (step.inputs?.length || step.changes?.length || step.effect) {
         const values = element('details', 'guide-values'); values.open = true; values.append(element('summary', '', 'Inputs and changes · source interpretation'));
         for (const input of step.inputs || []) values.append(element('p', '', `${input.name}: ${input.expression} (${input.units}). From ${input.origin}.`));
         if (step.changes?.length) {
@@ -452,6 +495,11 @@
     send(copy ? 'triage:copyBrief' : 'triage:save', { patch, editVersion });
   }
   function renderClaims() {
+    if (reportPreparation && !reportPreparation.published) {
+      const status = element('section', 'inv-preparation'); status.append(element('h3', '', 'Walkthrough not published'),
+        element('p', '', reportPreparation.reason || 'The report is still being checked. Your notes and original code remain available.'),
+        button('Open preparation', () => { guideIntent = 'waiting'; renderPreparation(); })); drawer.append(status);
+    }
     if (investigationDraft && cards.has(selectedCard)) {
       const card = cards.get(selectedCard), navigationBar = element('div', 'inv-navigation');
       const back = button('Back', () => moveHistory(-1)), forward = button('Forward', () => moveHistory(1));
@@ -461,9 +509,9 @@
       navigationBar.append(title, back, forward, button('Function header', () => focusReadable(card)), button('Explore callers / callees', () => inspectCard(card)));
       drawer.append(navigationBar);
     }
-    if (investigationDraft && typeof FlowboardInvestigation !== 'undefined') {
+    if (investigationDraft && (!reportPreparation || reportPreparation.published) && typeof FlowboardInvestigation !== 'undefined') {
       drawer.append(FlowboardInvestigation.render({ draft: investigationDraft, selected: activeInvestigationClaim,
-        disabled: readOnly || sourceStale, correction: investigationCorrection,
+        disabled: readOnly || sourceStale, correction: investigationCorrection, changed: () => schedulePersist(),
         select: id => {
           rememberLocation(); activeInvestigationClaim = id; visibleInvestigation = structuredClone(investigationDraft); activeClaim = null; claimFocus = false;
           show('claims'); pushLocation('investigation:' + id);
@@ -579,7 +627,7 @@
     if (sourceStale || readOnly) bar.scrollLeft = 0;
     const attention = FlowboardReview.nextAttention(library, active);
     const nextReview = button('Next review', () => attention && select(attention.id)); nextReview.disabled = !attention; nextReview.title = attention ? `Next needing attention: ${attention.title}` : 'No other finding needs attention in this saved index';
-    bar.append(button('Walkthrough', () => guideStart(), 'primary'), button('Summary', () => { guidePause(); toggle('brief'); }), button('All functions', () => { guidePause(); claimFocus = false; spotlight = false; redrawEdges(); fit(); }));
+    bar.append(button('Walkthrough', () => guideStart(), 'primary'), button('Summary', () => { guidePause(); show('brief'); }), button('All functions', () => { guidePause(); claimFocus = false; spotlight = false; redrawEdges(); fit(); }));
     if (guide && guideMode === 'closed') bar.append(button('Resume review', guideRestore));
     if (nativeUndoButton) bar.append(nativeUndoButton);
     const more = element('details', 'triage-more'); more.append(element('summary', '', 'More'));
@@ -774,8 +822,8 @@
     drawer.append(context);
     if (drawerTab === 'flow') {
       const overview = section('Related functions');
-      overview.append(element('p', 'triage-muted', finding.summary || 'Inspect the report and source before assessing this finding.'),
-        element('p', 'triage-warning', 'Connections show code relationships, not a proven execution order. Select a function to read it.'));
+      overview.append(button('Read original report', () => show('report')),
+        element('p', 'triage-muted', 'Connections show code relationships, not a proven execution order. Select a function to read it.'));
       if (validation.cards) overview.append(element('p', 'triage-validation', `${validation.cards} source cards checked · ${validation.sourceCalls || 0} unique direct call relationships found. Report relevance and runtime reachability still require review.`));
       const search = element('input'); search.placeholder = 'Filter functions, files or explanations'; search.setAttribute('aria-label', 'Search mapped functions'); search.value = flowFilter;
       search.oninput = () => { flowFilter = search.value; renderDrawer(); const input = drawer.querySelector('[aria-label="Search mapped functions"]'); input.focus(); input.setSelectionRange(flowFilter.length, flowFilter.length); }; overview.append(search);
@@ -1033,7 +1081,7 @@
     const actions = element('div', 'triage-report-actions');
     const read = button('Read code', () => readCode(), 'primary'); read.disabled = !target.cardId && !target.source;
     actions.append(read, button('Read report', () => show('report'))); start.append(actions);
-    if (investigationDraft) {
+    if (investigationDraft?.phase === 'ready' && !investigationDraft.preparation && (!reportPreparation || reportPreparation.published)) {
       const opinion = FlowboardWalkthrough.assessment(investigationDraft, sourceStale);
       start.append(element('p', 'triage-muted', `Preliminary AI assessment: ${opinion.label}. Your saved judgment is separate.`));
     }
@@ -1054,14 +1102,14 @@
     const explanation = fold('Explanation and open questions', 'explanation');
     const expectedLabel = value.triage.ruleOrigin?.kind === 'report' || investigationDraft?.property?.basis === 'report-assumption' ? 'Expected behavior · reported, not independently checked' : 'Expected behavior';
     for (const [label, text] of [[expectedLabel, value.expectedBehavior || investigationDraft?.property?.text], ['What the code does', value.actualBehavior], ['Why', value.triage.decisionReason]]) {
-      if (!text && label === 'Why') continue;
-      const block = element('div', 'triage-brief-block'); block.append(element('strong', '', label), element('p', '', text || 'Not checked yet.')); explanation.append(block);
+      if (!text) continue;
+      const block = element('div', 'triage-brief-block'); block.append(element('strong', '', label), element('p', '', text)); explanation.append(block);
     }
     for (const text of (value.openQuestions || []).slice(1)) explanation.append(element('p', '', text));
     if (ready.outdated) explanation.append(element('p', 'triage-warning', 'Code has changed. Check the older notes again.'));
     for (const note of FlowboardReview.quality(value)) explanation.append(element('p', 'triage-warning', note));
     explanation.append(button('Report statements and evidence', () => show('claims')));
-    if (investigationDraft) {
+    if (investigationDraft?.phase === 'ready' && !investigationDraft.preparation && (!reportPreparation || reportPreparation.published)) {
       const generated = fold('Automatic review', 'automatic');
       generated.append(element('p', 'triage-muted', 'A draft to check, separate from your review result.'), element('p', '', investigationDraft.conclusion.text), button('Read review and opposing evidence', () => show('claims')));
     }
@@ -1209,7 +1257,7 @@
     select.value = value; return select;
   }
   function decorateInline(card, info) {
-    const key = `${token}:${editVersion}:${dirtyReview}:${inlineVisible}:${hintVersion}:${activeClaim}:${visibleInvestigation?.revision}:${activeInvestigationClaim}:${info.sourceHash}`;
+    const key = `${token}:${editVersion}:${dirtyReview}:${inlineVisible}:${hintVersions.get(card.id) || 0}:${activeClaim}:${visibleInvestigation?.revision}:${activeInvestigationClaim}:${info.sourceHash}`;
     if (card._triageInlineKey === key) return;
     card._triageInlineKey = key;
     card.el.querySelectorAll('.triage-explanations,.triage-line-number,.triage-note-marker').forEach(node => node.remove());
@@ -1353,6 +1401,7 @@
       patch: structuredClone(reviewEdits), editVersion, evidenceInput: structuredClone(evidenceInput) } : null;
     return { ...snapshot(), view: { version: 1, drawerTab, selectedCard, activeClaim, activeInvestigationClaim, claimFocus, spotlight,
       inlineVisible, navigation, navigationViews, navigationIndex, scroll: [...scrollPositions], disclosures: [...disclosureState],
+      investigationCorrection: { ...investigationCorrection },
       walkthrough: guide ? { key: guide.key, index: guideIndex, mode: guideMode, opinion: guideOpinion, return: guideReturn, detour: guideDetour,
         position: guideCapture() } : null }, workingCopy, recoveries };
   }
@@ -1381,16 +1430,37 @@
     scale = Math.min(1, Math.max(MIN_SCALE, Math.min((rect.width - 60) / (right - left), (rect.height - 60) / (bottom - top))));
     panX = 30 - left * scale; panY = 30 - top * scale; applyTransform(); schedulePersist();
   }
+  function revokeGeneratedGuidance() {
+    guide = null; guideMode = 'closed'; guideReturn = null; checkedLocation = null;
+    if (investigationDraft?.phase === 'ready') investigationDraft = null;
+    visibleInvestigation = null;
+    for (const workbench of drawer.querySelectorAll('.inv-workbench')) {
+      const adjustment = workbench.querySelector('.inv-correction')?.closest('details');
+      if (adjustment && investigationCorrection.value) {
+        // Keep the original input nodes in place, including their caret and
+        // composition. Only generated content is withdrawn.
+        for (const child of [...workbench.children]) if (child !== adjustment) child.remove();
+        workbench.className = 'inv-retained-correction';
+        workbench.prepend(element('p', 'triage-warning', 'Review withdrawn. Your correction is kept locally; check its target after preparation.'));
+        adjustment.querySelectorAll('button').forEach(node => node.disabled = true);
+      } else workbench.remove();
+    }
+    drawer.querySelectorAll('.guide-opinion,.guide-report-links').forEach(node => node.remove());
+  }
   window.addEventListener('message', event => {
     const message = event.data;
     if (message?.type === 'triage:reportPreparation') {
+      const wasPublished = reportPreparation?.published || investigationDraft?.phase === 'ready';
       reportPreparation = message.report || null;
-      if (reportPreparation && !reportPreparation.published) {
-        guide = null; guideMode = 'closed'; guideReturn = null; checkedLocation = null;
-        if (investigationDraft?.phase === 'ready') investigationDraft = { phase: 'preparing', claims: [], evidence: [], sources: [], preparation: { state: 'preparing' } };
-        visibleInvestigation = null;
+      if (reportPreparation && !reportPreparation.published) revokeGeneratedGuidance();
+      // Status events do not own the reading/editing DOM. On revocation remove
+      // generated sections only; keep the researcher's text, caret and notes.
+      renderPreparation();
+      if (wasPublished && !reportPreparation?.published) {
+        renderGuide(); redrawEdges();
+        if (!drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
       }
-      renderGuide(); renderDrawer(); redrawEdges(); return;
+      return;
     }
     if (message?.type === 'triage:load') {
       reportPreparation = message.reportPreparation || null;
@@ -1427,6 +1497,7 @@
       const view = saved.view?.version === 1 ? saved.view : null;
       drawerTab = view?.drawerTab || 'brief';
       if (view) {
+        investigationCorrection = view.investigationCorrection || {};
         activeClaim = view.activeClaim; claimFocus = !!view.claimFocus; selectedCard = view.selectedCard; spotlight = !!view.spotlight;
         activeInvestigationClaim = view.activeInvestigationClaim || null;
         inlineVisible = view.inlineVisible !== false;
@@ -1491,7 +1562,14 @@
       for (const check of next.checks) check.state = 'unchecked';
       reviewEdits.status = 'insufficient-evidence'; reviewEdits.confidence = 'low'; dirtyReview = true; editVersion++;
       // Leave the camera and cards exactly where the researcher was reading.
-      guideNavigation = null; checkedLocation = null; renderGuide(); renderBar(); renderDrawer(); redrawEdges(); persistNow();
+      guideNavigation = null; revokeGeneratedGuidance(); renderGuide(); renderPreparation(); renderBar();
+      if (!drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
+      else {
+        // Other manual review forms also retain their text. Stale controls must
+        // not bind evidence or commit an assessment against changed code.
+        for (const action of drawer.querySelectorAll('button')) action.disabled = true;
+      }
+      redrawEdges(); persistNow();
     }
     else if (message?.type === 'triage:contextAdded' && message.issueId === active && message.token === token) {
       const card = cards.get(message.id); if (card) inspectCard(card);
@@ -1517,7 +1595,7 @@
         selectedCard = card.id; checkedLocation = message.source; activeInvestigationClaim = message.claimId;
         visibleInvestigation = structuredClone(guide.draft); activeClaim = null; claimFocus = false; spotlight = false;
         redrawEdges(); renderGuide();
-        if (document.body.classList.contains('guide-reading')) guideReveal(message.source.line);
+        if (document.body.classList.contains('guide-reading')) { if (!sameFunction) focusReadable(card); guideReveal(message.source.line); }
         else if (!sameFunction) focusSourceLine(card, message.source.line);
         else {
           const row = card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`), bounds = row?.getBoundingClientRect(), viewport = flowboard.getBoundingClientRect();
@@ -1537,7 +1615,13 @@
       }
       redrawEdges(); schedulePersist();
     }
-    else if (message?.type === 'triage:hint' && (!message.token || message.token === token)) { hints[message.id] = message.hint; hintVersion++; redrawEdges(); if (['flow', 'brief'].includes(drawerTab)) renderDrawer(); }
+    else if (['triage:hint', 'triage:hints'].includes(message?.type) && (!message.token || message.token === token)) {
+      for (const [id, hint] of Object.entries(message.type === 'triage:hints' ? message.hints : { [message.id]: message.hint })) {
+        hints[id] = hint; hintVersions.set(id, (hintVersions.get(id) || 0) + 1);
+      }
+      redrawEdges();
+      if (['flow', 'brief'].includes(drawerTab) && !drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
+    }
     else if (message?.type === 'triage:evidenceBound' && message.issueId === active && message.token === token && pendingEvidence.has(message.evidence.id)) {
       const before = pendingEvidence.get(message.evidence.id); pendingEvidence.delete(message.evidence.id);
       if (before === JSON.stringify(evidenceInput)) evidenceInput = {};

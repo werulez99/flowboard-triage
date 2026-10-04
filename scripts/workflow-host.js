@@ -112,6 +112,13 @@ async function start(options = {}) {
       // Only ephemeral source IDs are remapped, and only for identical complete
       // code units. Interpretations, lines and quotes are not manufactured.
       const result = { value: translateRecordedResponse(recorded.result.value, replacements), audit: { provider: 'recorded-fictional-response', phase: input.phase, outcome: 'completed' } };
+      if (input.repairOnly && result.value.result === 'kept' && !result.value.problems?.length) {
+        // Test transport migration only: the old unchanged check is expressed
+        // as a zero-edit patch with its exact recorded evidence checks. This
+        // supplies no fresh reasoning and never changes a claim or conclusion.
+        result.value = { mode: 'review-patch-v1', updates: [], explanationReviews: result.value.explanationReviews, checks: result.value.checks };
+        result.audit.recordedTransport = 'kept-check-to-zero-edit-patch';
+      }
       providerCalls.push({ input, result }); return result;
     };
   }
@@ -221,6 +228,7 @@ async function start(options = {}) {
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
       return json({ readOnly, productionExtension, productionVersion, reportPreparation: reportPreparation?.status(), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
         investigation: board.models.get(board.activeId)?.investigationDraft || null,
+        privatePreparationDraft: reportPreparation && board.activeId ? require(path.join(productionExtension, 'investigation-engine')).read(root, board.activeId) : null,
         debug: { nativeToken: board.native.triageToken, nativeFinding: board.native.triageFindingId, callbacks: panel.callbacks.length, disposed: board.disposed, trusted: api.workspace.isTrusted },
         library: storage.library(root), lastLoad: pending.findLast(message => message.type === 'triage:load') || null });
     }
@@ -275,6 +283,7 @@ if (require.main === module) {
   start({ workspace: value < 0 ? null : process.argv[value + 1], complex: process.argv.includes('--complex'), reading: process.argv.includes('--reading'),
     deferMapping: process.argv.includes('--defer-mapping'),
     reportPreparation: process.argv.includes('--report-preparation'),
+    requestLimit: process.argv.includes('--request-limit') ? Number(process.argv[process.argv.indexOf('--request-limit') + 1]) : 12,
     qualityBatch: process.argv.includes('--quality-batch'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,

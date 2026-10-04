@@ -13,9 +13,9 @@ function inspect(catalog, title = '', body = '') {
     else blockers.push(`The report names ${item.text}, but ${matches.length} definitions match. The required implementation or signature is not established.`);
   }
   const sections = content(body), location = sections.fields.location || sections.fields.locations || '';
-  const cited = [...location.matchAll(/(?:[\w.@-]+\/)*[\w.@-]+\.sol\b/g)].map(match => match[0]);
-  const paths = [...catalog.sourceStamps.keys()].map(file => catalog.relative(file));
-  for (const file of cited) if (!paths.some(value => value === file || file.endsWith('/' + value))) blockers.push(`The report's code file ${file} is not present in the indexed project. Confirm the checkout or supply that dependency.`);
+  const cited = [...location.matchAll(/(?:[\w.@-]+[\\/])*[\w.@-]+\.sol\b/g)].map(match => match[0]);
+  const paths = [...catalog.sourceStamps.keys()];
+  for (const file of cited) if (!require('./source-path').resolve(catalog.root, file, paths)) blockers.push(`The report's code file ${file} is not present unambiguously in the indexed project. Confirm the checkout or supply that dependency.`);
   return { selected: [...new Map(selected.map(fn => [catalog.key(fn), fn])).values()], blockers: [...new Set(blockers)], named: qualified.map(item => item.text) };
 }
 module.exports = { inspect };

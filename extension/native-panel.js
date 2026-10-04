@@ -142,6 +142,7 @@ function createNativePanel(vscode, context, upstream, root) {
   const investigationView = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'investigation-view.js'));
   const reading = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'reading-model.js'));
   const walkthrough = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'walkthrough-model.js'));
+  const capacity = native.panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview', 'review-capacity.js'));
   const style = fs.readFileSync(path.join(context.extensionPath || context.extensionUri.fsPath, 'webview/triage.css'), 'utf8');
   // Add a second nonce to the existing CSP. No unsafe scripts, CDNs or external
   // report renderers are introduced. Report text only enters textContent.
@@ -149,7 +150,7 @@ function createNativePanel(vscode, context, upstream, root) {
     .replace(/(script-src[^;\"]+)/, `$1 'nonce-${nonce}'`)
     .replace(/<script\b/, `<script nonce="${nonce}">(${installSessionBridge.toString()})();</script><script`)
     .replace('</head>', `<style>${style}</style></head>`)
-    .replace('</body>', `<script nonce="${nonce}" src="${reader}"></script><script nonce="${nonce}" src="${reading}"></script><script nonce="${nonce}" src="${walkthrough}"></script><script nonce="${nonce}" src="${claims}"></script><script nonce="${nonce}" src="${reviewer}"></script><script nonce="${nonce}" src="${inline}"></script><script nonce="${nonce}" src="${claimView}"></script><script nonce="${nonce}" src="${investigationView}"></script><script nonce="${nonce}" src="${script}"></script></body>`);
+    .replace('</body>', `<script nonce="${nonce}" src="${reader}"></script><script nonce="${nonce}" src="${reading}"></script><script nonce="${nonce}" src="${capacity}"></script><script nonce="${nonce}" src="${walkthrough}"></script><script nonce="${nonce}" src="${claims}"></script><script nonce="${nonce}" src="${reviewer}"></script><script nonce="${nonce}" src="${inline}"></script><script nonce="${nonce}" src="${claimView}"></script><script nonce="${nonce}" src="${investigationView}"></script><script nonce="${nonce}" src="${script}"></script></body>`);
   return native;
 }
 module.exports = { createNativePanel, apiFacade, installSessionBridge };

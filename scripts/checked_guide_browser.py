@@ -20,6 +20,7 @@ parser.add_argument('--workspace')
 parser.add_argument('--report')
 parser.add_argument('--finding', default='I-01')
 parser.add_argument('--provider', default='codex')
+parser.add_argument('--request-limit', type=int, default=12, choices=range(1, 13))
 parser.add_argument('--recorded')
 parser.add_argument('--baseline', action='store_true')
 parser.add_argument('--report-preparation', action='store_true')
@@ -30,6 +31,7 @@ args = parser.parse_args()
 repo = Path(__file__).resolve().parent.parent
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
 command = ['node', str(repo / 'scripts/workflow-host.js'), '--provider', args.provider]
+command += ['--request-limit', str(args.request_limit)]
 if args.report_preparation:
     command += ['--report-preparation']
 if args.batch:
@@ -86,17 +88,18 @@ try:
         deadline = time.monotonic() + 900
         last_stage = None
         while time.monotonic() < deadline:
-            state = request('/state'); draft = state['investigation']
+            state = request('/state'); draft = state.get('privatePreparationDraft') or state['investigation']
             stage = (draft or {}).get('phase'), len(state['providerCalls']), len((draft or {}).get('sources', []))
             if stage != last_stage:
                 (out / 'progress.json').write_text(json.dumps(state, indent=2))
                 last_stage = stage
             terminal_report = not state.get('reportPreparation') or state['reportPreparation']['mode'] not in ['running', 'interrupted']
             if draft and draft['phase'] in ['ready', 'blocked', 'provider-required'] and terminal_report: break
+            if terminal_report and state.get('reportPreparation', {}).get('mode') in ['incomplete', 'paused', 'cancelled']: break
             if state['lastLoad'].get('preparation', {}).get('state') == 'blocked': break
             page.wait_for_timeout(500)
         page.wait_for_timeout(700)
-        state = request('/state'); draft = state['investigation']
+        state = request('/state'); draft = state.get('privatePreparationDraft') or state['investigation']
         result.update(draft=draft, hostErrors=state['errors'], logs=state['logs'], providerCalls=state['providerCalls'])
         result['reportPreparation'] = state.get('reportPreparation')
         (out / 'state.json').write_text(json.dumps(state, indent=2))
@@ -114,11 +117,18 @@ try:
                 assert page.locator('.guide-annotation').get_attribute('data-step-id') == identity
                 spans = page.locator('.guide-active-card .triage-claim-line').evaluate_all('(ns)=>ns.map(n=>Number(n.dataset.sourceLine))')
                 assert spans == list(range(entry['source']['line'], entry['source']['endLine'] + 1)), (identity, spans, entry['source'])
+                viewport = page.locator('#flowboard').bounding_box()
+                header = page.locator('.guide-active-card .card-header').bounding_box()
+                first_line = page.locator('.guide-active-card .triage-claim-line').first.bounding_box()
+                for label, box in [('function header', header), ('active line', first_line)]:
+                    assert box and box['x'] >= viewport['x'] - 1 and box['x'] < viewport['x'] + viewport['width'] and box['y'] >= viewport['y'] - 1 and box['y'] + min(box['height'],24) <= viewport['y'] + viewport['height'], (label, identity, box, viewport)
                 unit = next(u for u in draft['sources'] if u['id'] == entry['sourceId'])
                 original = page.locator('.guide-active-card [data-source-line]').count()
                 assert original == len(unit['code'].split('\n')), (original, unit['name'])
                 quote = page.locator('.guide-report blockquote')
                 if quote.count(): assert quote.inner_text() in state['lastLoad']['reportText']
+                page.wait_for_timeout(35)
+                assert page.locator('.guide-anchor > path').evaluate_all('(nodes)=>nodes.every(node=>node.getAttribute("mask")==="url(#guide-outside-cards)")'), 'An overlay connection can obscure original code.'
                 visited.append({'event': identity, 'lines': spans, 'explanation': page.locator('.guide-annotation').inner_text()})
                 page.screenshot(path=str(out / f'step-{i + 1}.png'))
                 if i + 1 < len(steps):
@@ -183,6 +193,20 @@ try:
             page.locator('.guide-report-links button').first.click()
             assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
             result['checks'].append('Keyboard steps and original-report-to-step navigation use the same prepared route.')
+            # Measure actual renderer click-to-next-paint, excluding Python and
+            # simulated editor round trips. These are warm local playback data.
+            if len(steps) > 1:
+                result['playbackMs'] = page.evaluate('''async () => {
+                  const values=[];
+                  for(let i=0;i<30;i++) {
+                    const label=i%2?'Previous step':'Next step';
+                    const control=[...document.querySelectorAll('.guide-controls button')].find(b=>b.textContent===label);
+                    const start=performance.now();control.click();
+                    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+                    values.push(performance.now()-start);
+                  }return values;
+                }''')
+                assert len(request('/state')['providerCalls']) == before_calls
             # Recreate the controller and renderer, not merely hide/show a panel.
             # Persisting is a normal automatic product action, not JSON setup.
             page.evaluate('persistNow()'); page.wait_for_timeout(300)
@@ -199,6 +223,59 @@ try:
             assert len(request('/state')['providerCalls']) == before_calls
             assert request('/state')['lastLoad']['finding']['status'] == 'unreviewed'
             result['checks'].append('A recreated board restores the saved step/camera without a new provider request or changed researcher judgment.')
+            # An ordinary native deletion during exploration must not strand
+            # the guide on a known-but-no-longer-rendered function.
+            controls = page.locator('.guide-controls')
+            controls.get_by_role('button', name='Explore freely', exact=True).click()
+            if page.evaluate('mode') != 'select':
+                page.locator('#triage-bar > .triage-more > summary').click()
+                page.locator('#mode-btn').click()
+                page.locator('#triage-bar > .triage-more > summary').click()
+            # The native title is deliberately text-selectable; select the
+            # header padding, not its title, for native Delete/Undo behavior.
+            page.locator('.guide-active-card .card-header').click(position={'x': 5, 'y': 5})
+            removed_card = page.evaluate('[...cards].find(([, card])=>card.el.classList.contains("guide-active-card"))[0]')
+            page.keyboard.press('Delete')
+            assert page.locator('.guide-active-card').count() == 0
+            page.get_by_role('button', name='Undo', exact=True).click()
+            page.wait_for_function('id=>cards.has(id)', arg=removed_card)
+            assert page.evaluate('id=>cards.get(id).codeEl.textContent.length>0', removed_card)
+            result['checks'].append('Native Undo restores a deleted original function, including its code, during free exploration.')
+            restored_header = page.evaluate('id=>{const box=cards.get(id).el.querySelector(".card-header").getBoundingClientRect();return {x:box.x,y:box.y};}', removed_card)
+            page.mouse.click(restored_header['x'] + 5, restored_header['y'] + 5)
+            page.keyboard.press('Delete')
+            controls.get_by_role('button', name='Resume walkthrough', exact=True).click()
+            page.wait_for_selector('.guide-active-card .triage-claim-line', timeout=30000)
+            assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
+            for node in ['.guide-active-card .card-header', '.guide-active-card .triage-claim-line']:
+                box = page.locator(node).first.bounding_box(); viewport = page.locator('#flowboard').bounding_box()
+                assert box['x'] >= viewport['x'] - 1 and box['x'] < viewport['x'] + viewport['width'] and box['y'] >= viewport['y'] - 1 and box['y'] < viewport['y'] + viewport['height']
+            assert len(request('/state')['providerCalls']) == before_calls
+            page.screenshot(path=str(out / 'deferred-function-return.png'))
+            result['checks'].append('Deleting the active native function during exploration then resuming restores its checked card, visible header and exact range without AI.')
+            # Save that ordinary deletion, then recreate the controller. Ready
+            # required functions must be present in the initial load, before a
+            # missing-card focus message can race the renderer.
+            controls.get_by_role('button', name='Explore freely', exact=True).click()
+            page.locator('.guide-active-card .card-header').click(position={'x': 5, 'y': 5})
+            page.keyboard.press('Delete')
+            page.evaluate('persistNow()'); page.wait_for_timeout(250)
+            page.evaluate('window.closing=true;clearInterval(window.timer)')
+            request('/action', {'name':'reopen'}); page.reload()
+            page.wait_for_selector('.triage-list button')
+            opened_at = time.monotonic()
+            page.locator('.triage-list button').filter(has_text=args.finding + ' ·').first.click()
+            page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)', arg=args.finding)
+            first_load = request('/state')['lastLoad']
+            first_event = next(e for e in draft['causal']['events'] if e['id'] == steps[0])
+            first_evidence = next(e for e in draft['evidence'] if e['id'] == first_event['evidenceId'])
+            first_unit = next(u for u in draft['sources'] if u['id'] == first_evidence['sourceId'])
+            assert any(c['startLine'] == first_unit['source']['line'] and c['code'] == first_unit['code'] for c in first_load['state']['cards'])
+            page.get_by_role('button', name='Walkthrough', exact=True).click()
+            page.wait_for_selector('.guide-active-card .triage-claim-line')
+            result['sameHostPreparedOpenMs'] = (time.monotonic() - opened_at) * 1000
+            assert len(request('/state')['providerCalls']) == before_calls
+            result['checks'].append('Reopening a saved board missing its required first function includes the complete checked native card in the initial load before guided focus.')
             if args.batch:
                 page.get_by_role('button', name='Findings', exact=True).click()
                 page.locator('.triage-list button').filter(has_text='I-02 ·').first.click()
@@ -210,11 +287,35 @@ try:
                 result['secondFinding'] = request('/state')['investigation']
                 result['checks'].append('The never-selected second finding was prepared in the backend and opens with zero additional provider requests.')
             if args.case:
+                page.get_by_role('button', name='Summary', exact=True).first.click()
+                page.screenshot(path=str(out / 'summary-before-statements.png'))
+                (out / 'summary-dom.txt').write_text(page.locator('.triage-drawer').inner_text())
+                page.get_by_role('tab', name='Statements', exact=True).click()
+                page.locator('.inv-workbench summary').filter(has_text='Correct this review').click()
+                correction = page.get_by_role('textbox', name='Investigation correction', exact=True)
+                correction.fill('Keep this researcher correction while another finding progresses.')
+                correction.evaluate('(node)=>{node.focus();node.setSelectionRange(5,17);window.typedCorrection=node;}')
+                current_status = request('/state').get('reportPreparation') or {'published':True,'mode':'completed','ready':1,'total':1}
+                page.evaluate('''status => {
+                  window.drawerMutations=0;
+                  window.drawerObserver=new MutationObserver(changes=>window.drawerMutations+=changes.length);
+                  window.drawerObserver.observe(document.querySelector('.triage-drawer'),{subtree:true,childList:true,characterData:true});
+                  for(let i=0;i<30;i++) window.dispatchEvent(new MessageEvent('message',{data:{type:'triage:reportPreparation',report:status}}));
+                }''', current_status)
+                page.wait_for_timeout(150)
+                assert page.evaluate('document.activeElement===window.typedCorrection && window.typedCorrection.selectionStart===5 && window.typedCorrection.selectionEnd===17')
+                assert page.evaluate('window.drawerMutations') == 0
+                result['checks'].append('Thirty background status updates preserve the exact correction input, caret, selection and drawer DOM.')
                 # Freshness is tested after screenshots so captured guide data
                 # still describes the original, unchanged fictional source.
                 request('/action', {'name': args.freshness + '-change'})
-                page.wait_for_function('() => !document.body.classList.contains("guide-reading")')
+                page.wait_for_function('() => !document.body.classList.contains("guide-reading") && !document.querySelector(".guide-annotation")')
                 assert page.locator('.guide-annotation:visible').count() == 0
+                assert page.locator('.inv-rule,.inv-claim,.inv-conclusion,.guide-opinion').count() == 0
+                assert page.evaluate('document.activeElement===window.typedCorrection && window.typedCorrection.isConnected && window.typedCorrection.selectionStart===5 && window.typedCorrection.selectionEnd===17')
+                assert correction.input_value().startswith('Keep this researcher correction')
+                page.screenshot(path=str(out / 'revoked-statements.png'))
+                result['checks'].append('Ready-to-revoked with Statements open removes generated conclusions without an exception or losing the typed correction.')
                 assert len(request('/state')['providerCalls']) == before_calls
                 result['checks'].append('Changing the ' + args.freshness + ' withholds the published guide and does not silently regenerate or alter the human result.')
         else:

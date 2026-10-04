@@ -6,7 +6,6 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const p = require('./protocol');
 const { search, terms } = require('./source-search');
-const { loadCompiler } = require('./compiler-context');
 const { runProvider, schema: reviewSchema } = require('./semantic-provider');
 const challengeFormat = require('./challenge-format');
 const { relatedCode } = require('./reading-context');
@@ -15,21 +14,38 @@ const { escaped, lexicalCode } = require('./solidity-text');
 const walkthrough = require('./webview/walkthrough-model');
 const documentation = require('./local-documentation');
 const guidePolicy = require('./guide-policy');
+const capacity = require('./review-capacity'), { limits } = capacity;
+const workspaceSnapshot = require('./workspace-snapshot');
 const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
-const MAX_BYTES = 3 * 1024 * 1024;
+const MAX_BYTES = limits.storageBytes;
 const isTest = file => /(?:^|\/)(?:test|tests)\//.test(file) || /\.t\.sol$/.test(file);
 const now = () => new Date().toISOString();
 const fileFor = id => `.flowboard/investigations/${p.identifier(id, 'finding ID') || id}.json`;
 function snapshot(catalog, request, issue) {
-  catalog.assertFresh();
-  const sources = [...catalog.sourceStamps.keys()].sort().map(file => [catalog.relative(file), hash(fs.readFileSync(file, 'utf8'))]);
-  return { version: 1, policy: guidePolicy.POLICY, project: hash(fs.realpathSync(catalog.root)), sourceDigest: hash(sources), sourceCount: sources.length,
-    configuration: catalog.projectConfigurationStamp,
+  const generation = workspaceSnapshot.validate(catalog);
+  return { version: 1, policy: guidePolicy.POLICY, project: generation.project, sourceDigest: generation.sourceDigest, sourceCount: Object.keys(generation.files).length,
+    configuration: generation.configuration,
     reportHash: hash([request.finding.title, request.finding.summary, request.finding.expectedBehavior, request.finding.preconditions, issue?.reportText || '']),
-    revision: p.gitState(catalog.root).head || null,
-    documentation: documentation.inspect(catalog.root, request.finding.title).digest };
+    revision: generation.revision,
+    documentation: generation.documentation.digest };
 }
-function sameSnapshot(a, b) { return !!a && a.policy === b.policy && a.project === b.project && a.sourceDigest === b.sourceDigest && a.configuration === b.configuration && a.reportHash === b.reportHash && a.revision === b.revision && (a.documentation || null) === (b.documentation || null); }
+function sameSnapshot(a, b) { return !!a && a.policy === b.policy && a.project === b.project && a.sourceDigest === b.sourceDigest && a.configuration === b.configuration && a.reportHash === b.reportHash && (a.documentation || null) === (b.documentation || null); }
+function compatible(draft, catalog, request, issue) {
+  const next = snapshot(catalog, request, issue), old = draft?.snapshot;
+  return sameSnapshot(old, next) || !!old && old.policy === next.policy && old.project === next.project && old.reportHash === next.reportHash && workspaceSnapshot.compatible(catalog, draft);
+}
+function revalidate(draft, catalog, request, issue) {
+  if (!compatible(draft, catalog, request, issue)) return false;
+  validateCurrent(catalog, draft);
+  const next = snapshot(catalog, request, issue);
+  if (!sameSnapshot(draft.snapshot, next)) {
+    draft.previousSourceDigest = draft.snapshot.sourceDigest; draft.snapshot = next;
+    draft.revalidatedAt = now(); draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
+    if (draft.publication?.ready) draft.publication.digest = guidePolicy.digest(draft);
+    draft.revision++; write(catalog.root, draft);
+  }
+  return true;
+}
 function write(root, draft) {
   let existing;
   try { existing = p.readWorkspaceJson(root, fileFor(draft.findingId), MAX_BYTES); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -43,14 +59,15 @@ function read(root, id) {
   try {
     const value = p.readWorkspaceJson(root, fileFor(id), MAX_BYTES);
     if (value.version !== 1 || value.engine !== 'source-review-v1' || value.findingId !== id || !Array.isArray(value.claims) || !Array.isArray(value.sources) || !Array.isArray(value.evidence) || !Array.isArray(value.corrections) || !Array.isArray(value.actions) || !Array.isArray(value.runs)) throw new Error('Invalid or mismatched investigation draft.');
-    for (const [key, maximum] of Object.entries({ claims: 8, evidence: 24, transitions: 12, questions: 8, sources: 40, actions: 50, experiments: 10, corrections: 30, runs: 16 })) {
+    for (const [key, maximum] of Object.entries({ claims: limits.claims, evidence: limits.evidence, transitions: limits.transitions, questions: limits.questions, sources: limits.sources, actions: 50, experiments: 10, corrections: 30, runs: 16 })) {
       if (!Array.isArray(value[key]) || value[key].length > maximum || value[key].some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error(`Invalid investigation ${key}.`);
     }
+    if (value.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(value.causal[key], limits[key], `saved causal ${key}`);
     if (!value.snapshot || !/^[a-f0-9]{64}$/.test(value.snapshot.sourceDigest) || !/^[a-f0-9]{64}$/.test(value.snapshot.reportHash) || !Number.isSafeInteger(value.revision) || value.revision < 0 || typeof value.phase !== 'string' || typeof value.property?.text !== 'string' || typeof value.property?.basis !== 'string' || typeof value.conclusion?.text !== 'string') throw new Error('Invalid investigation identity, rule or conclusion.');
     const refs = new Map();
     for (const unit of value.sources) {
       const source = unit.source;
-      if (typeof unit.id !== 'string' || refs.has(unit.id) || typeof unit.name !== 'string' || typeof unit.code !== 'string' || unit.code.length > 32000 || !source || typeof source.file !== 'string' || !/^[a-f0-9]{64}$/.test(source.sourceHash) || !Number.isSafeInteger(source.line) || !Number.isSafeInteger(source.endLine) || source.line < 1 || source.endLine < source.line || source.endLine - source.line > 799 || unit.code.split('\n').length !== source.endLine - source.line + 1) throw new Error('Invalid saved source excerpt.');
+      if (typeof unit.id !== 'string' || refs.has(unit.id) || typeof unit.name !== 'string' || typeof unit.code !== 'string' || unit.code.length > limits.sourceCharacters || !source || typeof source.file !== 'string' || !/^[a-f0-9]{64}$/.test(source.sourceHash) || !Number.isSafeInteger(source.line) || !Number.isSafeInteger(source.endLine) || source.line < 1 || source.endLine < source.line || unit.code.split('\n').length !== source.endLine - source.line + 1) throw new Error('Invalid saved canonical source unit.');
       refs.set(unit.id, unit);
     }
     for (const claim of value.claims) {
@@ -85,7 +102,7 @@ function read(root, id) {
     // Local JSON is editable, not a signed attestation. Never restore a model
     // draft as a human-reviewed finding just because those flags were changed.
     value.conclusion.humanReviewed = false; value.conclusion.status = 'insufficient-evidence';
-    if (value.walkthrough && (!Array.isArray(value.walkthrough.steps) || value.walkthrough.steps.length > 16 ||
+    if (value.walkthrough && (!Array.isArray(value.walkthrough.steps) || value.walkthrough.steps.length > limits.steps ||
       value.walkthrough.steps.some(step => !step || !['evidenceId', 'title', 'paragraphId', 'phrase'].every(key => typeof step[key] === 'string') || !evidenceIds.has(step.evidenceId)) ||
       !value.walkthrough.assessment || !['valid', 'invalid', 'unclear'].includes(value.walkthrough.assessment.result) ||
       !['why', 'supportingEvidence', 'opposingEvidence'].every(key => typeof value.walkthrough.assessment[key] === 'string'))) throw new Error('Invalid saved walkthrough references.');
@@ -97,9 +114,10 @@ function archive(root, draft) {
   p.atomicJson(root, `.flowboard/recovery/investigation-${p.identifier(draft.findingId, 'finding ID') || draft.findingId}-${crypto.randomUUID()}.json`, draft);
 }
 function validateCurrent(catalog, draft) {
-  if ((draft.snapshot.documentation || null) !== documentation.inspect(catalog.root, draft.title).digest) throw new Error('Local documentation changed. Refresh the expected-rule review.');
+  const generation = workspaceSnapshot.validate(catalog);
+  if ((draft.snapshot.documentation || null) !== generation.documentation.digest) throw new Error('Local documentation changed. Refresh the expected-rule review.');
   for (const unit of draft.sources) {
-    p.sources(catalog.root, { cards: [unit.source] });
+    if (generation.files[unit.source.file] !== unit.source.sourceHash) throw new Error(`Stale source hash: ${unit.source.file}. Re-read the code before reusing this guide.`);
     const doc = catalog.document(unit.source.file);
     if (doc.lines.slice(unit.source.line - 1, unit.source.endLine).join('\n') !== unit.code) throw new Error('Saved investigation source text does not match its bound source. It was not placed on the current board.');
     if (unit.contextKind) catalog.resolveUnit(unit);
@@ -107,30 +125,46 @@ function validateCurrent(catalog, draft) {
 }
 function text(value, max = 2000) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
 function list(value, max = 12) { return Array.isArray(value) ? value.slice(0, max).map(item => text(item)).filter(Boolean) : []; }
-function modelSources(units) {
+function modelSources(units, packetLimit = 110000) {
   const position = source => source ? `${source.file}:${source.line}-${source.endLine}` : null;
   const unitAt = (file, line) => units.find(unit => unit.source.file === file && unit.source.line === line)?.id;
-  return units.map(unit => ({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind,
+  const packet = []; let remaining = packetLimit;
+  for (const unit of [...units].sort((a, b) => Number(b.readThrough < b.source.endLine) - Number(a.readThrough < a.source.endLine))) {
+    const lines = unit.code.split('\n');
+    const offset = unit.readThrough && unit.readThrough < unit.source.endLine ? unit.readThrough - unit.source.line + 1 : 0;
+    const excerpt = []; let used = 0;
+    for (let at = offset; at < lines.length; at++) {
+      if (used + lines[at].length + 1 > remaining) break;
+      excerpt.push(lines[at]); used += lines[at].length + 1;
+    }
+    if (!excerpt.length) continue;
+    remaining -= used;
+    const firstLine = unit.source.line + offset, lastLine = firstLine + excerpt.length - 1;
+    packet.push({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind,
     contextKind: unit.contextKind || null,
-    file: unit.source.file, line: unit.source.line, endLine: unit.source.endLine, complete: unit.complete, reason: unit.reason,
+    file: unit.source.file, line: firstLine, endLine: lastLine, complete: offset === 0 && lastLine === unit.source.endLine, reason: unit.reason,
+    ...(offset || lastLine !== unit.source.endLine ? { localReading: { functionLine: unit.source.line, functionEndLine: unit.source.endLine,
+      previouslyReadThrough: unit.readThrough || unit.source.line - 1, reason: 'Complete function is stored locally. This request contains a contiguous segment, not a missing implementation.' } } : {}),
     // Code already supplies the full expression. Repeating its text, receiver
     // spelling and deep dependency paths at every call consumed most of the
     // model packet. Preserve resolution meaning and use exact supplied IDs.
-    relatedCalls: (unit.relatedCalls || []).map(call => ({ line: call.line, receiverTypes: call.receiverTypes,
+    relatedCalls: (unit.relatedCalls || []).map(call => ({ line: call.line, receiver: call.receiver, arguments: call.arguments, implicitReceiver: call.implicitReceiver, receiverTypes: call.receiverTypes,
       relationship: call.relationship, resolution: call.resolution,
       targets: call.targets.map(target => unitAt(target.file, target.line) || { file: target.file, line: target.line, contract: target.contract, signature: target.signature }) })),
     // Number every original line so the model need not reconstruct offsets.
-    code: unit.code.split('\n').map((line, index) => `${unit.source.line + index} | ${line}`).join('\n'),
+    code: excerpt.map((line, index) => `${firstLine + index} | ${line}`).join('\n'),
     structure: unit.structure ? { visibility: unit.structure.visibility, virtual: unit.structure.virtual,
       calls: unit.structure.calls.slice(0, 18).map(item => ({ at: item.source.line, target: position(item.target), name: item.target.name, relationship: item.relationship,
         conditions: (item.conditions || []).map(condition => ({ branch: condition.branch, expression: condition.expression })) })),
       guards: unit.structure.guards.slice(0, 12).map(item => ({ at: position(item.source), kind: item.kind })),
       assignments: unit.structure.writes.slice(0, 12).map(item => ({ at: item.source.line, kind: item.kind })),
       modifiers: unit.structure.modifiers.map(item => ({ at: position(item.source), target: position(item.target) })),
-      note: 'Declaration references and syntactic assignments are not runtime dispatch, persistent state, or payment proof.' } : null }));
+      note: 'Declaration references and syntactic assignments are not runtime dispatch, persistent state, or payment proof.' } : null });
+  }
+  return packet;
 }
 function makeContext(catalog, request, issue) {
-  const compiler = loadCompiler(catalog.root), engine = search(catalog);
+  const compiler = workspaceSnapshot.compiler(catalog), engine = search(catalog);
   const units = [], functions = new Map(); let budget = 110000, sourceLimit = 28;
   const unread = new Set();
   const add = (fn, reason) => {
@@ -140,16 +174,17 @@ function makeContext(catalog, request, issue) {
     if (retainedIdentity) return retainedIdentity.id;
     if (functions.has(id)) return id;
     if (units.length >= sourceLimit) { unread.add(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return null; }
-    const doc = catalog.document(file), lines = doc.lines.slice(fn.startLine - 1, Math.min(fn.endLine, fn.startLine + 799));
-    while (lines.join('\n').length > Math.min(budget, 32000)) lines.pop();
+    const doc = catalog.document(file), lines = doc.lines.slice(fn.startLine - 1, fn.endLine);
     if (!lines.length) { unread.add(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return null; }
-    const code = lines.join('\n'); budget -= code.length;
+    const code = lines.join('\n');
+    if (code.length > limits.sourceCharacters) throw Object.assign(new Error(`Local reading limit: ${file}:${fn.startLine}-${fn.endLine} exceeds the canonical function capacity. The implementation is present, not missing.`), { code: 'LOCAL_READING_LIMIT' });
+    budget -= code.length;
     const unit = { id, name: `${fn.contract ? fn.contract + '::' : ''}${fn.name}`, contract: fn.contract || null,
       ...(fn.kind === 'context' ? { contextKind: fn.contextKind || (fn.symbol ? 'state' : 'excerpt') } : {}),
       signature: catalog.hints(fn).identity.signature, kind: isTest(file) ? 'test-source' : 'production-source',
       source: { file, line: fn.startLine, endLine: fn.startLine + lines.length - 1, sourceHash: hash(doc.text) },
-      declarationEndLine: fn.endLine, complete: lines.length === fn.endLine - fn.startLine + 1, reason, code,
-      relatedCalls: fn.kind === 'context' ? [] : catalog.callLinks(fn).slice(0, 25).map(site => ({ line: site.line, expression: site.expression, receiverTypes: site.receiverTypes,
+      declarationEndLine: fn.endLine, complete: lines.length === fn.endLine - fn.startLine + 1, reason, code, readThrough: fn.startLine - 1,
+      relatedCalls: fn.kind === 'context' ? [] : catalog.callLinks(fn).map(site => ({ line: site.line, expression: site.expression, receiver: site.receiver, arguments: site.arguments, implicitReceiver: site.implicitReceiver, receiverTypes: site.receiverTypes,
         relationship: site.relationship, resolution: site.resolution, targets: site.candidates.slice(0, 8).map(target => ({ file: catalog.relative(target.file), line: target.startLine, signature: catalog.hints(target).identity.signature, contract: target.contract })) })),
       structure: compiler.available ? compiler.facts(file, fn.startLine, fn.name) : null };
     units.push(unit); functions.set(id, fn); unread.delete(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return id;
@@ -353,6 +388,7 @@ function makeContext(catalog, request, issue) {
       if (restoredIds.has(id) && id !== unit.id) { restored = { ...restored }; units.push(restored); }
       else functions.delete(id);
       restored.id = unit.id; restored.name = unit.name; functions.set(unit.id, fn); restoredIds.add(unit.id);
+      restored.readThrough = Math.max(restored.source.line - 1, Math.min(unit.readThrough || restored.source.line - 1, restored.source.endLine));
     }
   };
   const prioritize = draft => {
@@ -371,10 +407,13 @@ function makeContext(catalog, request, issue) {
     return deferred;
   };
   return { compiler, units, add, act, complete, restore, prioritize, gaps, unread,
-    documentation: documentation.inspect(catalog.root, [request.finding.title, content(issue?.reportText || request.finding.summary).current].join('\n')) };
+    documentation: workspaceSnapshot.docs(catalog, [request.finding.title, content(issue?.reportText || request.finding.summary).current].join('\n')) };
 }
 function accept(output, draft, units) {
-  if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > 8 || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
+  if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > limits.claims || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
+  for (const key of ['claims', 'evidence', 'transitions', 'questions']) capacity.assertLength(output[key] || [], limits[key], key);
+  if (output.walkthrough) capacity.assertLength(output.walkthrough.steps, limits.steps, 'walkthrough steps');
+  if (output.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(output.causal[key], limits[key], key);
   const known = new Map(units.map(unit => [unit.id, unit])), ids = new Set();
   const claims = output.claims.map(claim => {
     const id = text(claim.id, 100);
@@ -389,7 +428,7 @@ function accept(output, draft, units) {
   for (const correction of draft.corrections) if (correction.claimId && draft.claims.some(claim => claim.id === correction.claimId) && !ids.has(correction.claimId)) throw new Error('Model omitted a researcher-corrected claim scope. The corrected draft was preserved rather than silently discarding that premise.');
   for (const experiment of draft.experiments) if (experiment.claimId && draft.claims.some(claim => claim.id === experiment.claimId) && !ids.has(experiment.claimId)) throw new Error('Model omitted a scope linked to an executed check. The preceding draft and observation were preserved.');
   const evidenceIds = new Set();
-  const evidence = output.evidence.slice(0, 24).map(item => {
+  const evidence = output.evidence.map(item => {
     const id = text(item.id, 100), unit = known.get(item.sourceId);
     if (!/^[\w-]+$/.test(id) || evidenceIds.has(id) || !unit || item.claimId && !ids.has(item.claimId)) throw new Error('Model evidence has an unknown/duplicate identity or source.');
     evidenceIds.add(id);
@@ -417,13 +456,13 @@ function accept(output, draft, units) {
   const property = { text: text(output.property.text), basis: ['source-contract', 'test-expectation', 'local-documentation'].includes(output.property.basis) ? output.property.basis : 'report-assumption', evidence: refs(output.property.evidence),
     documentation: list(output.property.documentation, 6).filter(id => draft.documentation?.excerpts.some(item => item.id === id)) };
   if (!property.evidence.length && !property.documentation.length) property.basis = 'report-assumption';
-  const transitions = (output.transitions || []).slice(0, 12).filter(item => ids.has(item.claimId)).map(item => ({ id: text(item.id, 100), claimId: item.claimId,
+  const transitions = (output.transitions || []).filter(item => ids.has(item.claimId)).map(item => ({ id: text(item.id, 100), claimId: item.claimId,
     label: text(item.label), before: text(item.before), after: text(item.after), timing: ['within-transaction', 'transaction-outcome', 'later-action'].includes(item.timing) ? item.timing : 'unknown',
     conditions: list(item.conditions), evidence: refs(item.evidence).filter(id => evidence.some(entry => entry.id === id && (!entry.claimId || entry.claimId === item.claimId))), origin: 'source-prediction', observed: false }));
-  const questions = (output.questions || []).slice(0, 8).filter(item => ids.has(item.claimId)).map(item => ({
+  const questions = (output.questions || []).filter(item => ids.has(item.claimId)).map(item => ({
     id: text(item.id, 100), claimId: item.claimId, text: text(item.text), action: ['inspect', 'callers', 'symbol', 'references'].includes(item.action) ? item.action : 'missing-context', target: text(item.target, 1000), why: text(item.why) }));
   const presentation = output.walkthrough;
-  const prepared = presentation ? { steps: (Array.isArray(presentation.steps) ? presentation.steps : []).slice(0, 16).filter(step => evidenceIds.has(step.evidenceId)).map(step => ({
+  const prepared = presentation ? { steps: (Array.isArray(presentation.steps) ? presentation.steps : []).filter(step => evidenceIds.has(step.evidenceId)).map(step => ({
     evidenceId: step.evidenceId, title: text(step.title, 180), paragraphId: text(step.paragraphId, 100), phrase: text(step.phrase, 2000)
   })), assessment: {
     result: ['valid', 'invalid'].includes(presentation.assessment?.result) ? presentation.assessment.result : 'unclear',
@@ -461,7 +500,7 @@ function checkExplanations(output, previous, next, units) {
   };
   const checks = output.explanationReviews || [];
   for (const claim of previous.claims) if (!next.claims.some(item => item.id === claim.id)) throw new Error(`The second pass omitted statement ${claim.id}. Its unresolved path was preserved; the result was not applied.`);
-  if (!Array.isArray(checks) || checks.length > 48) throw new Error('The second pass returned invalid explanation checks.');
+  if (!Array.isArray(checks) || checks.length > limits.explanationReviews) throw new Error('The second pass returned invalid explanation checks.');
   const accepted = [];
   for (const check of checks) {
     const old = previous.evidence.find(item => item.id === check.evidenceId), item = next.evidence.find(item => item.id === check.evidenceId);
@@ -478,7 +517,8 @@ function checkExplanations(output, previous, next, units) {
   next.explanationReviews = accepted;
   return next;
 }
-async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest }) {
+async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, yieldAfterStage = false }) {
+  delete draft.yielded;
   const ensure = () => { if (signal?.aborted || !current()) throw Object.assign(new Error('Investigation superseded; partial work is preserved.'), { code: 'INVESTIGATION_SUPERSEDED' }); catalog.assertFresh(); };
   const save = async () => {
     ensure(); if (!sameSnapshot(draft.snapshot, snapshot(catalog, request, issue))) throw new Error('Source or report changed during review. Results were withheld.');
@@ -486,10 +526,19 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     draft.revision++; if (persist) write(root, draft); await publish(draft);
   };
   try {
-    ensure(); const context = makeContext(catalog, request, issue);
+    ensure(); workspaceSnapshot.validate(catalog, { force: true }); const context = makeContext(catalog, request, issue);
+    const priorNoProgress = draft.checkpoint?.noProgress, priorRepeated = draft.checkpoint?.repeated || 0;
+    if (priorNoProgress && priorRepeated && sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && !draft.claims.some(claim => claim.needsReassessment)) {
+      draft.phase = 'blocked'; draft.failureKind = 'structural'; draft.error = 'The same explanation check failed again without new evidence. Accepted code and claims are saved; inspect the named check before retrying.';
+      await save(); return draft;
+    }
     const lastAccepted = [...draft.runs].reverse().find(run => run.resultAccepted);
-    const resumeQuestions = draft.checkpoint?.stage === 'complete' && draft.failureKind === 'material-evidence' && draft.questions.length;
-    const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && draft.claims.length && draft.evidence.length &&
+    const resumeQuestions = draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' && draft.questions.length || draft.failureKind === 'local-reading');
+    // An accepted incomplete generation can honestly have no evidence yet,
+    // for example when its decisive statement lies in an unread local tail.
+    // Requiring an existing quote here restarts that prefix forever instead
+    // of restoring the reading cursor and challenging the saved question.
+    const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && draft.claims.length &&
       !draft.claims.some(claim => claim.needsReassessment) && (draft.checkpoint?.stage === 'challenge' ||
         resumeQuestions ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate');
@@ -541,17 +590,34 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const obtain = async (phase, previous = null, feedback = null) => {
       const data = input(phase);
       if (feedback) data.hostReview = feedback;
-      if (phase === 'challenge' && !feedback && !repairUsed) data.checkOnly = true;
+      const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
+      if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
       else if (phase === 'challenge') data.repairOnly = true;
-      const call = async input => { await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)) });
-        return invoke(input, { provider, executable, budget, signal, onProgress }); };
-      let response = await call(data); ensure();
+      const call = async input => {
+        const release = invoke === runProvider ? await require('./provider-slots').acquire(provider, signal) : () => {};
+        let reservation;
+        try {
+          ensure(); reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)) });
+          const result = await invoke(input, { provider, executable, budget, signal, onProgress }); await onResult?.(result.audit || {}, reservation); return result;
+        } catch (error) { if (error.audit) await onResult?.(error.audit, reservation); throw error; }
+        finally { release(); }
+      };
+      let response = await call(data); ensure(); workspaceSnapshot.validate(catalog, { force: true });
+      const recordReading = () => { for (const supplied of data.sources) {
+        const unit = context.units.find(item => item.id === supplied.id);
+        if (unit && supplied.line <= (unit.readThrough || unit.source.line - 1) + 1) unit.readThrough = Math.max(unit.readThrough || 0, supplied.endLine);
+      } };
       draft.runs.push({ ...response.audit, resultAccepted: false, ...(feedback ? { repair: true } : {}) });
       const validate = value => {
         if (data.checkOnly && value?.result) value = challengeFormat.checked(value, data.earlierDraft, reviewSchema);
         if (value?.mode === challengeFormat.PATCH) value = challengeFormat.apply(value, data.earlierDraft, reviewSchema);
         else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, reviewSchema);
         const accepted = accept(value, draft, context.units);
+        for (const entry of accepted.evidence) {
+          const unit = context.units.find(item => item.id === entry.sourceId), supplied = data.sources.find(item => item.id === entry.sourceId);
+          const readTo = Math.max(unit?.readThrough || (unit?.source.line || 1) - 1, supplied?.endLine || 0);
+          if (entry.source.endLine > readTo) throw Object.assign(new Error(`Evidence ${entry.id} refers to local code not yet supplied: ${entry.source.file}:${entry.source.line}-${entry.source.endLine}. Request that segment before explaining it.`), { code: 'LOCAL_READING_LIMIT' });
+        }
         return previous ? checkExplanations(value, previous, accepted, context.units) : accepted;
       };
       let accepted;
@@ -568,11 +634,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         draft.checkpoint = { stage: phase, snapshot: hash(draft.snapshot), repairUsed: true, followups, feedback: repairFeedback, at: now() }; await save();
         // One bounded repair with the exact rejected response and host error.
         // Never guess new line spans, silently fix meaning, or publish it.
-        response = await call({ ...data, checkOnly: false, repairOnly: phase === 'challenge', hostReview: repairFeedback }); ensure();
+        response = await call({ ...data, checkOnly: false, repairOnly: phase === 'challenge', hostReview: repairFeedback }); ensure(); workspaceSnapshot.validate(catalog, { force: true });
         draft.runs.push({ ...response.audit, resultAccepted: false, repair: true });
         accepted = validate(response.value);
       }
-      draft.runs.at(-1).resultAccepted = true; return accepted;
+      recordReading(); draft.runs.at(-1).resultAccepted = true; return accepted;
     };
     if (!resumeChallenge) {
     const parsed = await obtain('generate');
@@ -581,17 +647,19 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     for (const question of draft.questions.slice(0, 4)) {
       ensure(); draft.actions.push(context.act(question, draft.claims.find(claim => claim.id === question.claimId)));
     }
-    ensure(); draft.actions.push(context.complete(draft));
+    ensure(); const completion = context.complete(draft); draft.actions.push(completion);
+    draft.checkpoint = { stage: 'challenge', newContext: completion.sourceIds.length > 0 || draft.actions.some(action => action.kind !== 'source-preparation' && action.outcome === 'source-returned'), at: now() };
     draft.readingLimits = [...context.unread].slice(0, 40);
     if (draft.readingLimits.length) context.gaps.push(`Available locally but not read within this review's limit: ${draft.readingLimits.join('; ')}. Do not describe these as missing implementations.`);
     draft.sources = context.units; draft.phase = 'challenging';
+    if (yieldAfterStage) { draft.yielded = true; await save(); return draft; }
     }
     let savedFeedback = resumeChallenge ? draft.checkpoint?.feedback : null;
     if (resumeQuestions) {
       // A stopped material question can resume from its checked draft when
       // local retrieval yields new evidence. Retrying an unavailable external
       // fact must not regenerate the same explanation or spend another call.
-      if (followups >= 2 || !readQuestions(draft)) {
+      if (followups >= 2 || !(readQuestions(draft) || context.units.some(unit => unit.readThrough < unit.source.endLine))) {
         draft.phase = 'blocked'; draft.failureKind = 'material-evidence';
         draft.publication = guidePolicy.gate(draft); draft.error = draft.publication.problems[0] || 'No new local evidence resolves the remaining question.';
         draft.sources = context.units; await save(); return draft;
@@ -601,12 +669,14 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         instruction: 'Recheck the unresolved statements using the newly supplied local code. Preserve scope and genuine external unknowns.' };
     }
     draft.sources = context.units;
-    draft.checkpoint = { stage: 'challenge', snapshot: hash(draft.snapshot), repairUsed, followups, ...(savedFeedback ? { feedback: savedFeedback } : {}), at: now() }; await save();
+    draft.checkpoint = { stage: 'challenge', snapshot: hash(draft.snapshot), repairUsed, followups, newContext: !!draft.checkpoint?.newContext, ...(savedFeedback ? { feedback: savedFeedback } : {}), at: now() }; await save();
     let next = await obtain('challenge', draft, savedFeedback);
     if (next.walkthrough) next.walkthrough.reportText = issue?.reportText || request.finding.summary || '';
     let firstGate = guidePolicy.gate({ ...draft, ...next });
     while (!firstGate.ready) {
-      const progress = followups < 2 && readQuestions(next);
+      const requiredSources = new Set([...next.evidence.map(item => item.sourceId), ...next.claims.map(item => item.entry)]);
+      const unreadTail = context.units.some(unit => requiredSources.has(unit.id) && unit.readThrough < unit.source.endLine);
+      const progress = followups < 2 && (readQuestions(next) || unreadTail);
       // Stop if the missing fact cannot be obtained. A closed explanation with
       // invalid references/order gets one repair; open speculation does not.
       const structural = next.causal?.outcome !== 'blocked' && next.claims.every(claim => claim.status !== 'unresolved' && !claim.unknowns.length) && !next.conclusion.limitations.length;
@@ -626,16 +696,26 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       return { claimId: claim.id, before: previous?.status || 'not-separated', after: claim.status, reason: claim.reason };
     });
     Object.assign(draft, next); draft.challengeChanges = changes;
+    draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
     draft.publication = guidePolicy.gate(draft);
     if (draft.publication.ready) draft.publication.digest = guidePolicy.digest(draft);
     draft.phase = draft.publication.ready ? 'ready' : 'blocked';
     draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), followups, repairUsed, at: now() };
-    if (!draft.publication.ready) { draft.failureKind = 'material-evidence'; draft.error = draft.publication.problems[0]; }
+    if (!draft.publication.ready) {
+      draft.failureKind = draft.publication.details?.some(item => item.kind === 'local-reading') ? 'local-reading' :
+        draft.publication.details?.some(item => item.kind === 'material-evidence') ? 'material-evidence' : 'structural';
+      draft.error = draft.publication.problems[0];
+      if (draft.failureKind === 'structural') {
+        const noProgress = hash([draft.causal, draft.publication.problems]);
+        draft.checkpoint = { ...draft.checkpoint, stage: 'challenge', feedback: { problems: draft.publication.problems, details: draft.publication.details },
+          noProgress, repeated: noProgress === priorNoProgress ? priorRepeated + 1 : 0 };
+      }
+    }
     draft.actions = draft.actions.slice(-40); draft.runs = draft.runs.slice(-12);
     await save(); return draft;
   } catch (error) {
     if (error.code === 'INVESTIGATION_SUPERSEDED' || signal?.aborted || !current()) return draft;
-    draft.phase = 'blocked'; draft.failureKind = error.code === 'REPORT_PAUSED' ? 'paused' : error.code === 'REPORT_BUDGET' ? 'budget' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
+    draft.phase = 'blocked'; draft.failureKind = ['REPORT_PAUSED', 'PROVIDER_CAPACITY'].includes(error.code) ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : error.code === 'LOCAL_READING_LIMIT' ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
     if (error.audit) draft.runs.push(error.audit);
     // A failed provider/schema/challenge must not erase a usable earlier draft.
     try { await save(); } catch { /* never overwrite a changed source context */ }
@@ -648,4 +728,4 @@ function create({ findingId, request, issue, catalog }) {
     claims: [], evidence: [], transitions: [], questions: [], sources: [], actions: [], experiments: [], corrections: [], runs: [],
     conclusion: { status: 'insufficient-evidence', text: 'Preparation has not yet established source-based conclusions.', humanReviewed: false, origin: 'preparation' } };
 }
-module.exports = { snapshot, sameSnapshot, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest };
+module.exports = { snapshot, sameSnapshot, compatible, revalidate, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest };

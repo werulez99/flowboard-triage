@@ -1,0 +1,68 @@
+'use strict';
+const test = require('node:test'), assert = require('node:assert/strict');
+const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+const { execFile } = require('node:child_process'), { promisify } = require('node:util');
+const { analyze, sourceInBackground } = require('../extension/runner-adapter');
+const { SourceCatalog } = require('../extension/source');
+const snapshots = require('../extension/workspace-snapshot');
+const slots = require('../extension/provider-slots');
+const native = process.env.FLOWBOARD_EXTENSION_PATH;
+function directory(t) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-shared-check-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); return root; }
+test('provider slots are bounded across local processes and cancelled waiters reserve nothing', async t => {
+  const root = directory(t), one = await slots.acquire('codex', null, { directory: root }), two = await slots.acquire('codex', null, { directory: root });
+  t.after(() => { one(); two(); });
+  const module = path.resolve(__dirname, '../extension/provider-slots.js');
+  const child = await promisify(execFile)(process.execPath, ['-e', `require(${JSON.stringify(module)}).acquire('codex',null,{directory:process.argv[1],timeoutMs:120}).then(release=>{release();console.log('unexpected')}).catch(error=>console.log(error.code))`, root]);
+  assert.equal(child.stdout.trim(), 'PROVIDER_CAPACITY'); assert.equal(fs.readdirSync(root).length, 2);
+  const controller = new AbortController(), waiting = slots.acquire('codex', controller.signal, { directory: root });
+  controller.abort(); await assert.rejects(waiting, error => error.code === 'INVESTIGATION_SUPERSEDED');
+  one(); const next = await slots.acquire('codex', null, { directory: root }); next(); two();
+  assert.equal(fs.readdirSync(root).length, 0);
+});
+test('source-worker consumers cancel independently; the final cancellation releases single-flight ownership', { skip: !native }, async t => {
+  const root = directory(t); fs.cpSync(path.join(__dirname, '../examples/project'), root, { recursive: true });
+  const a = new AbortController(), b = new AbortController();
+  const first = sourceInBackground(native, root, a.signal), second = sourceInBackground(native, root, b.signal);
+  a.abort(); await assert.rejects(first, error => error.code === 'ABORT_ERR');
+  const result = await second; assert.ok(result.result.sourceStamps.size);
+  const last = new AbortController(), cancelled = sourceInBackground(native, root, last.signal); last.abort();
+  await assert.rejects(cancelled, error => error.code === 'ABORT_ERR');
+  assert.ok((await sourceInBackground(native, root)).result.sourceStamps.size, 'An abandoned worker cannot block a new consumer.');
+});
+test('reconciliation detects missed additions/deletions in configured dependencies and content-only edits', { skip: !native }, async t => {
+  const root = directory(t); fs.mkdirSync(path.join(root, 'src'));
+  const file = path.join(root, 'src/Example.sol');
+  fs.writeFileSync(file, 'pragma solidity ^0.8.20;\ncontract Example { function read() external pure returns(uint) { return 1; } }\n');
+  fs.mkdirSync(path.join(root, 'node_modules/fictional'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'remappings.txt'), 'fictional/=node_modules/fictional/\n');
+  const index = async () => { const value = await analyze(native, root); return new SourceCatalog(root, value.runner, value.result); };
+  let catalog = await index(); snapshots.validate(catalog);
+  const dependency = path.join(root, 'node_modules/fictional/Extra.sol');
+  fs.writeFileSync(dependency, 'pragma solidity ^0.8.20;\ncontract Extra {}\n');
+  assert.throws(() => snapshots.validate(catalog, { force: true }), /added or removed|changed/);
+  catalog = await index(); snapshots.validate(catalog); fs.unlinkSync(dependency);
+  assert.throws(() => snapshots.validate(catalog, { force: true }), /ENOENT|added or removed|changed/);
+  catalog = await index(); const stat = fs.statSync(file);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('return 1', 'return 2')); fs.utimesSync(file, stat.atime, stat.mtime);
+  assert.throws(() => snapshots.validate(catalog), /changed since|Source changed/, 'The very first snapshot checks the index content, not only prior cached documents.');
+  catalog = await index(); snapshots.validate(catalog);
+  fs.writeFileSync(path.join(root, 'foundry.lock'), '{"dependency":"new"}');
+  assert.throws(() => snapshots.validate(catalog, { force: true }), /configuration changed/);
+});
+test('dirty dependency policy covers code/report/config but ignores unrelated scratch work', () => {
+  const root = path.join(os.tmpdir(), 'fictional-project');
+  for (const file of ['src/C.sol','report.md','README.md','docs/rules.md','foundry.toml','foundry.lock','pnpm-lock.yaml','.flowboard/report.json']) assert.equal(snapshots.relevantDirty(root, path.join(root, file), 'report.md'), true, file);
+  for (const file of ['scratch.md','notes.txt','package.json','scratch.json']) assert.equal(snapshots.relevantDirty(root, path.join(root, file), 'report.md'), false, file);
+  assert.equal(snapshots.relevantDirty(root, path.join(root, '../other/C.sol'), 'report.md'), false);
+});
+test('call bindings preserve parameter position, named arguments, library receiver and literal contents', () => {
+  const { boundArgument, expression } = require('../extension/call-bindings');
+  const header = 'function settle(uint256 amount, address recipient) internal';
+  assert.equal(boundArgument({ arguments: '10, msg.sender' }, 'amount', header), '10');
+  assert.notEqual(expression('10'), expression('0'));
+  assert.equal(boundArgument({ arguments: '{recipient: msg.sender, amount: balance[key]}' }, 'amount', header), 'balance[key]');
+  assert.equal(boundArgument({ arguments: '10', receiver: 'account', implicitReceiver: true }, 'self', 'function add(Account storage self, uint amount) internal'), 'account');
+  assert.equal(boundArgument({ arguments: 'tuple(1, 2), msg.sender' }, 'amount', header), 'tuple(1, 2)');
+  assert.equal(boundArgument({ arguments: '10, msg.sender' }, 'nonexistent', header), null);
+  assert.notEqual(expression('"a b"'), expression('"ab"')); assert.equal(expression('value /* comment */ + 1'), 'value+1');
+});

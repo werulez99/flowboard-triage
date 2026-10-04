@@ -6,6 +6,7 @@
   else root.FlowboardWalkthrough = api;
 })(globalThis, function() {
   'use strict';
+  const capacity = typeof module === 'object' && module.exports ? require('./review-capacity') : globalThis.FlowboardCapacity;
   function paragraphs(report = '') {
     const result = [];
     const expression = /[^\r\n]+(?:\r?\n(?![ \t]*\r?\n)[^\r\n]+)*/g;
@@ -73,7 +74,7 @@
       contradicts: evidence.find(item => item.id === proposed?.opposingEvidence && item.stance === 'contradicts') || evidence.find(item => item.stance === 'contradicts') };
   }
   function build(draft, report) {
-    if (!draft || draft.phase !== 'ready' || !draft.publication?.ready || draft.publication.policy !== 'checked-explanation-v3' || !draft.causal) return null;
+    if (!draft || draft.phase !== 'ready' || !draft.publication?.ready || draft.publication.policy !== capacity.POLICY || !draft.causal) return null;
     if (typeof draft.walkthrough?.reportText === 'string' && draft.walkthrough.reportText !== report) return null;
     const units = new Map(draft.sources.map(item => [item.id, item]));
     const valid = draft.evidence.filter(item => exact(item, units.get(item.sourceId)) && item.explanationReview &&

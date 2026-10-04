@@ -65,14 +65,19 @@ class TriageBoard {
   async reportProgress() {
     if (this.disposed) return;
     const report = this.callbacks.reportPreparation?.();
-    await this.post({ type: 'triage:reportPreparation', report: report?.status() });
+    const status = report?.status();
+    await this.post({ type: 'triage:reportPreparation', report: status });
     const model = this.models.get(this.activeId);
-    if (!model || !this.investigationCurrent(model)) return;
+    // Token progress only updates status. No source scan, draft parse or digest
+    // is needed until a different immutable report artifact is published.
+    const artifact = report?.state?.publication?.artifacts?.[model?.id];
+    if (!model || !status?.published || !artifact || model.displayedArtifact === artifact || !this.investigationCurrent(model)) return;
     const draft = investigationEngine.read(this.root, model.id);
     if (!draft || !investigationEngine.sameSnapshot(draft.snapshot, investigationEngine.snapshot(model.catalog, model.request, model.issue))) return;
     model.investigationDraft = draft;
     if (report?.published(draft)) await this.prepareInvestigationCards(model);
     await this.post({ type: 'triage:investigation', issueId: model.id, token: model.token, draft: this.exposed(draft) });
+    model.displayedArtifact = artifact;
   }
   scope(message) { return { issueId: message?.issueId || this.activeId, token: message?.token || this.activeToken }; }
   isActive(scope) { return !this.disposed && scope.issueId === this.activeId && scope.token === this.activeToken; }
@@ -265,7 +270,7 @@ class TriageBoard {
     try {
       const fresh = investigationEngine.create({ findingId: id, request, issue, catalog });
       const saved = investigationEngine.read(this.root, id);
-      if (saved && investigationEngine.sameSnapshot(saved.snapshot, fresh.snapshot)) { investigationEngine.validateCurrent(catalog, saved); model.investigationDraft = saved; }
+      if (saved && investigationEngine.compatible(saved, catalog, request, issue)) { investigationEngine.validateCurrent(catalog, saved); model.investigationDraft = saved; }
       else {
         if (saved && this.callbacks.investigationPersistence !== false) investigationEngine.archive(this.root, saved);
         // Corrections survive as explicitly unsupported researcher premises.
@@ -295,6 +300,30 @@ class TriageBoard {
       else if (card.fsPath) Object.assign(card, { code: 'Cached source target is unavailable. Reopen current source context; no old code is shown.',
         fsPath: '', file: '', startLine: 0, endLine: 0, calls: [], memberCalls: [], modifiers: [], notFound: true });
     }
+    // Materialize required native functions in the SAME initial load as the
+    // checked guide. Auto-start must never race addFunction/hint messages.
+    const exposed = this.exposed(model.investigationDraft);
+    if (exposed?.phase === 'ready') {
+      const needed = new Set(exposed.causal.events.map(event => exposed.evidence.find(item => item.id === event.evidenceId)?.sourceId));
+      let x = Math.max(0, ...state.cards.map(card => (card.x || 0) + 800));
+      for (const unit of exposed.sources.filter(unit => needed.has(unit.id))) {
+        const fn = catalog.resolveUnit(unit);
+        if (state.cards.some(card => model.sourceById.has(card.id) && catalog.key(model.sourceById.get(card.id)) === catalog.key(fn))) continue;
+        if (state.cards.length >= 200) throw new Error('This saved canvas has 200 cards. A required walkthrough function cannot be shown yet. Your layout and notes are preserved; remove unneeded exploration cards before reopening the guide.');
+        const cardId = `finding:${id}:investigation-${unit.id}`;
+        model.sourceById.set(cardId, fn); model.expandedIds.add(cardId);
+        hints[cardId] = { ...catalog.hints(fn), description: exposed.causal.events.find(event => exposed.evidence.find(item => item.id === event.evidenceId)?.sourceId === unit.id)?.role || '' };
+        state.cards.push({ id: cardId, name: fn.name, contract: fn.contract, kind: fn.kind, code: catalog.code(fn),
+          file: path.basename(fn.file), fsPath: fn.file, startLine: fn.startLine, endLine: fn.endLine, x, y: 0,
+          calls: fn.calls || [], memberCalls: fn.memberCalls || [], callArity: fn.callArity || {}, newCalls: fn.newCalls || [], modifiers: fn.modifiers || [], notFound: false });
+        x += 800;
+      }
+      for (const edge of this.investigationLinks(model)) {
+        if (!edges.some(item => item.from === edge.from && item.to === edge.to)) edges.push(edge);
+        if (!state.edges.some(item => item.from === edge.from && item.to === edge.to)) state.edges.push(edge);
+      }
+      model.displayedArtifact = this.callbacks.reportPreparation?.()?.state?.publication?.artifacts?.[id];
+    }
     // Preparation can fail before a load message exists. Do not leave a render
     // waiter for that failed selection to reject during a later panel close.
     const rendered = new Promise((resolve, reject) => {
@@ -309,14 +338,13 @@ class TriageBoard {
       finding: displayedFinding, readOnly: reviewStale, sourceStale: reviewStale, historicalAssessment,
       library: store.library(this.root), reportText: issue?.reportText || '',
       investigation: model.investigation,
-      investigationDraft: this.exposed(model.investigationDraft), reportPreparation: this.callbacks?.reportPreparation?.()?.status(),
+      investigationDraft: exposed, reportPreparation: this.callbacks?.reportPreparation?.()?.status(),
       semanticEnabled: ['claude', 'codex'].includes(this.vscode.workspace.getConfiguration?.('flowboardTriage', this.vscode.Uri.file(this.root))?.get('semanticProvider', 'none')),
       retrieval: issue?.retrieval || null, validation: { cards: nodes.length, sourceCalls: checked.sourceCalls, downgradedCalls: checked.warnings.length, semanticVerified: false },
       unresolved: issue?.unresolved || [], warnings,
       diagnostics, git, reportRevision: request.finding.reportRevision || null,
       hints });
     await rendered;
-    if (this.exposed(model.investigationDraft)?.phase === 'ready') await this.prepareInvestigationCards(model);
     this.startInvestigation(model).catch(error => this.notify(error.message, true, { issueId: id, token: request.id }));
     return nodes;
   }
@@ -381,6 +409,7 @@ class TriageBoard {
     if (!first) return;
     const sourceIds = draft.causal?.events?.map(event => draft.evidence.find(entry => entry.id === event.evidenceId)?.sourceId).filter(Boolean) ||
       [first.entry, ...draft.evidence.filter(item => first.evidence.includes(item.id)).map(item => item.sourceId)].filter(Boolean);
+    const hints = {};
     for (const sourceId of [...new Set(sourceIds)]) {
       const unit = draft.sources.find(item => item.id === sourceId); if (!unit) continue;
       const fn = model.catalog.resolveUnit(unit);
@@ -391,10 +420,10 @@ class TriageBoard {
       model.expandedIds.add(id); model.sourceById.set(id, fn);
       // Add-without-parent places only the NEW card; no camera or old-card move.
       this.native.addFunction(fn, model.catalog.code(fn), null, id);
-      await this.post({ type: 'triage:hint', issueId: model.id, token: model.token, id,
-        hint: { ...model.catalog.hints(fn), description: 'Related code. Read the linked statement and notes to see why it matters and what is still unclear.' } });
+      hints[id] = { ...model.catalog.hints(fn), description: 'Related code. Read the linked statement and notes to see why it matters and what is still unclear.' };
       if (!this.investigationCurrent(model)) return;
     }
+    if (Object.keys(hints).length) await this.post({ type: 'triage:hints', issueId: model.id, token: model.token, hints });
     await this.post({ type: 'triage:investigationLinks', issueId: model.id, token: model.token, connections: this.investigationLinks(model) });
   }
   async startInvestigation(model, retry = false) {
@@ -452,9 +481,11 @@ class TriageBoard {
       selection: new this.vscode.Range(source.line - 1, 0, source.endLine - 1, 0), preview: false });
     const fn = model.catalog.resolveUnit(unit);
     let cardId = [...model.sourceById].find(([, value]) => model.catalog.key(value) === model.catalog.key(fn))?.[0];
-    if (!cardId) {
-      if (model.expandedIds.size >= 200) throw new Error('The current map has reached its source-card limit.');
-      cardId = `finding:${model.id}:investigation-${unit.id}`;
+    if (!cardId || message.materialize === true) {
+      if (!cardId && model.expandedIds.size >= 200) throw new Error('The current map has reached its source-card limit.');
+      // Exploration can remove a known native card. Restore that exact checked
+      // function on an explicit walkthrough/evidence navigation, not on progress.
+      cardId ||= `finding:${model.id}:investigation-${unit.id}`;
       model.expandedIds.add(cardId); model.sourceById.set(cardId, fn);
       this.native.addFunction(fn, model.catalog.code(fn), null, cardId);
       await this.post({ type: 'triage:hint', issueId: model.id, token: model.token, id: cardId,

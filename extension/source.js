@@ -5,8 +5,9 @@ const crypto = require('node:crypto');
 const p = require('./protocol');
 const { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables, matching } = require('./solidity-text');
 const { functionSignature } = require('./report-content');
+const configurationFiles = ['foundry.toml', 'remappings.txt', 'foundry.lock', 'soldeer.lock', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'hardhat.config.js', 'hardhat.config.ts'];
 function projectConfigurationStamp(root) {
-  return ['foundry.toml', 'remappings.txt'].map(name => {
+  return configurationFiles.map(name => {
     try { return name + ':' + crypto.createHash('sha256').update(fs.readFileSync(path.join(root, name))).digest('hex'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; return name + ':absent'; }
   }).join('|');
@@ -370,7 +371,7 @@ class SourceCatalog {
       // Namespaced struct construction is data construction, not an external
       // call obligation. The type must actually exist in the parsed index.
       if (site.recv && /^[A-Z]/.test(site.recv) && (this.result.structs.has(site.name) || this.result.structs.has(`${site.recv}.${site.name}`))) continue;
-      let name = site.name, arity = site.argCount, memberCandidates = null, receiverTypes = [];
+      let name = site.name, arity = site.argCount, memberCandidates = null, receiverTypes = []; const libraryCandidates = new Set();
       if (site.isNew) name = `${site.name}::constructor`;
       else if (site.recv && !['this', 'super'].includes(site.recv)) {
         memberCandidates = [];
@@ -379,7 +380,8 @@ class SourceCatalog {
           const direct = this.candidates(`${type}::${site.name}`, fn.contract, false, arity);
           if (direct.length) memberCandidates.push(...direct);
           else for (const library of new Set([...(this.result.usingFor.get(type) || []), ...this.result.usingForWildcard])) {
-            memberCandidates.push(...this.candidates(`${library}::${site.name}`, fn.contract, false, arity + 1));
+            const methods = this.candidates(`${library}::${site.name}`, fn.contract, false, arity + 1);
+            methods.forEach(method => libraryCandidates.add(this.key(method))); memberCandidates.push(...methods);
           }
         }
         memberCandidates = [...new Map(memberCandidates.map(value => [this.key(value), value])).values()];
@@ -391,9 +393,11 @@ class SourceCatalog {
       // ordinary Solidity builtins out of this dependency list.
       if (!candidates.length && !site.recv && /^(?:require|assert|revert|keccak256|sha256|ripemd160|ecrecover|addmod|mulmod|blockhash|gasleft|selfdestruct|type|address|payable|bool|string|bytes\d*|u?int\d*)$/.test(site.name)) continue;
       const line = fn.startLine + parts.clean.slice(0, parts.bodyStart + occurrence.index).split('\n').length - 1;
+      const open = parts.body.indexOf('(', occurrence.index), close = matching(parts.body, open);
       const target = candidates.length === 1 ? candidates[0] : null, targetHeader = target && this.anatomy(target)?.header;
       const established = !site.recv && !site.isNew && target && target.contract === fn.contract && /\b(internal|private)\b/.test(targetHeader || '') && !/\bvirtual\b/.test(targetHeader || '') && !new RegExp(`\\b${escaped(site.name)}\\b`).test(parts.header.slice(parts.header.indexOf('(')));
-      links.push({ name, receiverTypes, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.recv ? site.recv + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates,
+      links.push({ name, receiver: site.recvChain?.join('.') || site.recv || 'internal', arguments: close >= 0 ? parts.rawBody.slice(open + 1, close) : null,
+        implicitReceiver: !!target && libraryCandidates.has(this.key(target)), receiverTypes, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.recv ? site.recv + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates,
         relationship: established ? 'call' : 'hypothesis', resolution: established ? 'direct-internal' : candidates.length > 1 ? 'ambiguous' : candidates.length ? 'declaration-candidate' : 'unresolved' });
     }
     this.links.set(key, links); return links;
@@ -457,4 +461,4 @@ class SourceCatalog {
       projectConfiguration: this.projectConfigurationStamp, analysisConfiguration: this.analysisConfiguration })).digest('hex');
   }
 }
-module.exports = { SourceCatalog, sourceDocument, signature, projectConfigurationStamp };
+module.exports = { SourceCatalog, sourceDocument, signature, projectConfigurationStamp, configurationFiles };

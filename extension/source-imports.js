@@ -32,6 +32,7 @@ class ImportContext {
         try { const real = fs.realpathSync(target); if (contained(this.catalog.root, real) && this.catalog.sourceStamps.has(real)) queue.push(real); } catch { /* leave the import unresolved */ }
       }
     }
+    if (queue.some(file => !found.has(file))) this.incomplete = true;
     this.cache.set(from, found); return found;
   }
   narrow(candidates, from) {

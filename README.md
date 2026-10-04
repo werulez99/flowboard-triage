@@ -2,7 +2,7 @@
 
 A source-linked Solidity review workspace for developers and auditors, built on the original Solidity Flowboard canvas.
 
-Import an audit report, read the code and compare the evidence for and against its findings. Version **0.14.0** prepares all imported findings in a durable background queue when a provider is enabled. Checked walkthroughs stay private until the entire report is ready. **Previous step** and **Next step** guide the original Solidity Flowboard function cards, exact lines and adjacent explanations; they do not replace the native graph. Navigation, notes, positions and Undo remain available. An AI interpretation is not a verified finding.
+Import an audit report, read the code and compare the evidence for and against its findings. Version **0.15.0** prepares all imported findings in a durable background queue when a provider is enabled. Checked walkthroughs stay private until the entire report is ready. **Previous step** and **Next step** guide the original Solidity Flowboard function cards, exact lines and adjacent explanations; they do not replace the native graph. Navigation, notes, positions and Undo remain available. An AI interpretation is not a verified finding.
 
 This is an independent, MIT-licensed companion, not an official Anchabadze release. Source indexing is heuristic. A diagram helps you understand a claim; it does not establish vulnerability validity or runtime reachability.
 
@@ -13,7 +13,7 @@ Download the installation ZIP from [GitHub Releases](https://github.com/werulez9
 For an unreleased checkout, run `npm run package` and use its versioned files in `dist/`. A locally built version is not necessarily published on GitHub Releases.
 
 1. Extract the release ZIP. Open your Solidity project in Cursor or VS Code.
-2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.14.0.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live. Installation does not reload an already running extension; reload the editor when your work is saved.
+2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.15.0.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live. Installation does not reload an already running extension; reload the editor when your work is saved.
 3. Reload the editor window. Open only a workspace you trust.
 4. Run **Flowboard Triage: Import Report** and choose a `.txt` or `.md` report. The findings list opens first. With a configured provider, every legitimate finding is queued without needing selection; indexing runs in a worker and is reused. Re-importing retains saved reviews.
 5. Choose **Walkthrough** or **Read code**. Until every finding is checked, a compact status dock shows actual progress or the reason preparation stopped; the existing code canvas stays available. When the report is published, the selected function opens at readable scale with its checked explanation. **Read report** retains the complete original text. Optional edits live in **More → Edit review**.
@@ -25,7 +25,15 @@ Each finding has its own saved canvas. Switching replaces the visible map, rathe
 
 No compiler, Slither, model API key or paid service is required for default source mode. The adapter is pinned to **Solidity Flowboard 1.2.0** because upstream has no stable external integration API. Another dependency version produces an explicit setup error.
 
-## Checked walkthroughs in 0.14
+## Preparation reliability in 0.15
+
+Report locations and applicability now use the same ambiguity-safe path identity. Generation, challenge and storage share one analytical capacity contract. Two workers alternate new findings with saved continuations; exhausting one finding's allowance does not pause unrelated work. Provider-wide local slots and atomic report reservations bound dispatch without increasing the authorized allowance.
+
+Full local functions are stored separately from model excerpts. Unread tails can be acquired in a later segment, then reviewed in a substantive patch challenge. Progress updates no longer rehash the project or replace the active editing panel. Required native cards are present before a ready guide starts. Changed evidence withdraws generated content while keeping the researcher's typed correction.
+
+The strict whole-report barrier is unchanged. A genuinely blocked finding still withholds the report. See [preparation, limits and verification](docs/GUIDED-READING.md); local tests and screenshots do not establish universal explanation quality or a live editor's activation.
+
+## Checked walkthroughs
 
 The backend privately prepares every imported finding, including those never selected. A report is published only when every legitimate finding has a current checked artifact and no import ambiguity remains. Step 1 then opens on the native function canvas unless the researcher deliberately started exploring. **Previous step** and **Next step** reveal full functions, exact lines and adjacent actor/condition/input/state explanations. Typed scenario connections are separate from the static exploration graph.
 

@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
@@ -44,6 +44,10 @@
         "flowboardTriage.reportRequestLimit": {
           "type": "integer", "default": 12, "minimum": 1, "maximum": 10000, "scope": "resource",
           "description": "Shared model-request allowance for the entire imported report, not each finding. Preparation pauses at this limit and saves accepted stages. Resume explicitly adds another allowance. Claude's per-request USD cap also applies; Codex account charges/limits still apply."
+        },
+        "flowboardTriage.preparationWorkers": {
+          "type": "integer", "default": 2, "minimum": 1, "maximum": 4, "scope": "resource",
+          "description": "Concurrent source-review stages for this report. Does not increase any request or spending allowance. A shared local provider limit also applies."
         },
         "flowboardTriage.analysisMode": {
           "type": "string", "enum": ["source", "slither"], "default": "source",

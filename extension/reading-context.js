@@ -42,7 +42,7 @@ function relatedCode(catalog, anchors) {
         else gaps.add(`The ${modifier.name} guard on ${fn.contract}::${fn.name} could not be read.`);
       }
       for (const site of catalog.callLinks(fn)) {
-        if (site.resolution !== 'direct-internal') gaps.add(`${catalog.relative(fn.file)}:${site.line}: ${site.expression}${site.receiverTypes?.length ? ' (declared ' + site.receiverTypes.join(' or ') + ')' : ''} ${site.candidates.length > 1 ? 'has several possible implementations' : 'has no established running implementation'}.`);
+        if (site.resolution !== 'direct-internal') gaps.add(`${catalog.relative(fn.file)}:${site.line}: ${site.expression}${site.receiverTypes?.length ? ' (declared ' + site.receiverTypes.join(' or ') + ')' : ''} — ${site.candidates.length > 1 ? 'ambiguous overload or implementation' : site.candidates.length ? 'local declaration available; the runtime receiver remains to check' : 'no local target resolved; inspect the dependency or receiver'}.`);
         // Alternatives remain listed on the calling context, but recursively
         // following every interface implementation creates unrelated routes.
         if (site.candidates.length > 1) continue;

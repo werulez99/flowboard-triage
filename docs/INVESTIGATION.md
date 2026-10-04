@@ -1,4 +1,4 @@
-# Source investigation runtime — 0.14
+# Source investigation runtime — 0.15
 
 This is a bounded defensive review of a selected report, not an autonomous vulnerability scanner. Quotes and source identity are checked mechanically; their interpretations are not automatically proven. Generated work never changes the researcher's manual finding verdict.
 
@@ -73,7 +73,7 @@ In the local check, all six installed-0.11.0 cases and six post-change cases had
 
 Claim status can be supported, contradicted, narrowed or unresolved **within that scope**. The generated finding-level status remains `insufficient-evidence`, with `humanReviewed: false`. A researcher decides confirmed, invalid, design-decision, insufficient-evidence or already-fixed in the separate manual Review workflow. Local JSON is editable; the draft is not a signed audit trail.
 
-Generation is limited to 40 source excerpts, 110,000 code characters and 800 lines/32,000 characters per excerpt. Version 0.14 permits generation, challenge, one response repair and two new-code checks within a shared report allowance. Required incomplete functions block a published walkthrough. The host permits at most 8 claims, 24 exact evidence entries and 12 predictions; the prompt requests a smaller result. The causal model permits at most 18 events and 40 obligations; a material explanation that cannot fit remains blocked rather than silently shortened. The saved file is capped at 3 MiB. A blocked dependency remains a question; reaching a search bound never establishes absence of recovery.
+Canonical source storage holds up to 40 complete local units, at most 1 MiB of characters each. A model packet contains at most 110,000 code characters, with explicit segmented reading and checked original line identities. The former 800-line/32,000-character prefix is no longer the function store. Generation, challenge, one response repair and two new-code checks remain bounded by report and finding allowances. Required unread material blocks publication. The shared capacity contract admits 8 claims, 24 exact evidence entries, 12 predictions, 18 events, 64 obligations, 30 relationships and 112 typed checks. No collection is silently truncated to meet these limits. The saved file has a separate 48 MiB aggregate byte limit; exceeding it preserves the previous draft and reports the local resource limit. A blocked dependency remains a question; reaching a search bound never establishes absence of recovery.
 
 ## Provider boundary
 

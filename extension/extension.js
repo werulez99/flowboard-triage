@@ -10,6 +10,7 @@ const { SourceCatalog, projectConfigurationStamp: configurationStamp } = require
 const { TriageBoard } = require('./board');
 const { importReport, refreshFindingMap } = require('./report');
 const { ReportPreparation } = require('./report-preparation');
+const { relevantDirty } = require('./workspace-snapshot');
 const UPSTREAM = 'anchabadze.solidity-flowboard';
 const VERSION = '1.2.0';
 
@@ -20,7 +21,7 @@ function activate(context) {
   let queue = Promise.resolve();
   const boards = new Map(), processed = new Map(), watchers = new Map();
   const catalogs = new Map(), sourceEpochs = new Map(), selections = new Map(), dirtySources = new Set();
-  const preparations = new Map(), preparingCatalogs = new Map();
+  const preparations = new Map();
   function invalidate(root) { catalogs.delete(root); sourceEpochs.set(root, (sourceEpochs.get(root) || 0) + 1); }
   function operation(folder, kind = 'delivery', selectedId) {
     const root = folder.uri.fsPath;
@@ -35,9 +36,9 @@ function activate(context) {
       const preparation = new ReportPreparation(root, {
         configuration: () => { const config = vscode.workspace.getConfiguration('flowboardTriage', folder.uri), provider = config.get('semanticProvider', 'none');
           return { provider, executable: config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined,
-            budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 12) }; },
-        dirty: () => hasDirtySource(root) || !vscode.workspace.isTrusted || (vscode.workspace.textDocuments || []).some(doc => doc.isDirty && p.contained(root, doc.uri.fsPath) && /\.(?:md|txt|json)$/.test(doc.uri.fsPath)),
-        catalog: async () => { trust(); const result = await sourceCatalog(folder, upstream(), { mode: 'source', slitherPath: '' }, p.gitState(root), operation(folder, 'background')); return result.catalog; },
+            budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 12), workers: config.get('preparationWorkers', 2) }; },
+        dirty: () => !vscode.workspace.isTrusted || (vscode.workspace.textDocuments || []).some(doc => doc.isDirty && relevantDirty(root, doc.uri.fsPath, preparation.state?.reportName)),
+        catalog: async signal => { trust(); const result = await sourceCatalog(folder, upstream(), { mode: 'source', slitherPath: '' }, p.gitState(root), { ...operation(folder, 'background'), signal }); return result.catalog; },
         changed: () => { const board = boards.get(root); if (board && !board.disposed) return board.reportProgress?.(); },
         log: message => log.appendLine(message)
       });
@@ -61,11 +62,6 @@ function activate(context) {
     return Array.isArray(documents) ? documents.some(document => document.isDirty && document.uri.fsPath?.endsWith('.sol') && p.contained(root, document.uri.fsPath)) :
       [...dirtySources].some(file => p.contained(root, file));
   }
-  function indexedContentStamp(catalog) {
-    const hash = crypto.createHash('sha256');
-    for (const file of [...catalog.sourceStamps.keys()].sort()) hash.update(file).update('\0').update(fs.readFileSync(file)).update('\0');
-    return hash.digest('hex');
-  }
   async function sourceCatalog(folder, dependency, options, git, work) {
     const root = folder.uri.fsPath, generation = sourceEpochs.get(root) || 0;
     assertSelected(work);
@@ -75,17 +71,13 @@ function activate(context) {
     if (cached?.key === key && cached.generation === generation) {
       try {
         cached.catalog.assertFresh();
-        if (indexedContentStamp(cached.catalog) !== cached.contentStamp) throw new Error('Indexed source content changed.');
+        require('./workspace-snapshot').validate(cached.catalog, { force: true });
         return { catalog: cached.catalog, diagnostics: { ...cached.diagnostics, cache: 'reused' } };
       }
       catch { invalidate(root); cached = null; }
     }
     const before = sourceEpochs.get(root) || 0;
-    const pendingKey = key + ':' + before;
-    let pending = preparingCatalogs.get(root);
-    if (pending?.key !== pendingKey) { pending = { key: pendingKey, promise: analyze(dependency.extensionPath, fs.realpathSync(root), { ...options, background: options.mode === 'source' }) }; preparingCatalogs.set(root, pending); }
-    let analyzed;
-    try { analyzed = await pending.promise; } finally { if (preparingCatalogs.get(root) === pending) preparingCatalogs.delete(root); }
+    const analyzed = await analyze(dependency.extensionPath, fs.realpathSync(root), { ...options, background: options.mode === 'source', signal: work.signal });
     if ((sourceEpochs.get(root) || 0) !== before || hasDirtySource(root) || key !== JSON.stringify([dependency.extensionPath, VERSION, options.mode, options.slitherPath, p.gitState(root).head, configurationStamp(root)])) {
       throw new Error('Source or project configuration changed during preparation. Save your edits and reopen the finding.');
     }
@@ -93,7 +85,10 @@ function activate(context) {
     catalog.assertFresh();
     // Compilation is opt-in. Do not reuse compiler-backed results whose wider
     // toolchain/build dependencies are outside this source-only cache contract.
-    if (options.mode === 'source') catalogs.set(root, { key, generation: before, catalog, diagnostics: analyzed.diagnostics, contentStamp: indexedContentStamp(catalog) });
+    if (options.mode === 'source') {
+      require('./workspace-snapshot').validate(catalog);
+      catalogs.set(root, { key, generation: before, catalog, diagnostics: analyzed.diagnostics });
+    }
     // Source preparation is finding-independent. An obsolete selection can
     // still leave a fresh index for the newer selection, but never its view.
     assertSelected(work);
@@ -287,7 +282,7 @@ function activate(context) {
     };
     parts.push(reportWatcher, reportWatcher.onDidCreate(reportChanged), reportWatcher.onDidChange(reportChanged));
     if (reportWatcher.onDidDelete) parts.push(reportWatcher.onDidDelete(reportChanged));
-    const projectWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '{foundry.toml,remappings.txt}'));
+    const projectWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, `{${require('./source').configurationFiles.join(',')}}`));
     const projectChanged = uri => configurationChanged(folder, path.basename(uri.fsPath));
     parts.push(projectWatcher, projectWatcher.onDidCreate(projectChanged), projectWatcher.onDidChange(projectChanged));
     if (projectWatcher.onDidDelete) parts.push(projectWatcher.onDidDelete(projectChanged));
@@ -318,9 +313,9 @@ function activate(context) {
   }));
   if (vscode.workspace.onDidChangeTextDocument) context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
     const file = event.document.uri.fsPath;
-    if (event.document.isDirty && file && (/\.md$/.test(file) || /[\\/]\.flowboard[\\/](?:report\.json|findings[\\/][^\\/]+\.json)$/.test(file))) {
-      for (const [root, preparation] of preparations) if (p.contained(root, file)) preparation.invalidate('Unsaved report, documentation or researcher edits. Save before resuming preparation.');
-      for (const board of boards.values()) if (!board.disposed) board.reportChanged(file).catch(error => log.appendLine(error.stack || error.message));
+    if (event.document.isDirty && file && !file.endsWith('.sol')) {
+      for (const [root, preparation] of preparations) if (relevantDirty(root, file, preparation.state?.reportName)) preparation.invalidate('Relevant unsaved report, documentation or configuration edits. Save before resuming preparation.');
+      for (const [root, board] of boards) if (!board.disposed && relevantDirty(root, file, preparations.get(root)?.state?.reportName)) board.reportChanged(file).catch(error => log.appendLine(error.stack || error.message));
     }
     if (!file?.endsWith('.sol')) return;
     if (event.document.isDirty) dirtySources.add(file); else dirtySources.delete(file);

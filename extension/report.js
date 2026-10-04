@@ -74,36 +74,12 @@ function parseReport(text, options = {}) {
   return options.manifest ? { issues: parsed, manifest } : parsed;
 }
 function mapFile(root, supplied, files = []) {
-  const clean = supplied.replace(/^([A-Za-z]:)?\/+/, '').replace(/\\/g, '/');
-  if (clean.split('/').includes('..')) return null;
-  const parts = clean.split('/');
-  const candidates = [clean];
-  for (let i = 1; i < parts.length - 1; i++) candidates.push(parts.slice(i).join('/'));
-  for (const relative of candidates) {
-    try {
-      const absolute = fs.realpathSync(path.resolve(root, relative));
-      const stat = fs.statSync(absolute);
-      if (p.contained(fs.realpathSync(root), absolute) && absolute.endsWith('.sol') && stat.isFile()) {
-        // On a case-folding filesystem an existing path may retain the report's
-        // spelling. Use indexed casing only when it names this very same file.
-        const indexed = files.filter(file => path.relative(root, file).split(path.sep).join('/').toLowerCase() === relative.toLowerCase()).filter(file => {
-          try { const candidate = fs.statSync(file); return candidate.dev === stat.dev && candidate.ino === stat.ino; } catch { return false; }
-        });
-        return indexed.length === 1 ? path.relative(root, indexed[0]).split(path.sep).join('/') : path.relative(fs.realpathSync(root), absolute).split(path.sep).join('/');
-      }
-    } catch { /* unresolved citation */ }
-  }
-  const matches = files.filter(file => file.endsWith('/' + clean) || path.basename(file) === clean);
-  if (matches.length === 1) return path.relative(root, matches[0]).split(path.sep).join('/');
-  // Only a unique complete project-relative path may repair capitalization.
-  // A basename/suffix match is not enough on a case-sensitive filesystem.
-  const caseMatches = files.filter(file => path.relative(root, file).split(path.sep).join('/').toLowerCase() === clean.toLowerCase());
-  return caseMatches.length === 1 ? path.relative(root, caseMatches[0]).split(path.sep).join('/') : null;
+  return require('./source-path').resolve(root, supplied, files);
 }
 function draftIssue(issue, root, runner, result, sourceRevision, catalog = new SourceCatalog(root, runner, result)) {
   const cards = [], unresolved = [], functions = [], warnings = [...(issue.warnings || [])];
   const seen = new Set(), citedFiles = new Set();
-  const files = [...new Set(catalog.functions.map(fn => fn.file))];
+  const files = [...catalog.sourceStamps.keys()];
   const applicability = require('./report-targets').inspect(catalog, issue.title, issue.body);
   function add(fn, file, line, description, method = 'citation') {
     const key = `${fn.file}:${fn.startLine}:${fn.kind || 'function'}:${fn.name}`;

@@ -11,8 +11,14 @@
     box.append(node('h4', title)); const list = node('ul'); for (const text of entries) list.append(node('li', text)); box.append(list); return box;
   }
   function details(title, ...children) { const value = node('details'); value.append(node('summary', title), ...children); return value; }
-  function render({ draft, selected, select, focus, correct, retry, enable, runTest, disabled, correction }) {
+  function render({ draft, selected, select, focus, correct, retry, enable, runTest, disabled, correction, changed }) {
     const root = node('section', '', 'inv-workbench'); root.setAttribute('aria-label', 'Saved investigation draft');
+    if (draft.preparation || !draft.property || !draft.conclusion || !draft.snapshot) {
+      root.classList.add('inv-preparation'); root.setAttribute('aria-label', 'Preparation status');
+      root.append(node('h3', 'Walkthrough not published'), node('p', draft.preparation?.reason || 'The report is still being checked. Original code and your notes remain available.'));
+      if (retry) root.append(button('Open preparation', retry));
+      return root;
+    }
     const phase = ({ preparing: 'Finding related code', 'provider-required': 'Code ready · AI review is off', generating: 'Reading code…',
       'checking-source': 'Checking open questions…', challenging: 'Looking for opposing evidence…', ready: 'Review draft saved', blocked: 'Partial review saved',
       corrected: 'Correction saved · affected results need checking', 'running-regression': 'Running selected existing regression…', 'experiment-recorded': 'Regression result saved' })[draft.phase] || draft.phase;
@@ -88,8 +94,8 @@
     const adjust = node('div', '', 'inv-correction');
     const field = node('select'); field.setAttribute('aria-label', 'Correct investigation field');
     for (const name of ['property', 'actor', 'entry', 'implementation', 'conditions']) { const option = node('option', name); option.value = name; field.append(option); }
-    field.value = correction.field || 'conditions'; field.onchange = () => { correction.field = field.value; };
-    const value = node('textarea'); value.setAttribute('aria-label', 'Investigation correction'); value.placeholder = 'Correct this premise; include why and which implementation it applies to.'; value.value = correction.value || ''; value.oninput = () => { correction.value = value.value; };
+    field.value = correction.field || 'conditions'; field.onchange = () => { correction.field = field.value; changed?.(); };
+    const value = node('textarea'); value.maxLength = 4000; value.setAttribute('aria-label', 'Investigation correction'); value.placeholder = 'Correct this premise; include why and which implementation it applies to.'; value.value = correction.value || ''; value.oninput = () => { correction.value = value.value; changed?.(); };
     const apply = button('Save correction and reassess', () => correct({ claimId: field.value === 'property' ? null : claim?.id || null, field: field.value, value: value.value }, draft.revision)); apply.disabled = disabled;
     adjust.append(node('p', 'Applies to the selected claim (property applies to all). Stored as your correction, not independently established evidence.'), field, value, apply);
     root.append(details('Correct this review', adjust));

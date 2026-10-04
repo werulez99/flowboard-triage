@@ -25,7 +25,7 @@ function fixture() {
   const report = 'Description: A rejected call leaves the flag true.\n\nConditions: accepted is false.';
   const paragraphs = walk.paragraphs(report);
   return { report, draft: { findingId: 'I-01', phase: 'ready', revision: 2, snapshot: { sourceDigest: engine.hash(code), reportHash: engine.hash(report) },
-    publication: { ready: true, policy: 'checked-explanation-v3' },
+    publication: { ready: true, policy: require('../extension/guide-policy').POLICY },
     causal: { scope: 'Fictional finalize rejection only.', summary: 'Rejection rolls back the write.',
       events: evidence.map((entry, i) => ({ id: 'event-' + i, invocationId: 'finalize-call', claimId: 'c-1', evidenceId: entry.id,
         title: entry.note, what: entry.note, paragraphId: paragraphs[0].id, phrase: 'leaves the flag true' })),
