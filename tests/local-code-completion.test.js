@@ -137,7 +137,9 @@ test('completion follows the selected route and reads storage without converting
   const functions = added.map(unit => catalog.resolveUnit(unit));
   assert.equal(catalog.graph(functions, functions.map((_, i) => ({ id: String(i) }))).length, 0);
   const packet = engine.modelSources(added);
-  assert.ok(packet.every(unit => unit.contextKind === 'state' && unit.relatedCalls.length === 0));
+  assert.ok(packet.filter(unit => unit.contextKind === 'state').every(unit => unit.relatedCalls.length === 0));
+  assert.ok(packet.some(unit => unit.name === 'RemoteRoute::constructor' && /recorder\s*=/.test(unit.code)), 'Immutable receiver preparation reads its constructor instead of inferring a running implementation from the declaration.');
+  assert.ok(packet.every(unit => unit.contextKind === 'state' || unit.name === 'RemoteRoute::constructor'));
 });
 test('a mixed missing-context request supplies the available local part without pretending to obtain a specification', { skip: !native }, async t => {
   const { review } = await context(t, 'd6'), entry = review.units.find(unit => unit.name === 'PointAccrual::finish');
@@ -177,7 +179,10 @@ test('ordinary selection supplies new declarations to challenge and exact declar
       assert.ok(declaration, 'Available local state must reach the actual challenge input.');
       evidence.push({ id: 'role', claimId: 'c', sourceId: declaration.id, line: 5, endLine: 5, quote: '    address public immutable reviewer;', stance: 'context', explanation: 'reviewer is an immutable address; its value cannot change after construction.' });
     }
-    return { value: { property: { text: 'Only the reviewer finalizes.', basis: 'report-assumption', evidence: [] }, claims: [{ id: 'c', allegation: 'Any caller can finalize.', actor: 'Caller', entry: entry.id, implementation: 'ReviewQueue::finalize(uint256,bool)', conditions: ['A successful call'], requiredFacts: [], supportsIf: '', contradictsIf: '', status: 'unresolved', reason: 'Controlled fixture, not a model quality judgment.', evidence: evidence.map(item => item.id), unknowns: [], nextQuestion: '' }], evidence,
+    return { value: { inputReviews: (input.semanticInput?.premises || []).map(premise => ({ id: premise.id, status: 'unresolved',
+      reason: 'This partial fixture checks guard and declaration navigation; it does not establish the saved premise or a complete call scenario.',
+      claimIds: ['c'], eventIds: [], evidence: ['guard'] })),
+      property: { text: 'Only the reviewer finalizes.', basis: 'report-assumption', evidence: [] }, claims: [{ id: 'c', allegation: 'Any caller can finalize.', actor: 'Caller', entry: entry.id, implementation: 'ReviewQueue::finalize(uint256,bool)', conditions: ['A successful call'], requiredFacts: [], supportsIf: '', contradictsIf: '', status: 'unresolved', reason: 'Controlled fixture, not a model quality judgment.', evidence: evidence.map(item => item.id), unknowns: [], nextQuestion: '' }], evidence,
       explanationReviews: input.phase === 'challenge' ? evidence.map(item => ({ evidenceId: item.id, result: item.id === 'guard' ? 'kept' : 'added', reason: 'Controlled fixture checking exact navigation.', checkedSourceIds: [item.sourceId] })) : [], transitions: [], questions: [], conclusion: { status: 'insufficient-evidence', text: 'Navigation fixture only.', limitations: [] } }, audit: { phase: input.phase, provider: 'controlled-test-fixture', outcome: 'completed' } };
   } }); t.after(() => host.close());
   const send = async message => (await fetch(host.origin + '/message', { method: 'POST', headers: { 'X-Workflow-Token': host.secret, 'Content-Type': 'application/json' }, body: JSON.stringify(message) })).json();

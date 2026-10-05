@@ -62,6 +62,33 @@ function span(text, start, end, line = 1) {
     column: start - (text.lastIndexOf('\n', start - 1) + 1),
     endColumn: end - (text.lastIndexOf('\n', end - 1) + 1) };
 }
+function tryContext(text, clean, start, end, line, to) {
+  const marker = /\btry\s*$/.exec(clean.slice(0, start)); if (!marker) return null;
+  const skip = at => { while (at < to && /\s/.test(clean[at])) at++; return at; };
+  let at = skip(end);
+  if (/^returns\b/.test(clean.slice(at))) {
+    at = skip(at + 'returns'.length);
+    if (clean[at] !== '(') return { unsupported: true };
+    at = skip(matching(clean, at) + 1);
+  }
+  if (clean[at] !== '{') return { unsupported: true };
+  const successEnd = matching(clean, at, '{', '}'); if (successEnd < 0) return { unsupported: true };
+  const success = span(text, at, successEnd + 1, line), clauses = [];
+  at = skip(successEnd + 1);
+  while (/^catch\b/.test(clean.slice(at))) {
+    const clauseStart = at; at = skip(at + 'catch'.length);
+    let kind = 'any';
+    const named = /^(Error|Panic)\b/.exec(clean.slice(at));
+    if (named) { kind = named[1]; at = skip(at + kind.length); }
+    if (clean[at] === '(') { const close = matching(clean, at); if (close < 0) return { unsupported: true }; at = skip(close + 1); }
+    if (clean[at] !== '{') return { unsupported: true };
+    const close = matching(clean, at, '{', '}'); if (close < 0) return { unsupported: true };
+    clauses.push({ kind, span: span(text, clauseStart, close + 1, line), body: span(text, at + 1, close, line) });
+    at = skip(close + 1);
+  }
+  if (!clauses.length) return { unsupported: true };
+  return { span: span(text, marker.index, clauses.at(-1).span.end, line), success, clauses };
+}
 function occurrences(text, options = {}) {
   const clean = lexicalCode(text), result = [], line = options.line || 1;
   const from = options.from || 0, to = options.to ?? text.length;
@@ -76,6 +103,7 @@ function occurrences(text, options = {}) {
   for (const match of clean.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
     const name = match[1], methodStart = match.index;
     if (methodStart < from || methodStart >= to || nonCalls.has(name)) continue;
+    if (/\bcatch\s*$/.test(clean.slice(0, methodStart))) continue; // Error/Panic catch headers are not invocations.
     let at = methodStart + name.length;
     while (/\s/.test(clean[at] || '') && at < to) at++;
     let callOptions = [];
@@ -111,9 +139,10 @@ function occurrences(text, options = {}) {
       .map((entry, index) => namedArguments ? named(entry, index) : { name: null, index, expression: text.slice(entry.start, entry.end), span: range(entry.start, entry.end) });
     const sourceSpan = range(start, close + 1);
     const id = 'call-' + crypto.createHash('sha256').update(JSON.stringify([options.identity || '', line, start, close + 1, text.slice(start, close + 1)])).digest('hex').slice(0, 20);
-    const failure = /\btry\s*$/.test(clean.slice(0, start)) && /\bcatch\b/.test(clean.slice(close + 1, to)) ? 'caught' :
+    const handling = tryContext(text, clean, start, close + 1, line, to);
+    const failure = handling ? 'try-catch' :
       recv && ['call', 'staticcall', 'delegatecall', 'send'].includes(name) ? 'returns-status' : 'propagates';
-    result.push({ id, name, recv, recvChain, isNew, argCount: argumentSpans.length, failure,
+    result.push({ id, name, recv, recvChain, isNew, argCount: argumentSpans.length, failure, ...(handling ? { tryContext: handling } : {}),
       receiverExpression, receiverSpan, arguments: text.slice(at + 1, close), argumentSpans, options: callOptions,
       span: sourceSpan, nameSpan: range(methodStart, methodStart + name.length),
       callKind: isNew ? 'creation' : ['call', 'staticcall', 'delegatecall', 'send', 'transfer'].includes(name) && recv ? 'low-level' : recv ? 'member' : 'internal',

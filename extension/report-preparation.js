@@ -51,6 +51,12 @@ class ReportPreparation {
     this.state = null; this.active = null; this.tasks = new Map(); this.loop = null; this.pendingRestart = false; this.pendingRetry = false;
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
   }
+  prioritize(id) {
+    // Selection can reorder eligible work, but never starts a request, resumes
+    // a paused report, or interrupts another finding's accepted stage.
+    if (typeof id !== 'string' || id === this.preferredFinding) return;
+    this.preferredFinding = id; this.priorityStages = 2;
+  }
   save() { clearTimeout(this.progressTimer); this.progressTimer = null; this.aggregate(); this.state.updatedAt = now(); p.atomicJson(this.root, FILE, this.state);
     Promise.resolve().then(() => this.options.changed?.(this.status())).catch(error => this.options.log?.(`Report display update: ${error.message}`)); }
   progress() { if (!this.progressTimer) this.progressTimer = setTimeout(() => { if (!this.disposed) this.save(); }, 250); }
@@ -90,6 +96,11 @@ class ReportPreparation {
     this.accepted.set(entry.id, accepted);
   }
   artifact(id) { return this.options.dirty?.(id) ? null : this.accepted.get(id)?.digest || null; }
+  recordFailure(job, error) {
+    this.accepted.delete(job.id);
+    Object.assign(job, { state: 'failed', publishable: false, accepted: null, digest: null,
+      stage: 'saved-record', reason: `Cannot restore this finding's saved record: ${error.message} Original files were preserved. Inspect or recover this finding's local record, then retry.`, finishedAt: now() });
+  }
   withholdDirty(job) {
     this.accepted.delete(job.id);
     Object.assign(job, { state: 'paused', publishable: false, dirtyPaused: true,
@@ -101,6 +112,7 @@ class ReportPreparation {
       require('./workspace-snapshot').validate(catalog, { force: true });
       return catalog;
     } catch (error) {
+      if (signal?.aborted || this.disposed) throw error;
       // A missed content change or unavailable index cannot retain a ready
       // badge on reopening. This is source validation, not provider failure.
       this.accepted.clear();
@@ -112,20 +124,19 @@ class ReportPreparation {
   }
   lock() {
     const file = path.join(this.root, LOCK); fs.mkdirSync(path.dirname(file), { recursive: true });
-    try {
-      const fd = fs.openSync(file, 'wx', 0o600); fs.writeFileSync(fd, JSON.stringify({ owner: this.owner, pid: process.pid, at: now() })); fs.closeSync(fd); this.locked = true;
+    const ownership = require('./provider-ownership');
+    for (let attempt = 0; attempt < 3; attempt++) try {
+      ownership.publish(file, ownership.ownerMetadata(this.owner)); this.locked = true; return;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      const prior = p.readWorkspaceJson(this.root, LOCK, 4096);
-      try { process.kill(prior.pid, 0); } catch (probe) {
-        if (probe.code === 'ESRCH') { fs.unlinkSync(file); return this.lock(); } throw probe;
-      }
-      throw new Error(`Report preparation is already owned by another local host (PID ${prior.pid}).`);
+      const prior = ownership.reap(file);
+      if (prior) throw new Error(`Report preparation is already owned by another local host (PID ${prior.entry?.pid || 'unknown'}).`);
     }
+    throw new Error('Report ownership changed repeatedly. No work was dispatched; retry when the other host has stopped.');
   }
   unlock() {
     if (!this.locked) return;
-    try { if (p.readWorkspaceJson(this.root, LOCK, 4096).owner === this.owner) fs.unlinkSync(path.join(this.root, LOCK)); } catch { /* owner already released */ }
+    try { require('./provider-ownership').removeOwned(path.join(this.root, LOCK), this.owner); } catch { /* owner already released; an existing live lock remains protective */ }
     this.locked = false;
   }
   async ensure({ retry = false } = {}) {
@@ -134,8 +145,10 @@ class ReportPreparation {
     // Even a missed watcher event must revoke a ready report on reopening.
     // The catalog provider reconciles content once for this generation; no
     // per-finding scan is required. Reuse is checked below under the report lock.
+    const runEpoch = this.epoch;
     this.loop = this.run(retry).catch(error => {
-      if (this.state) { this.state.mode = 'paused'; this.state.reason = error.message; this.save(); }
+      if (this.disposed || runEpoch !== this.epoch) return;
+      if (this.state && this.locked) { this.state.mode = 'paused'; this.state.reason = error.message; this.save(); }
       this.options.log?.(`Report preparation stopped: ${error.message}`);
     }).finally(() => { this.unlock(); this.loop = null; if (this.pendingRestart && !this.disposed) {
       const again = this.pendingRetry; this.pendingRestart = false; this.pendingRetry = false; return this.ensure({ retry: again });
@@ -202,8 +215,9 @@ class ReportPreparation {
     for (const entry of entries) {
       const job = this.state.jobs[entry.id];
       if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); continue; }
+      try {
       const saved = engine.read(this.root, entry.id);
-      if (!saved) { this.accepted.delete(entry.id); job.publishable = false; continue; }
+      if (!saved) { this.accepted.delete(entry.id); if (job.publishable) job.state = 'queued'; job.publishable = false; job.accepted = null; continue; }
       const request = this.request(entry, catalog, report);
       if (!engine.revalidate(saved, catalog, request, this.issue(entry))) {
         job.state = 'queued'; job.publishable = false; job.outcome = null; job.accepted = null; this.accepted.delete(entry.id);
@@ -212,6 +226,7 @@ class ReportPreparation {
       } else if (checked(saved)) {
         this.accept(entry, saved, job);
       }
+      } catch (error) { this.recordFailure(job, error); }
       await new Promise(resolve => setImmediate(resolve));
     }
     this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
@@ -237,6 +252,13 @@ class ReportPreparation {
     let preferContinuation = true;
     const next = () => {
       let entry;
+      // A selected cold finding can finish generation and challenge promptly.
+      // Limit the promotion to two boundaries so repairs cannot starve the
+      // ordinary alternating untouched/continuation queues.
+      if (this.priorityStages > 0) for (const queue of [continuedQueue, freshQueue]) {
+        const index = queue.findIndex(item => item.id === this.preferredFinding);
+        if (index >= 0) { this.priorityStages--; return queue.splice(index, 1)[0]; }
+      }
       if (continuedQueue.length && (preferContinuation || !freshQueue.length)) { entry = continuedQueue.shift(); preferContinuation = false; }
       else if (freshQueue.length) { entry = freshQueue.shift(); preferContinuation = true; }
       else entry = retryQueue.shift();
@@ -265,8 +287,10 @@ class ReportPreparation {
       require('./workspace-snapshot').validate(catalog, { force: true });
       if (store.readReport(this.root).reportHash !== this.state.reportHash) throw new Error('The report changed before publication.');
       for (const entry of entries) {
-        const draft = engine.read(this.root, entry.id);
-        if (!checked(draft) || !engine.sameSnapshot(draft.snapshot, engine.snapshot(catalog, this.request(entry, catalog, report), this.issue(entry)))) throw new Error(`The saved ${entry.id} explanation changed before publication.`);
+        try {
+          const draft = engine.read(this.root, entry.id);
+          if (!checked(draft) || !engine.sameSnapshot(draft.snapshot, engine.snapshot(catalog, this.request(entry, catalog, report), this.issue(entry)))) throw new Error(`The saved ${entry.id} explanation changed before publication.`);
+        } catch (error) { this.recordFailure(this.state.jobs[entry.id], error); }
       }
       this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
     }
@@ -313,7 +337,13 @@ class ReportPreparation {
     Object.assign(job, { state: 'running', stage: draft.checkpoint?.stage || 'locating-code', progress: null,
       attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
-    const current = () => !this.disposed && owns() && !abort.signal.aborted && p.readWorkspaceJson(this.root, '.flowboard/report.json', 12 * 1024 * 1024).reportHash === report.reportHash && !this.options.dirty?.(entry.id);
+    const current = () => {
+      if (this.disposed || !owns() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
+      try {
+        return p.readWorkspaceJson(this.root, '.flowboard/report.json', 12 * 1024 * 1024).reportHash === report.reportHash &&
+          engine.findingInputHash(this.request(entry, catalog, report), issue) === fresh.snapshot.reportHash;
+      } catch { return false; } // A malformed concurrent edit cannot accept an old scope.
+    };
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
@@ -392,7 +422,7 @@ class ReportPreparation {
     this.state.mode = action === 'pause' ? 'paused' : 'cancelled';
     this.state.reason = action === 'pause' ? 'Paused. A request already running may finish; no new request will start. Accepted stages are saved.' : 'Cancelled. Accepted stages and researcher work are saved.';
     if (action === 'pause') for (const task of this.tasks.values()) if (this.state.jobs[task.id]?.state === 'waiting-for-provider-capacity') task.abort.abort();
-    if (action === 'cancel') { for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); this.epoch++; }
+    if (action === 'cancel') { for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); this.epoch++; this.pendingRestart = false; }
     for (const job of Object.values(this.state.jobs)) if (['queued', 'retry-scheduled', 'waiting-for-provider-capacity', ...(action === 'cancel' ? ['running'] : [])].includes(job.state)) job.state = action === 'pause' ? 'paused' : 'cancelled';
     this.save();
   }
@@ -420,7 +450,11 @@ class ReportPreparation {
       if (['completed', 'incomplete'].includes(this.state.mode)) this.state.mode = 'interrupted';
       this.save(); return;
     }
-    for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); this.epoch++; this.state.publication = null; this.state.mode = 'interrupted'; this.state.reason = reason;
+    const stopped = ['paused', 'cancelled'].includes(this.state.mode);
+    for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); this.epoch++; this.state.publication = null;
+    if (!stopped) this.state.mode = 'interrupted';
+    this.state.reason = reason;
+    if (this.loop && !stopped) this.pendingRestart = true;
     let affected = null;
     if (change.findingId) affected = new Set([change.findingId]);
     else if (change.kind === 'report') {

@@ -205,6 +205,7 @@ function unit(catalog, fn, id) {
   const hint = catalog.hints(fn);
   return { id, name: `${fn.contract}::${fn.name}`, contract: fn.contract, complete: true,
     ...(fn.kind === 'context' ? { contextKind: 'state' } : {}), code: catalog.code(fn),
+    initialization: catalog.initialization(fn),
     source: { file: hint.file, line: hint.line, endLine: hint.endLine, sourceHash: hint.sourceHash },
     relatedCalls: catalog.callLinks(fn).map(site => ({ ...site, candidates: undefined,
       targets: site.candidates.map(target => ({ file: catalog.relative(target.file), line: target.startLine,
@@ -248,7 +249,7 @@ contract Caller {
   if (options.lowLevel) draft.causal.events[1].inputs = [];
   const link = draft.causal.relationships[0];
   link.callSiteId = call.id; link.evidence = ids;
-  link.dispatch = { kind: 'local-instance', receiver: call.receiverExpression, implementation: callee.id, evidence: ids, context: 'call', failure: call.failure };
+  link.dispatch = { kind: 'local-instance', receiver: call.receiverExpression, implementation: callee.id, evidence: ids, context: 'call', failure: options.caught ? 'caught' : call.failure };
   draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'Independently read fixture: immutable is constructed with exactly this new Guard implementation.', evidence: ids, documentation: [] }));
   return { draft, catalog, call };
 }
@@ -308,7 +309,7 @@ test('known empty-calldata receive and caught failures keep execution context an
   assert.match(policy.gate(receive.draft).problems.join('\n'), /checked local construction/);
   const caught = await dispatchFixture(t, { caught: true });
   caught.draft.causal.events[0].effect = 'committed';
-  assert.equal(caught.call.failure, 'caught');
+  assert.equal(caught.call.failure, 'try-catch', 'Static syntax does not establish which failure a catch actually handles.');
   assert.equal(policy.gate(caught.draft).ready, true, policy.gate(caught.draft).problems.join('\n'));
   caught.draft.causal.relationships[0].dispatch.failure = 'propagates';
   assert.match(policy.gate(caught.draft).problems.join('\n'), /failure handling is caught/);
@@ -359,6 +360,322 @@ contract Caller {
 });
 
 module.exports = { callDraft, dispatchFixture };
+
+// These intentionally incorrect controlled responses exercise the production
+// location/challenge/publication path. A model agreeing with itself must not
+// override independently read Solidity semantics.
+function checkedPipeline(draft) {
+  const engine = require('../extension/investigation-engine');
+  const output = {
+    property: draft.property,
+    claims: draft.claims.map(claim => ({ ...claim, allegation: 'The described invocation rejects the request.',
+      actor: 'Caller', entry: 'caller', implementation: 'The supplied local fixture only.',
+      conditions: ['Only the explicitly described source invocation.'], reason: 'Check exact source semantics.',
+      evidence: draft.evidence.map(item => item.id), requiredFacts: [], supportsIf: '', contradictsIf: '', nextQuestion: '' })),
+    evidence: draft.evidence.map(item => ({ ...item, line: item.source.line, endLine: item.source.endLine, explanation: item.note })),
+    transitions: [], questions: [], conclusion: { status: 'contradicted-in-scope', text: 'Controlled source interpretation.', limitations: [] },
+    walkthrough: draft.walkthrough, causal: draft.causal, inputReviews: draft.inputReviews || [],
+    explanationReviews: draft.evidence.map(item => ({ evidenceId: item.id, result: 'kept',
+      reason: 'Controlled response covers the cited function; host semantic checks must still reject a false explanation.',
+      checkedSourceIds: draft.sources.map(unit => unit.id) }))
+  };
+  const base = { ...draft, corrections: [], experiments: [] };
+  const first = engine.accept(output, base, draft.sources);
+  const checked = engine.checkExplanations(output, first, engine.accept(output, base, draft.sources), draft.sources);
+  const accepted = { ...base, ...checked };
+  accepted.publication = policy.gate(accepted); accepted.publication.digest = policy.digest(accepted);
+  return { accepted, gate: accepted.publication, exposed: policy.expose(accepted) };
+}
+async function semanticFixture(t, options = {}) {
+  const local = options.local !== undefined;
+  const source = `pragma solidity ^0.8.20;
+interface IGuard { function finish(bool accepted) external; }
+contract Other { function finish(bool accepted) external {} }
+contract Guard {
+ function finish(bool accepted) external {
+  ${options.reassign ? (typeof options.reassign === 'string' ? options.reassign : 'accepted = false;') + '\n  ' : ''}${options.guard || 'require(accepted, "rejected");'}
+ }
+}
+contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' is MissingBase' : ''} {
+ IGuard immutable guard${options.shadow ? ' = IGuard(address(new Other()))' : ''};
+ ${options.inherited ? '' : 'bool completed;'}
+ constructor(${options.shadow ? 'IGuard guard' : ''}) {
+  guard = IGuard(address(new Guard()));
+ }
+ ${options.inherited ? '}\ncontract Caller is Base {\n bool completed;' : ''}
+ function enter(${options.unknown ? 'bool unknown' : ''}) external {
+  ${local ? 'IGuard guard = IGuard(address(new Guard()));\n  ' + options.local + '\n  ' : ''}${options.catches !== undefined ? `try guard.finish(${options.unknown ? 'unknown' : 'false'}) {} ` + options.catches : `guard.finish(${options.drift ? 'true' : 'false'});`}
+  ${options.drift ? 'guard.finish(false);' : ''}
+  completed = true;
+ }
+}`;
+  const catalog = await sourceFixture(t, source);
+  const caller = unit(catalog, catalog.named('enter')[0], 'caller');
+  const callee = unit(catalog, catalog.named('finish').find(fn => fn.contract === 'Guard'), 'callee');
+  const constructor = unit(catalog, catalog.named('constructor')[0], 'constructor');
+  const declaration = unit(catalog, catalog.stateDeclarations('src/Calls.sol', options.inherited ? 'Base' : 'Caller').find(fn => /\bguard\b/.test(catalog.code(fn))), 'declaration');
+  const call = caller.relatedCalls.find(site => site.name.endsWith('::finish'));
+  const draft = callDraft('    finish(false);');
+  draft.sources = [caller, callee, constructor, declaration];
+  const lineOf = (unit, text) => unit.source.line + unit.code.split('\n').findIndex(line => line.includes(text));
+  draft.evidence = [note(caller, 'call', call.line), note(callee, 'guard', lineOf(callee, options.guard || 'require('), 'contradicts'),
+    note(constructor, 'construction', lineOf(constructor, 'guard =')), note(declaration, 'immutable', declaration.source.line),
+    note(caller, 'continuation', lineOf(caller, 'completed ='))];
+  if (local) draft.evidence.push(note(caller, 'local-binding', lineOf(caller, 'IGuard guard =')));
+  if (options.reassign) draft.evidence.push(note(callee, 'assignment', lineOf(callee, typeof options.reassign === 'string' ? options.reassign : 'accepted = false')));
+  const ids = draft.evidence.map(item => item.id), [entry, finish] = draft.causal.events;
+  entry.callSiteId = call.id; entry.receiver = 'Caller';
+  finish.receiver = 'guard'; finish.caller = 'Caller';
+  if (options.unknown) finish.inputs[0].expression = 'unknown';
+  if (options.drift) {
+    finish.effect = 'condition'; finish.inputs[0].expression = 'true';
+    draft.causal.events.push({ ...structuredClone(finish), id: 'later-check', title: 'Reject inside the same invocation',
+      effect: 'rolled-back', inputs: [{ ...finish.inputs[0], expression: 'false', evidence: options.reassign ? ['call', 'guard', 'assignment'] : ['call', 'guard'] }] });
+    draft.causal.order.push('later-check');
+    draft.causal.relationships.push({ from: 'finish', to: 'later-check', kind: 'branch', callSiteId: '',
+      dispatch: { kind: 'not-applicable', receiver: '', implementation: '', evidence: [], context: 'none', failure: 'not-applicable' },
+      binding: 'Inspect the same invocation.', explanation: 'Read the next condition.', evidence: ids });
+  }
+  const link = draft.causal.relationships[0]; link.callSiteId = call.id; link.evidence = ids;
+  link.dispatch = { kind: 'local-instance', receiver: 'guard', implementation: 'callee', evidence: ids, context: 'call', failure: options.continues === false ? 'propagates' : options.catches !== undefined ? 'caught' : call.failure };
+  if (options.catches !== undefined && options.continues !== false) {
+    draft.causal.events.push({ ...entry, id: 'after-catch', title: 'Commit after the handled failure', evidenceId: 'continuation', callSiteId: '', effect: 'committed' });
+    draft.causal.order.push('after-catch');
+    draft.causal.relationships.push({ ...structuredClone(link), from: 'finish', to: 'after-catch', kind: 'return', explanation: 'Continue after handling the callee failure.' });
+  }
+  draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key,
+    reason: 'Controlled challenge claims complete coverage; deterministic Solidity checks must independently agree.', evidence: ids, documentation: [] }));
+  return { draft, catalog, call, result: checkedPipeline(draft) };
+}
+
+function savedBoolean(draft, value, eventIds) {
+  draft.semanticInput = require('../extension/semantic-input').input({ finding: {
+    title: 'Inspect the fixture guard', preconditions: [`accepted is ${value}`]
+  } }, { reportText: 'Inspect the fixture guard.' });
+  draft.inputReviews = [{ id: draft.semanticInput.premises[0].id, status: 'applied',
+    reason: 'Controlled saved-input review; actual scope and values still need independent source checks.',
+    claimIds: ['c1'], eventIds, evidence: draft.evidence.map(item => item.id) }];
+}
+test('a saved condition cannot be acknowledged at an unrelated event while retaining the old contrary explanation', { skip: !native }, async t => {
+  const { draft, result } = await semanticFixture(t);
+  assert.equal(result.gate.ready, true, result.gate.problems.join('\n'));
+  savedBoolean(draft, true, ['entry']);
+  assert.throws(() => checkedPipeline(draft), /applied saved condition accepted is true needs an affected step/);
+  draft.inputReviews[0].eventIds = ['finish'];
+  assert.throws(() => checkedPipeline(draft), /contradicts the applied saved condition/);
+  savedBoolean(draft, false, ['finish']);
+  const consistent = checkedPipeline(draft);
+  assert.equal(consistent.gate.ready, true, consistent.gate.problems.join('\n'));
+  assert.ok(consistent.exposed.causal);
+});
+
+test('saved conditions cover dependent invocation steps while allowing a checked later parameter assignment', { skip: !native }, async t => {
+  for (const reassign of [false, true]) {
+    const { draft } = await semanticFixture(t, { drift: true, reassign });
+    const callee = draft.sources.find(unit => unit.id === 'callee');
+    draft.evidence.push(note(callee, 'parameter-entry', callee.source.line));
+    draft.causal.events.find(event => event.id === 'finish').evidenceId = 'parameter-entry';
+    const ids = draft.evidence.map(item => item.id);
+    draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key,
+      reason: 'Entry passes true. Only an actual cited assignment can later replace it.', evidence: ids, documentation: [] }));
+    savedBoolean(draft, true, ['finish']);
+    if (!reassign) assert.throws(() => checkedPipeline(draft), /Step later-check contradicts the applied saved condition/);
+    else {
+      const consistent = checkedPipeline(draft);
+      assert.equal(consistent.gate.ready, true, consistent.gate.problems.join('\n'));
+      assert.ok(consistent.exposed.causal, 'A precondition is not a promise that a mutable parameter can never change.');
+    }
+  }
+});
+
+test('current-source validation rebuilds saved initialization metadata instead of trusting constructor absence', { skip: !native }, async t => {
+  const { draft, catalog } = await dispatchFixture(t, { inline: true });
+  const engine = require('../extension/investigation-engine');
+  draft.snapshot.documentation = require('../extension/workspace-snapshot').validate(catalog).documentation.digest;
+  engine.validateCurrent(catalog, draft);
+  draft.sources = draft.sources.filter(unit => unit.id !== 'constructor');
+  draft.evidence = draft.evidence.filter(item => item.id !== 'construction');
+  const removeConstruction = value => Array.isArray(value) ? value.filter(item => item !== 'construction').map(removeConstruction) :
+    value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, removeConstruction(item)])) : value;
+  draft.causal = removeConstruction(draft.causal);
+  assert.match(policy.gate(draft).problems.join('\n'), /Available constructor code remains unread/);
+  const caller = draft.sources.find(unit => unit.id === 'caller');
+  const canonical = structuredClone(caller.initialization);
+  caller.initialization.scopes.forEach(scope => { scope.constructors = []; scope.constructorAbsent = true; });
+  assert.throws(() => engine.validateCurrent(catalog, draft), /receiver initialization metadata/);
+  caller.initialization = canonical;
+  caller.initialization.scopes[0].sourceHash = 'b'.repeat(64);
+  assert.throws(() => engine.validateCurrent(catalog, draft), /receiver initialization metadata/);
+});
+
+test('production acceptance rejects overwritten or shadowed local receiver proofs', { skip: !native }, async t => {
+  for (const [name, options] of [
+    ['tuple assignment changes local receiver', { local: '(guard,) = (IGuard(address(new Other())), 1);' }],
+    ['delete clears local receiver', { local: 'delete guard;' }],
+    ['constructor parameter shadows the immutable', { shadow: true }]
+  ]) await t.test(name, async t => {
+    const { result } = await semanticFixture(t, options);
+    assert.equal(result.gate.ready, false, 'The current exact quote and an agreeing challenge cannot certify the wrong receiver.');
+    assert.equal(result.exposed.causal, undefined);
+    assert.match(result.gate.problems.join('\n'), /binding|construction|receiver/);
+  });
+  for (const options of [{ local: '' }, {}]) {
+    const { result } = await semanticFixture(t, options);
+    assert.equal(result.gate.ready, true, result.gate.problems.join('\n'));
+  }
+});
+
+test('production acceptance checks typed catches and a continuing matching catch body', { skip: !native }, async t => {
+  for (const catches of ['catch Panic(uint256) {}', 'catch Error(string memory) { revert("again"); }']) await t.test(catches, async t => {
+    const { result } = await semanticFixture(t, { catches });
+    assert.equal(result.gate.ready, false, 'Error(string) must match a continuing catch; a mere catch keyword proves neither.');
+    assert.equal(result.exposed.causal, undefined);
+  });
+  for (const catches of ['catch Error(string memory) {}', 'catch Panic(uint256) {} catch {}']) {
+    const { result } = await semanticFixture(t, { catches });
+    assert.equal(result.gate.ready, true, result.gate.problems.join('\n'));
+  }
+});
+
+test('production acceptance conserves invocation inputs unless checked source changes them', { skip: !native }, async t => {
+  const drift = await semanticFixture(t, { drift: true });
+  assert.equal(drift.result.gate.ready, false, 'The first finish(true) invocation cannot borrow false from the second call.');
+  assert.equal(drift.result.exposed.causal, undefined);
+  const reassigned = await semanticFixture(t, { drift: true, reassign: true });
+  assert.equal(reassigned.result.gate.ready, true, reassigned.result.gate.problems.join('\n'));
+});
+
+test('receiver writes are scoped; complex or assembly mutation cannot certify dispatch', { skip: !native }, async t => {
+  for (const local of ['delete (guard);', 'if (block.timestamp > 0) { guard = IGuard(address(new Other())); }',
+    'assembly { guard := 0 }']) {
+    const { result } = await semanticFixture(t, { local });
+    assert.equal(result.gate.ready, false, local);
+    assert.equal(result.exposed.causal, undefined);
+  }
+  const nested = await semanticFixture(t, { local: '{ IGuard guard = IGuard(address(new Other())); delete guard; }' });
+  assert.equal(nested.result.gate.ready, true, 'An out-of-scope shadow is not a write to the original local declaration. ' + nested.result.gate.problems.join('\n'));
+});
+
+test('matching failure class and continuing catch are source-derived, not catch-label agreement', { skip: !native }, async t => {
+  for (const options of [
+    { catches: 'catch Panic(uint256) {}', continues: false },
+    { catches: 'catch Error(string memory) { revert("again"); }', continues: false },
+    { catches: 'catch Panic(uint256) {}', guard: 'assert(accepted);' },
+    { catches: 'catch (bytes memory) {}', guard: 'revert();' }
+  ]) {
+    const { result } = await semanticFixture(t, options);
+    assert.equal(result.gate.ready, true, JSON.stringify(options) + ': ' + result.gate.problems.join('\n'));
+  }
+  for (const options of [
+    { catches: 'catch Error(string memory) {}', guard: 'assert(accepted);' },
+    { catches: 'catch {}', unknown: true },
+    { catches: 'catch {}', guard: 'return;' },
+    { catches: 'catch Error(string memory) { return; }' },
+    { catches: 'catch Error(string memory) { if (block.timestamp > 0) revert("again"); }' }
+  ]) {
+    const { result } = await semanticFixture(t, options);
+    assert.equal(result.gate.ready, false, JSON.stringify(options));
+    assert.equal(result.exposed.causal, undefined);
+  }
+});
+
+test('invocation input checks reject borrowed branches, units and unsupported or uncited mutations', { skip: !native }, async t => {
+  for (const reassign of ['(accepted,) = (false, 1);', 'delete accepted;', 'if (block.timestamp > 0) { accepted = false; }']) {
+    const { result } = await semanticFixture(t, { drift: true, reassign });
+    assert.equal(result.gate.ready, false, reassign);
+  }
+  const fixture = await semanticFixture(t, { drift: true, reassign: true });
+  fixture.draft.causal.events[2].inputs[0].evidence = ['call', 'guard'];
+  assert.equal(checkedPipeline(fixture.draft).gate.ready, false, 'The assignment exists but its explanation still needs the exact source evidence.');
+  fixture.draft.causal.events[2].inputs[0].evidence.push('assignment');
+  fixture.draft.causal.events[2].inputs[0].units = 'wei';
+  assert.equal(checkedPipeline(fixture.draft).gate.ready, false, 'A boolean parameter does not silently become wei.');
+  const drift = await semanticFixture(t, { drift: true });
+  for (const kind of ['context', 'data', 'branch']) {
+    drift.draft.causal.relationships[1].kind = kind;
+    drift.draft.causal.checks = capacity.targets(drift.draft.causal).map(item => ({ target: item.key,
+      reason: 'A contextual edge does not supply another invocation input.', evidence: drift.draft.evidence.map(item => item.id), documentation: [] }));
+    assert.equal(checkedPipeline(drift.draft).gate.ready, false, kind);
+  }
+  drift.draft.causal.events[2].inputs = [];
+  drift.draft.causal.events[2].conditions = ['accepted is false'];
+  assert.equal(checkedPipeline(drift.draft).gate.ready, false, 'A condition string cannot silently substitute the other invocation input either.');
+});
+
+test('try context retains only the matching clauses, exact bodies and no fake catch invocations', { skip: !native }, async t => {
+  const { catalog, call } = await semanticFixture(t, { catches: 'catch Panic(uint256 code) {} catch Error(string memory reason) { completed = false; }' });
+  const source = catalog.code(catalog.named('enter')[0]);
+  assert.equal(call.failure, 'try-catch');
+  assert.deepEqual(call.tryContext.clauses.map(clause => clause.kind), ['Panic', 'Error']);
+  assert.equal(source.slice(call.tryContext.clauses[1].body.start, call.tryContext.clauses[1].body.end).trim(), 'completed = false;');
+  assert.ok(!catalog.callLinks(catalog.named('enter')[0]).some(site => /(?:^|::)(Panic|Error)$/.test(site.name)));
+});
+
+test('immutable proof requires every actual constructor scope, including inherited initialization', { skip: !native }, async t => {
+  const inherited = await semanticFixture(t, { inherited: true });
+  assert.equal(inherited.result.gate.ready, true, inherited.result.gate.problems.join('\n'));
+  const metadata = inherited.draft.sources[0].initialization;
+  assert.deepEqual(metadata.scopes.map(scope => [scope.contract, scope.constructorAbsent]), [['Caller', true], ['Base', false]]);
+  const { draft } = await dispatchFixture(t, { inline: true });
+  assert.equal(checkedPipeline(draft).gate.ready, true);
+  const remove = sourceId => {
+    const removed = new Set(draft.evidence.filter(item => item.sourceId === sourceId).map(item => item.id));
+    draft.sources = draft.sources.filter(unit => unit.id !== sourceId);
+    draft.evidence = draft.evidence.filter(item => !removed.has(item.id));
+    for (const item of [...draft.causal.obligations, ...draft.causal.relationships, ...draft.causal.checks]) item.evidence = item.evidence.filter(id => !removed.has(id));
+    for (const link of draft.causal.relationships) link.dispatch.evidence = link.dispatch.evidence.filter(id => !removed.has(id));
+  };
+  remove('constructor');
+  const missing = checkedPipeline(draft);
+  assert.equal(missing.gate.ready, false, 'An inline new is not proof that an unread constructor cannot change the immutable.');
+  assert.ok(missing.gate.details.some(problem => problem.kind === 'local-reading' && /constructor code remains unread/.test(problem.reason)));
+  assert.equal(missing.exposed.causal, undefined);
+  const unread = await semanticFixture(t);
+  const constructor = unread.draft.sources.find(unit => unit.id === 'constructor'); constructor.readThrough = constructor.source.line - 1;
+  assert.equal(checkedPipeline(unread.draft).gate.ready, false);
+  const absentBase = await semanticFixture(t, { unavailableBase: true });
+  assert.equal(absentBase.result.gate.ready, false);
+  assert.match(absentBase.result.gate.problems.join('\n'), /base MissingBase is unavailable/);
+});
+
+test('automatic local completion acquires immutable initialization before the challenge', { skip: !native }, async t => {
+  const { catalog } = await semanticFixture(t, { inherited: true }), engine = require('../extension/investigation-engine');
+  const fn = catalog.named('enter')[0];
+  const request = { findingId: 'constructor-context', finding: { title: 'Caller.enter permission check', summary: 'Read the called guard and its initialized receiver.' },
+    cards: [{ file: 'src/Calls.sol', line: fn.startLine, function: 'enter' }] };
+  const context = engine.makeContext(catalog, request), entry = context.units.find(unit => unit.name === 'Caller::enter');
+  const action = context.complete({ claims: [{ entry: entry.id }], evidence: [] });
+  assert.ok(context.units.some(unit => unit.name === 'Base::guard (state)'));
+  const constructor = context.units.find(unit => unit.name === 'Base::constructor');
+  assert.ok(constructor && constructor.code.includes('new Guard()'));
+  assert.ok(action.sourceIds.includes(constructor.id), 'Relevant constructor is acquired before another model request.');
+  assert.ok(context.units.find(unit => unit.id === entry.id).initialization.scopes.some(scope => scope.contract === 'Caller' && scope.constructorAbsent));
+});
+
+test('symbolic argument constraints propagate without rewriting the exact caller expression', { skip: !native }, async t => {
+  const { draft } = await semanticFixture(t, { unknown: true, catches: 'catch Error(string memory) {}' });
+  draft.causal.events[0].conditions = ['unknown is false'];
+  draft.causal.events[1].conditions = ['accepted is false'];
+  const result = checkedPipeline(draft);
+  assert.equal(result.gate.ready, true, result.gate.problems.join('\n'));
+  assert.equal(result.accepted.causal.events[1].inputs[0].expression, 'unknown', 'Scenario constraints do not rewrite the original call argument.');
+  draft.causal.events[1].conditions = ['accepted is true'];
+  assert.equal(checkedPipeline(draft).gate.ready, false, 'A known caller constraint cannot flip at the callee boundary.');
+});
+
+test('later parameter notes retain their own call origin even when another call uses the same value', { skip: !native }, async t => {
+  const { draft } = await semanticFixture(t, { drift: true });
+  const caller = draft.sources.find(unit => unit.id === 'caller');
+  const second = caller.relatedCalls.filter(site => site.name.endsWith('::finish'))[1];
+  draft.evidence.push(note(caller, 'other-call', second.line));
+  draft.causal.events[2].inputs[0].expression = 'true';
+  draft.causal.events[2].inputs[0].evidence = ['guard', 'other-call'];
+  draft.causal.events[2].effect = 'condition';
+  draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'Independently check the supplied source origin.', evidence: draft.evidence.map(item => item.id), documentation: [] }));
+  const result = checkedPipeline(draft);
+  assert.equal(result.gate.ready, false);
+  assert.match(result.gate.problems.join('\n'), /retain the exact origin/);
+});
 
 test('optioned and ordinary calls never combine receiver, arguments or occurrence', { skip: !native }, async t => {
   const { links } = await fixture(t, '  a.foo{value: msg.value}(x);\n  b.foo(y);');

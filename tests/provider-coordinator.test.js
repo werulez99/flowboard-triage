@@ -88,3 +88,26 @@ test('shared transport-health stop preserves queued jobs and accounts only the t
   const before = f.calls.length; await f.runner.ensure(); assert.equal(f.calls.length, before, 'Opening or retrying ensure cannot clear the provider-health circuit.');
   assert.ok(Object.values(f.runner.state.jobs).every(job => job.state !== 'running' && job.state !== 'waiting-for-provider-capacity'));
 });
+test('an actual launcher/descendant timeout records one terminal receipt and releases one owned request slot', { skip: !native || process.platform !== 'linux' }, async t => {
+  const { spawn } = require('node:child_process'), ownership = require('../extension/provider-ownership');
+  let descendant;
+  const f = await fixture(t, 1, (input, options) => require('../extension/semantic-provider').runCodex(input, {
+    ...options, timeoutMs: 700, terminationGraceMs: 150, terminationSettleMs: 150,
+    spawn(executable, args, settings) {
+      const child = spawn(process.execPath, [path.join(__dirname, 'fixtures/provider-descendants.js'), 'ignore-term'], settings);
+      let buffered = '';
+      child.stdout.on('data', chunk => { buffered += chunk; if (buffered.includes('\n')) descendant ||= JSON.parse(buffered.split('\n')[0]).fixtureChildPid; });
+      return child;
+    }
+  }));
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 1, workers: 1 });
+  t.after(() => { if (descendant) { const state = ownership.processIdentity(descendant); if (state && !['Z', 'X'].includes(state.state)) process.kill(descendant, 'SIGKILL'); } });
+  await f.runner.ensure();
+  assert.equal(f.calls.length, 1); assert.equal(f.runner.state.resources.requests, 1);
+  const receipts = Object.values(f.runner.state.resources.receipts);
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].outcome, 'failed'); assert.ok(receipts[0].finishedAt);
+  assert.ok(descendant); assert.ok(!ownership.processIdentity(descendant) || ['Z', 'X'].includes(ownership.processIdentity(descendant).state));
+  assert.equal(f.runner.tasks.size, 0); assert.equal(f.runner.status().concurrency.dispatched || 0, 0);
+  assert.equal(fs.readdirSync(f.directory).filter(file => /^codex-\d.json$/.test(file)).length, 0);
+  const draft = engine.read(f.root, 'I-1'); assert.equal(draft.runs.length, 1); assert.equal(draft.runs[0].teardown.confirmed, true);
+});

@@ -29,7 +29,14 @@ class TriageBoard {
     });
     this.native.panel.webview.onDidReceiveMessage(message => {
       const scope = this.scope(message);
-      Promise.resolve(this.receive(message)).catch(error => this.notify(error.message, true, scope));
+      Promise.resolve(this.receive(message)).catch(async error => {
+        if (typeof message?.navigationId === 'string' && ['triage:investigationFocus','triage:inspectEvidence'].includes(message.type) && this.isActive(scope)) {
+          const model = this.models.get(scope.issueId);
+          await this.post({ type:'triage:navigationFailed', ...scope, navigationId:message.navigationId.slice(0,100), reason:error.message,
+            guideAvailability:model ? this.guideAvailability(model) : null });
+        }
+        return this.notify(error.message, true, scope);
+      });
     });
     this.native.onOpenSource?.(message => {
       const scope = this.scope(message);
@@ -407,8 +414,9 @@ class TriageBoard {
       const unit = draft.sources.find(item => item.id === id); if (!unit) return true;
       return ![...model.sourceById].some(([cardId, fn]) => model.expandedIds.has(cardId) && model.catalog.relative(fn.file) === unit.source.file && fn.startLine === unit.source.line);
     });
-    return { ready: !missingSourceIds.length, missingSourceIds, limit: 200,
-      reason: missingSourceIds.length ? 'The saved canvas has reached its 200-card limit. Remove an exploration card, then resume the walkthrough. Your layout, notes and checked explanation are preserved.' : '' };
+    const materializedCount = model.expandedIds.size, deficit = Math.max(0, materializedCount + missingSourceIds.length - 200);
+    return { ready: !missingSourceIds.length, missingSourceIds, limit:200, materializedCount, deficit,
+      reason: missingSourceIds.length ? `The walkthrough needs ${missingSourceIds.length} missing function card${missingSourceIds.length === 1 ? '' : 's'}.${deficit ? ` Remove ${deficit} exploration card${deficit === 1 ? '' : 's'} from the 200-card canvas, then resume.` : ' Start it to open the required code.'} Your layout, notes and checked explanation are preserved.` : '' };
   }
   reconcileMaterialized(model, state) {
     // Called only after the normal snapshot validator accepts the state. Undo
@@ -681,7 +689,8 @@ class TriageBoard {
       if (message.type === 'triage:bindEvidence') return this.post({ type: 'triage:evidenceBound', issueId: this.activeId, token: activeToken, evidence: item });
       const start = source ? Math.max(1, item.source.line - 2) : null;
       const excerpt = source ? source.source.split(/\r?\n/).slice(start - 1, (item.source.endLine || item.source.line) + 3).map((line, i) => `${start + i}  ${line}`).join('\n').slice(0, 24000) : '';
-      return this.post({ type: 'triage:evidenceInspected', issueId: this.activeId, token: activeToken, evidence: item, excerpt });
+      return this.post({ type: 'triage:evidenceInspected', issueId: this.activeId, token: activeToken, evidence: item, excerpt,
+        navigationId: typeof message.navigationId === 'string' ? message.navigationId.slice(0,100) : null });
     }
     if (message.type === 'triage:copyBrief' && model) {
       this.assertCurrent(model);

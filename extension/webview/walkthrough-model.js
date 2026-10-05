@@ -112,6 +112,11 @@
     for (const event of route.steps.slice(0, index + 1)) {
       if (event.invocationId !== step.invocationId || event.transaction !== step.transaction || event.claimId !== step.claimId || event.receiver !== step.receiver) continue;
       for (const change of event.changes || []) values.set(change.name, { ...change, eventId: event.id, title: event.title, effect: event.effect });
+      // A revert need not repeat every earlier write. Keep those attempted
+      // values as history, but never leave them labeled as surviving state.
+      // Other invocations (including a caught child failure) do not enter this
+      // scope and cannot silently erase the caller's own recorded writes.
+      if (event.effect === 'rolled-back') for (const [name, value] of values) values.set(name, { ...value, effect:'rolled-back', rollbackEventId:event.id });
     }
     return [...values.values()];
   }

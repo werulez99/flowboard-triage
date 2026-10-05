@@ -16,12 +16,13 @@ const documentation = require('./local-documentation');
 const guidePolicy = require('./guide-policy');
 const capacity = require('./review-capacity'), { limits } = capacity;
 const workspaceSnapshot = require('./workspace-snapshot');
+const semanticInput = require('./semantic-input');
 const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const MAX_BYTES = limits.storageBytes;
 const isTest = file => /(?:^|\/)(?:test|tests)\//.test(file) || /\.t\.sol$/.test(file);
 const now = () => new Date().toISOString();
 const fileFor = id => `.flowboard/investigations/${p.identifier(id, 'finding ID') || id}.json`;
-const findingInputHash = (request, issue) => hash([request.finding.title, request.finding.summary, request.finding.expectedBehavior, request.finding.preconditions, issue?.reportText || '']);
+const findingInputHash = (request, issue) => semanticInput.hash(semanticInput.input(request, issue));
 function snapshot(catalog, request, issue) {
   const generation = workspaceSnapshot.validate(catalog);
   return { version: 1, policy: guidePolicy.POLICY, project: generation.project, sourceDigest: generation.sourceDigest, sourceCount: Object.keys(generation.files).length,
@@ -53,13 +54,17 @@ function migrateChecked(draft, catalog, request, issue) {
   // artifacts with no execution handoff can be revalidated locally. Legacy
   // call/return interpretations lack the new occurrence/dispatch review and
   // must not acquire that attestation merely by changing a version string.
-  if (draft?.snapshot?.policy !== 'checked-explanation-v4' || guidePolicy.POLICY === draft.snapshot.policy ||
+  if (!['checked-explanation-v4', 'checked-explanation-v5'].includes(draft?.snapshot?.policy) || guidePolicy.POLICY === draft.snapshot.policy ||
     draft.phase !== 'ready' || draft.publication?.policy !== draft.snapshot.policy || draft.publication.digest !== guidePolicy.digest(draft) ||
     !draft.causal || draft.causal.relationships.some(link => ['call', 'callback', 'return'].includes(link.kind))) return false;
-  const next = snapshot(catalog, request, issue), prior = { ...draft.snapshot, policy: next.policy };
+  const next = snapshot(catalog, request, issue), inputs = semanticInput.input(request, issue);
+  if (!draft.semanticInput && inputs.premises.length) return false; // Earlier responses did not review these saved inputs.
+  const legacyReportHash = hash([request.finding.title, request.finding.summary, request.finding.expectedBehavior, request.finding.preconditions, issue?.reportText || '']);
+  if (![next.reportHash, legacyReportHash].includes(draft.snapshot.reportHash)) return false;
+  const prior = { ...draft.snapshot, policy: next.policy, reportHash: next.reportHash };
   if (!sameSnapshot(prior, next) && !(prior.project === next.project && prior.reportHash === next.reportHash && workspaceSnapshot.compatible(catalog, draft))) return false;
   validateCurrent(catalog, draft);
-  const candidate = structuredClone(draft); candidate.snapshot = next;
+  const candidate = structuredClone(draft); candidate.snapshot = next; candidate.semanticInput = inputs; candidate.inputReviews ||= [];
   for (const event of candidate.causal.events) event.callSiteId ||= '';
   for (const link of candidate.causal.relationships) {
     link.callSiteId ||= '';
@@ -90,6 +95,8 @@ function read(root, id) {
       if (!Array.isArray(value[key]) || value[key].length > maximum || value[key].some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error(`Invalid investigation ${key}.`);
     }
     if (value.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(value.causal[key], limits[key], `saved causal ${key}`);
+    if (value.semanticInput) semanticInput.validate(value.semanticInput);
+    if (value.inputReviews !== undefined && (!Array.isArray(value.inputReviews) || value.inputReviews.length > 44 || value.inputReviews.some(item => !item || typeof item !== 'object' || Array.isArray(item)))) throw new Error('Invalid saved researcher-input reviews.');
     if (!value.snapshot || !/^[a-f0-9]{64}$/.test(value.snapshot.sourceDigest) || !/^[a-f0-9]{64}$/.test(value.snapshot.reportHash) || !Number.isSafeInteger(value.revision) || value.revision < 0 || typeof value.phase !== 'string' || typeof value.property?.text !== 'string' || typeof value.property?.basis !== 'string' || typeof value.conclusion?.text !== 'string') throw new Error('Invalid investigation identity, rule or conclusion.');
     const refs = new Map();
     for (const unit of value.sources) {
@@ -148,6 +155,10 @@ function validateCurrent(catalog, draft) {
     const doc = catalog.document(unit.source.file);
     if (doc.lines.slice(unit.source.line - 1, unit.source.endLine).join('\n') !== unit.code) throw new Error('Saved investigation source text does not match its bound source. It was not placed on the current board.');
     if (unit.contextKind) catalog.resolveUnit(unit);
+    // Constructor absence and initialization scope are derived facts, not
+    // attestations that editable cache metadata can supply. Rebuild them from
+    // the current parser/source identity before reusing an immutable binding.
+    if (unit.initialization && JSON.stringify(unit.initialization) !== JSON.stringify(catalog.initialization(catalog.resolveUnit(unit)))) throw new Error('Saved receiver initialization metadata does not match the current constructor scope. Re-read that local code before reusing the guide.');
   }
 }
 function text(value, max = 2000) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
@@ -168,7 +179,7 @@ function modelSources(units, packetLimit = 110000) {
     remaining -= used;
     const firstLine = unit.source.line + offset, lastLine = firstLine + excerpt.length - 1;
     packet.push({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind, parameterSpans: unit.parameterSpans || [],
-    contextKind: unit.contextKind || null,
+    contextKind: unit.contextKind || null, initialization: unit.initialization || null,
     file: unit.source.file, line: firstLine, endLine: lastLine, complete: offset === 0 && lastLine === unit.source.endLine, reason: unit.reason,
     ...(offset || lastLine !== unit.source.endLine ? { localReading: { functionLine: unit.source.line, functionEndLine: unit.source.endLine,
       previouslyReadThrough: unit.readThrough || unit.source.line - 1, reason: 'Complete function is stored locally. This request contains a contiguous segment, not a missing implementation.' } } : {}),
@@ -176,7 +187,7 @@ function modelSources(units, packetLimit = 110000) {
     // spelling and deep dependency paths at every call consumed most of the
     // model packet. Preserve resolution meaning and use exact supplied IDs.
     relatedCalls: (unit.relatedCalls || []).map(call => ({ id: call.id, span: call.span, nameSpan: call.nameSpan, receiverSpan: call.receiverSpan,
-      argumentSpans: call.argumentSpans, options: call.options, callKind: call.callKind,
+      argumentSpans: call.argumentSpans, options: call.options, callKind: call.callKind, tryContext: call.tryContext,
       receiverExpression: call.receiverExpression,
       creationTargets: call.creationTargets, declarations: call.declarations, failure: call.failure, internalLibrary: call.internalLibrary,
       implicitReceiver: call.implicitReceiver, receiverTypes: call.receiverTypes,
@@ -216,8 +227,9 @@ function makeContext(catalog, request, issue) {
       source: { file, line: fn.startLine, endLine: fn.startLine + lines.length - 1, sourceHash: hash(doc.text) },
       declarationEndLine: fn.endLine, complete: lines.length === fn.endLine - fn.startLine + 1, reason, code, readThrough: fn.startLine - 1,
       parameterSpans: fn.kind === 'context' ? [] : require('./call-bindings').parameterSpans(code, fn.name, fn.startLine),
+      initialization: catalog.initialization(fn),
       relatedCalls: fn.kind === 'context' && !fn.symbol && fn.contextKind !== 'state' ? [] : catalog.callLinks(fn).map(site => ({ id: site.id, span: site.span, nameSpan: site.nameSpan, receiverSpan: site.receiverSpan,
-        argumentSpans: site.argumentSpans, options: site.options, callKind: site.callKind,
+        argumentSpans: site.argumentSpans, options: site.options, callKind: site.callKind, tryContext: site.tryContext,
         receiverExpression: site.receiverExpression, sourceExpression: site.sourceExpression,
         creationTargets: site.creationTargets, declarations: site.declarations, failure: site.failure, internalLibrary: site.internalLibrary,
         line: site.line, expression: site.expression, receiver: site.receiver, arguments: site.arguments, implicitReceiver: site.implicitReceiver, receiverTypes: site.receiverTypes,
@@ -229,13 +241,16 @@ function makeContext(catalog, request, issue) {
   if (targets.blockers.length) throw Object.assign(new Error(targets.blockers.join('\n')), { code: 'REPORT_APPLICABILITY' });
   for (const fn of targets.selected) add(fn, 'Explicit report definition. Examine its code and complete relevant dependencies.');
   for (const card of request.cards) if (!targets.selected.length || card.mapping?.method === 'citation' || card.mapping?.method === 'symbol') add(catalog.resolveCard(card), 'Original report/map location. Verify relevance and revision; location is not evidence of the allegation.');
-  const query = { title: request.finding.title, fields: { summary: request.finding.summary }, body: issue?.reportText || '' };
+  const semantic = semanticInput.input(request, issue);
+  const queryText = [content(semantic.reportText || semantic.saved.summary).current, semantic.saved.summary,
+    semantic.saved.expectedBehavior, ...semantic.saved.preconditions].join('\n');
+  const query = { title: semantic.title, fields: { summary: semantic.saved.summary }, body: queryText };
   const production = new Set(catalog.functions.filter(fn => !isTest(catalog.relative(fn.file)) && !/(?:^|\/)(script|scripts|mocks|lib|node_modules)\//.test(catalog.relative(fn.file))).map(fn => fn.file));
   const ranked = targets.selected.length ? [] : engine.rank(query, production).candidates;
   if (!targets.selected.length) for (const candidate of ranked.slice(0, 3)) add(candidate.fn, candidate.reason);
   const anchors = targets.selected.length ? targets.selected : [...new Map([...request.cards.filter(card => card.kind !== 'context').map(card => catalog.resolveCard(card)), ...ranked.slice(0, 3).map(candidate => candidate.fn)].map(fn => [catalog.key(fn), fn])).values()];
   const related = relatedCode(catalog, anchors), omitted = [];
-  const queryWords = terms(content(issue?.reportText || request.finding.summary).current);
+  const queryWords = terms(queryText);
   const relevanceOf = item => [...terms(item.fn.name)].filter(word => queryWords.has(word)).length;
   const order = { report: 0, guard: 1, call: 2, hypothesis: 3, 'state-dependency': 4 };
   for (const item of related.items.sort((a, b) => order[a.relationship] - order[b.relationship] || relevanceOf(b) - relevanceOf(a)).filter(item => item.relationship !== 'state-dependency').slice(0, 12)) if (!add(item.fn, item.reason)) omitted.push(`${item.source.name} at ${item.source.file}:${item.source.line}`);
@@ -309,6 +324,15 @@ function makeContext(catalog, request, issue) {
       }
       for (const declaration of declarationsFor(fn)) {
         if (!add(declaration, `${fn.contract}::${fn.name} uses ${declaration.symbol}. Read its declared type and storage alongside the operation; this is not a call.`)) gaps.push(`The code limit left ${declaration.contract}::${declaration.symbol} unread.`);
+        if (/\bimmutable\b/.test(lexicalCode(catalog.code(declaration)))) {
+          const initialization = catalog.initialization(fn);
+          gaps.push(...(initialization?.gaps || []));
+          for (const scope of initialization?.scopes || []) for (const reference of scope.constructors) {
+            const constructor = catalog.functionAt(reference.file, reference.line, 'constructor');
+            if (constructor && add(constructor, `${fn.contract}::${fn.name} reads immutable ${declaration.symbol}. Inspect this constructor scope, including inherited initialization, before binding its running receiver.`)) queue.push({ fn: constructor, depth: depth + 1 });
+            else gaps.push(`Available initialization code remains unread: ${reference.contract}::constructor at ${reference.file}:${reference.line}.`);
+          }
+        }
       }
       if (depth >= 3) continue;
       for (const site of catalog.callLinks(fn)) if (site.candidates.length === 1) {
@@ -443,7 +467,7 @@ function makeContext(catalog, request, issue) {
     return deferred;
   };
   return { compiler, units, add, act, complete, restore, prioritize, gaps, unread,
-    documentation: workspaceSnapshot.docs(catalog, [request.finding.title, content(issue?.reportText || request.finding.summary).current].join('\n')) };
+    documentation: workspaceSnapshot.docs(catalog, [semantic.title, queryText].join('\n')) };
 }
 function accept(output, draft, units) {
   if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > limits.claims || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
@@ -513,7 +537,10 @@ function accept(output, draft, units) {
     supportingEvidence: evidence.find(item => item.id === presentation.assessment?.supportingEvidence && item.stance === 'supports')?.id || '',
     opposingEvidence: evidence.find(item => item.id === presentation.assessment?.opposingEvidence && item.stance === 'contradicts')?.id || ''
   } } : null;
-  return { property, claims, evidence, transitions, questions, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
+  const inputReviews = structuredClone(output.inputReviews || []);
+  const inputProblems = semanticInput.problems({ ...draft, claims, evidence, causal: output.causal, inputReviews }, false);
+  if (inputProblems.length) throw new Error(inputProblems.join('\n'));
+  return { property, claims, evidence, transitions, questions, inputReviews, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
     scopedStatus: claims.some(claim => claim.status === 'unresolved') ? 'partial' : text(output.conclusion.status, 100),
     text: text(output.conclusion.text, 4000), limitations: list(output.conclusion.limitations), origin: 'model-draft', humanReviewed: false } };
 }
@@ -585,7 +612,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       !draft.claims.some(claim => claim.needsReassessment) && (draft.checkpoint?.stage === 'challenge' ||
         resumeQuestions ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate');
-    if (resumeChallenge) { validateCurrent(catalog, draft); context.restore(draft.sources, draft); }
+    if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft); }
     if (resumeChallenge) context.gaps.push(...(draft.codeGaps || []));
     draft.codeGaps = [...new Set(context.gaps)];
     for (const unit of context.units) if (!unit.complete) draft.codeGaps.push(`${unit.name} is only available through ${unit.source.file}:${unit.source.endLine} in this review. Its remaining code has not been checked.`);
@@ -609,10 +636,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // Supply the original text once, with exact paragraph IDs. Previously the
     // same long report appeared as raw text, sections AND paragraphs in every
     // pass, crowding out the relevant code without adding evidence.
-    const input = phase => ({ phase, finding: { id: findingId, title: request.finding.title,
+    draft.semanticInput ||= semanticInput.input(request, issue);
+    const input = phase => ({ phase, semanticInput: semanticInput.packet(draft.semanticInput), finding: { id: findingId, title: request.finding.title,
       reportSections: content(issue?.reportText || request.finding.summary).sections.map(({ field, proposed }) => ({ field, proposed })),
       reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary),
-      expectedBehavior: request.finding.expectedBehavior || '' },
+      savedSummary: draft.semanticInput.saved.summary, preconditions: draft.semanticInput.saved.preconditions,
+      expectedBehavior: draft.semanticInput.saved.expectedBehavior },
       snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })), sources: modelSources(context.units),
       compiler: draft.compiler, experiments: draft.experiments, codeGaps: context.gaps, documentation: context.documentation,
       ...(phase === 'challenge' ? { earlierDraft: challengeFormat.earlier(draft, reviewSchema), actions: draft.actions.slice(-5) } : {}) });
@@ -630,7 +659,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       for (const question of result.questions) {
         ensure();
         const claim = result.claims.find(item => item.id === question.claimId);
-        const key = hash([question, claim?.entry, draft.snapshot.sourceDigest, draft.snapshot.configuration]);
+        const key = hash([question, claim?.entry, draft.snapshot.reportHash, draft.snapshot.sourceDigest, draft.snapshot.configuration]);
         const previous = [...draft.actions].reverse().find(action => action.acquisitionKey === key);
         if (previous && ['no-additional-context', 'context-already-available', 'blocked'].includes(previous.outcome) && previous.sourceIds.every(id => context.units.some(unit => unit.id === id))) continue;
         const action = { ...context.act(question, claim), acquisitionKey: key };
@@ -640,7 +669,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       return progress;
     };
     const obtain = async (phase, previous = null, feedback = null) => {
-      const data = input(phase);
+      let data = input(phase);
       if (feedback) data.hostReview = feedback;
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
       if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
@@ -648,23 +677,72 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       const call = async input => {
         const transport = invoke === runProvider || invoke.isProviderTransport === true;
         const health = require('./provider-health'), healthOptions = { ...providerResources, executable };
+        const checkpoint = require('./provider-result');
+        const previousModel = phase === 'challenge' ? hash(challengeFormat.earlier(draft, reviewSchema)) : null;
+        const cached = persist && checkpoint.read(root, findingId, draft.pendingResponse, {
+          phase, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel });
+        if (cached) {
+          ensure();
+          const recoveredUnits = cached.units.map(unit => ({ ...unit,
+            code: catalog.document(unit.source.file).lines.slice(unit.source.line - 1, unit.source.endLine).join('\n') }));
+          context.restore(recoveredUnits, draft); data = cached.input;
+          return { ...cached.result, audit: { ...cached.result.audit, reusedResponse: true } };
+        }
         if (transport) health.check(provider, healthOptions);
         const release = transport ? await require('./provider-slots').acquire(provider, signal, { ...providerResources, onProgress }) : () => {};
-        let reservation;
+        let reservation, terminalAudit;
         try {
           if (transport) health.check(provider, healthOptions);
-          ensure(); reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)) });
-          const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity });
-          if (transport) await health.record(provider, result.audit, healthOptions);
-          await onResult?.(result.audit || {}, reservation); return result;
+          ensure(); release.markDispatching?.();
+          reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)) });
+          const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
+            onProcessStart: details => release.attachProcess?.(details) });
+          terminalAudit = result.audit || {};
+          await onResult?.(terminalAudit, reservation);
+          ensure();
+          if (persist) {
+            // Keep the previous accepted argument and its source store intact
+            // until the replacement is accepted. Recovery records exact unit
+            // identities/cursors, then re-reads complete current code locally;
+            // a bounded model excerpt never becomes the canonical function.
+            const units = context.units.map(({ id, name, signature, kind, contextKind, source, readThrough, reason, complete }) =>
+              ({ id, name, signature, kind, contextKind, source, readThrough, reason, complete }));
+            draft.pendingResponse = checkpoint.save(root, findingId, { input, result, units, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel });
+            await save();
+          }
+          if (transport) try { await health.record(provider, terminalAudit, healthOptions); }
+          catch (error) {
+            // Health bookkeeping is secondary to a completed response. Keep
+            // the receipt and result, and still perform normal semantic checks.
+            terminalAudit.healthUpdateError = { code: error.code || 'HEALTH_WRITE', message: text(error.message, 300) };
+          }
+          return result;
         } catch (error) {
           if (error.audit) {
-            if (transport) await health.record(provider, error.audit, healthOptions);
+            terminalAudit = error.audit;
             await onResult?.(error.audit, reservation);
+            if (transport) try { await health.record(provider, error.audit, healthOptions); }
+            catch (healthError) { error.audit.healthUpdateError = { code: healthError.code || 'HEALTH_WRITE', message: text(healthError.message, 300) }; }
+          } else if (reservation && !terminalAudit) {
+            // A host/adapter exception after reservation is still a terminal
+            // receipt, not an indefinitely reserved request. Do not invent
+            // token usage, cost, or a claim that no dispatch occurred.
+            terminalAudit = { requestId: reservation.id, phase, provider, outcome: 'failed', failureKind: 'host-interruption',
+              finishedAt: now(), message: text(error.message, 300), usage: null, costUSD: null };
+            await onResult?.(terminalAudit, reservation);
           }
           throw error;
         }
-        finally { release(); await onDispatchEnd?.(reservation); }
+        finally {
+          try {
+            if (terminalAudit?.teardown?.confirmed === false && release.quarantine) release.quarantine(terminalAudit.teardown);
+          } catch (error) { if (terminalAudit) terminalAudit.cleanupError = { code: error.code || 'QUARANTINE_WRITE', message: text(error.message, 300) }; }
+          finally {
+            try { release(); }
+            catch (error) { if (terminalAudit) terminalAudit.cleanupError = { code: error.code || 'SLOT_RELEASE', message: text(error.message, 300) }; }
+            finally { await onDispatchEnd?.(reservation); }
+          }
+        }
       };
       let response = await call(data); ensure(); workspaceSnapshot.validate(catalog, { force: true });
       const recordReading = () => { for (const supplied of data.sources) {
@@ -687,6 +765,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       let accepted;
       try { accepted = validate(response.value); }
       catch (error) {
+        // A rejected response is recorded, not replayed as the repair itself.
+        delete draft.pendingResponse;
         if (repairUsed) {
           draft.lastRejected = { phase, inputHash: response.audit?.inputHash, at: now(), error: error.message, output: response.value };
           draft.checkpoint ||= { stage: phase, snapshot: hash(draft.snapshot) };
@@ -703,6 +783,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         accepted = validate(response.value);
       }
       recordReading(); draft.runs.at(-1).resultAccepted = true;
+      delete draft.pendingResponse;
       draft.runs.at(-1).hostAcceptedAt = now();
       await onAccepted?.(draft.runs.at(-1)); return accepted;
     };
@@ -779,7 +860,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     await save(); return draft;
   } catch (error) {
     if (error.code === 'INVESTIGATION_SUPERSEDED' || signal?.aborted || !current()) return draft;
-    draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' : ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE'].includes(error.code) ? 'provider-health' : error.code === 'REPORT_PAUSED' ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : error.code === 'LOCAL_READING_LIMIT' ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
+    draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' :
+      ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE', 'PROVIDER_TEARDOWN_UNCONFIRMED', 'PROVIDER_RESOURCE_UNAVAILABLE', 'PROVIDER_OWNERSHIP_UNAVAILABLE'].includes(error.code) || error.audit?.teardown?.confirmed === false ? 'provider-health' :
+      error.code === 'REPORT_PAUSED' ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : error.code === 'LOCAL_READING_LIMIT' ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
     if (error.audit) draft.runs.push(error.audit);
     // A failed provider/schema/challenge must not erase a usable earlier draft.
     try { await save(); } catch { /* never overwrite a changed source context */ }
@@ -788,6 +871,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
 }
 function create({ findingId, request, issue, catalog }) {
   return { version: 1, engine: 'source-review-v1', findingId, title: request.finding.title, snapshot: snapshot(catalog, request, issue),
+    semanticInput: semanticInput.input(request, issue), inputReviews: [],
     createdAt: now(), revision: 0, phase: 'preparing', property: { text: request.finding.expectedBehavior || 'Expected property needs a stated basis.', basis: 'report-assumption', evidence: [] },
     claims: [], evidence: [], transitions: [], questions: [], sources: [], actions: [], experiments: [], corrections: [], runs: [],
     conclusion: { status: 'insufficient-evidence', text: 'Preparation has not yet established source-based conclusions.', humanReviewed: false, origin: 'preparation' } };

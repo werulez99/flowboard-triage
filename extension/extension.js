@@ -22,15 +22,17 @@ function activate(context) {
   const boards = new Map(), processed = new Map(), watchers = new Map();
   const catalogs = new Map(), sourceEpochs = new Map(), selections = new Map(), dirtySources = new Set();
   const preparations = new Map();
+  const owners = new Map();
   function invalidate(root) { catalogs.delete(root); sourceEpochs.set(root, (sourceEpochs.get(root) || 0) + 1); }
   function operation(folder, kind = 'delivery', selectedId) {
     const root = folder.uri.fsPath;
     if (kind === 'selection') selections.set(root, { epoch: (selections.get(root)?.epoch || 0) + 1, id: selectedId });
-    return { root, kind, epoch: selections.get(root)?.epoch || 0 };
+    return { root, kind, epoch: selections.get(root)?.epoch || 0, owner: owners.get(root) };
   }
-  function current(work) { return work.kind === 'background' || work.epoch === (selections.get(work.root)?.epoch || 0); }
+  function current(work) { return !!work.owner && owners.get(work.root) === work.owner && (work.kind === 'background' || work.epoch === (selections.get(work.root)?.epoch || 0)); }
   function reportPreparation(folder) {
     const root = folder.uri.fsPath;
+    if (!owners.has(root)) return null;
     if (!fs.existsSync(path.join(root, '.flowboard/report.json'))) return null;
     if (!preparations.has(root)) {
       const preparation = new ReportPreparation(root, {
@@ -85,6 +87,7 @@ function activate(context) {
     }
     const before = sourceEpochs.get(root) || 0;
     const analyzed = await analyze(dependency.extensionPath, fs.realpathSync(root), { ...options, background: options.mode === 'source', signal: work.signal });
+    if (owners.get(root) !== work.owner) assertSelected(work);
     if ((sourceEpochs.get(root) || 0) !== before || hasDirtySource(root) || key !== JSON.stringify([dependency.extensionPath, VERSION, options.mode, options.slitherPath, p.gitState(root).head, configurationStamp(root)])) {
       throw new Error('Source or project configuration changed during preparation. Save your edits and reopen the finding.');
     }
@@ -116,11 +119,13 @@ function activate(context) {
     return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: false }, action);
   }
   async function boardFor(folder) {
-    trust(); const root = folder.uri.fsPath;
+    trust(); const root = folder.uri.fsPath, ownership = operation(folder, 'background');
+    assertSelected(ownership);
     let board = boards.get(root);
     if (!board || board.disposed) {
       const dependency = upstream();
       await dependency.activate();
+      assertSelected(ownership);
       board = new TriageBoard(vscode, context, dependency, root, {
         ...(fs.existsSync(path.join(root, '.flowboard/report.json')) ? { reportPreparation: () => reportPreparation(folder) } : {}),
         select: id => {
@@ -210,6 +215,7 @@ function activate(context) {
     if (!current(work)) return;
     trust(); let issue;
     try { issue = store.readReport(folder.uri.fsPath).issues.find(value => value.id === id); } catch { /* individual finding */ }
+    if (issue) reportPreparation(folder)?.prioritize(id);
     let draft;
     try { draft = store.readDraft(folder.uri.fsPath, id); }
     catch (error) {
@@ -265,6 +271,7 @@ function activate(context) {
   }
   function addFolder(folder) {
     if (watchers.has(folder.uri.toString())) return;
+    owners.set(folder.uri.fsPath, crypto.randomUUID());
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, p.REQUEST));
     const submit = () => { const work = operation(folder); return enqueue(() => processFolder(folder, work)); };
     const parts = [watcher, watcher.onDidCreate(submit), watcher.onDidChange(submit)];
@@ -348,7 +355,20 @@ function activate(context) {
   }));
   for (const folder of vscode.workspace.workspaceFolders || []) addFolder(folder);
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(event => {
-    event.removed.forEach(folder => { watchers.get(folder.uri.toString())?.forEach(item => item.dispose()); watchers.delete(folder.uri.toString()); invalidate(folder.uri.fsPath); operation(folder, 'selection', null); });
+    event.removed.forEach(folder => {
+      const root = folder.uri.fsPath;
+      owners.delete(root);
+      watchers.get(folder.uri.toString())?.forEach(item => item.dispose()); watchers.delete(folder.uri.toString());
+      preparations.get(root)?.dispose(); preparations.delete(root);
+      invalidate(root); selections.delete(root); processed.delete(root);
+      const board = boards.get(root);
+      if (board) {
+        for (const model of new Set([...(board.models?.values() || []), ...(board.sessions?.values() || [])])) {
+          model.investigationAbort?.abort(); model.experimentAbort?.abort();
+        }
+        board.disposed = true; board.native?.panel?.dispose(); boards.delete(root);
+      }
+    });
     event.added.forEach(addFolder);
   }));
   async function pickFolder() {

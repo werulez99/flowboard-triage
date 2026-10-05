@@ -38,8 +38,9 @@ async function start(options = {}) {
   const extension = productionExtension;
   const readOnly = !!options.workspace;
   const configuration = { semanticProvider: options.provider || 'none' };
-  if (options.mixedFixture) {
-    if (readOnly || options.invoke || options.qualityCase || options.qualityBatch || options.qualityResponses || options.qualityRecording) throw new Error('Mixed preparation is an isolated controlled fictional fixture.');
+  if(options.mixedFixture&&options.routeFixture)throw new Error('Choose one controlled fixture.');
+  if (options.mixedFixture || options.routeFixture) {
+    if (readOnly || options.invoke || options.qualityCase || options.qualityBatch || options.qualityResponses || options.qualityRecording) throw new Error('Controlled preparation is an isolated fictional fixture.');
     configuration.semanticProvider = 'codex'; options.reportPreparation = true;
   }
   if (readOnly && (options.complex || options.reading || options.qualityCase || options.qualityBatch)) throw new Error('Choose an existing workspace or a fictional fixture, not both.');
@@ -48,14 +49,14 @@ async function start(options = {}) {
   const qualityFolder = options.qualityCase && path.join(__dirname, 'fixtures/quality-cases', options.qualityCase);
   const root = readOnly ? fs.realpathSync(options.workspace) : fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-workflow-'));
   if (!readOnly) {
-    if (options.mixedFixture) {
-      fs.cpSync(path.join(__dirname, 'fixtures/mixed-preparation/project'), root, { recursive: true });
+    if (options.mixedFixture || options.routeFixture) {
+      fs.cpSync(path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/project' : 'fixtures/mixed-preparation/project'), root, { recursive: true });
     } else if (options.qualityBatch) {
       const base = path.join(__dirname, 'fixtures/quality-cases');
       for (const name of ['d3', 'd7']) fs.cpSync(path.join(base, name, 'project'), root, { recursive: true });
       fs.writeFileSync(path.join(root, 'report.md'), fs.readFileSync(path.join(base, 'd3/report.md'), 'utf8') + '\n\n' + fs.readFileSync(path.join(base, 'd7/report.md'), 'utf8').replace('[I-01]', '[I-02]'));
     } else fs.cpSync(qualityFolder ? path.join(qualityFolder, 'project') : path.resolve(__dirname, options.reading ? 'fixtures/reading-project' : options.complex ? '../examples/complex-project' : '../examples/project'), root, { recursive: true });
-    await importReport(options.mixedFixture ? path.join(__dirname, 'fixtures/mixed-preparation/report.md') : options.qualityBatch ? path.join(root, 'report.md') : qualityFolder ? path.join(qualityFolder, 'report.md') : path.join(__dirname, options.reading ? 'fixtures/reading-report.md' : options.complex ? 'fixtures/complex-report.md' : 'fixtures/workflow-report.md'), root, upstream, { deferMapping: !!options.deferMapping });
+    await importReport(options.mixedFixture || options.routeFixture ? path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/report.md' : 'fixtures/mixed-preparation/report.md') : options.qualityBatch ? path.join(root, 'report.md') : qualityFolder ? path.join(qualityFolder, 'report.md') : path.join(__dirname, options.reading ? 'fixtures/reading-report.md' : options.complex ? 'fixtures/complex-report.md' : 'fixtures/workflow-report.md'), root, upstream, { deferMapping: !!options.deferMapping });
     if (options.qualityRecording) {
       const recorded = JSON.parse(fs.readFileSync(options.qualityRecording, 'utf8'));
       if (recorded.case !== options.qualityCase || recorded.draft?.phase !== 'ready') throw new Error('Recording does not match the selected fictional case.');
@@ -103,8 +104,8 @@ async function start(options = {}) {
   const providerCalls = [];
   let releaseMixed, mixedHeld = false;
   const mixedWait = options.mixedFixture && new Promise(resolve => { releaseMixed = resolve; });
-  const mixedInvoke = options.mixedFixture ? async (input, settings) => {
-    const record = { input: structuredClone(input), fixture: 'controlled-mixed-preparation' }; providerCalls.push(record);
+  const mixedInvoke = options.mixedFixture || options.routeFixture ? async (input, settings) => {
+    const record = { input: structuredClone(input), fixture: options.routeFixture ? 'controlled-route-preparation' : 'controlled-mixed-preparation' }; providerCalls.push(record);
     if (input.finding.id === 'I-2' && input.phase === 'challenge') {
       mixedHeld = true;
       await Promise.race([mixedWait, new Promise((_, reject) => {
@@ -113,7 +114,7 @@ async function start(options = {}) {
       })]);
       mixedHeld = false;
     }
-    const result = { value: require('./fixtures/mixed-ready-output').response(input), audit: { provider: 'controlled-mixed-fixture', phase: input.phase, outcome: 'completed' } };
+    const result = { value: require(options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input), audit: { provider: options.routeFixture ? 'controlled-route-fixture' : 'controlled-mixed-fixture', phase: input.phase, outcome: 'completed' } };
     record.result = structuredClone(result); return result;
   } : undefined;
   let replay;
@@ -282,7 +283,7 @@ async function start(options = {}) {
       } else if (message.name === 'library') {
         await board.showLibrary();
       } else if (message.name === 'source-change' && !readOnly) {
-        const file = options.qualityCase ? board.models.get(board.activeId).catalog.functions[0].file : path.join(root, options.reading ? 'src/ReservationBook.sol' : options.complex ? 'src/QuotationDemo.sol' : 'src/Demo.sol');
+        const file = options.qualityCase || options.routeFixture || options.mixedFixture ? board.models.get(board.activeId).catalog.functions[0].file : path.join(root, options.reading ? 'src/ReservationBook.sol' : options.complex ? 'src/QuotationDemo.sol' : 'src/Demo.sol');
         fs.appendFileSync(file, '\n// Integration fixture source revision changed.\n');
         reportPreparation?.invalidate('Code changed. The complete report must be rechecked.');
         await board.sourceChanged(file);
@@ -319,6 +320,7 @@ if (require.main === module) {
     requestLimit: process.argv.includes('--request-limit') ? Number(process.argv[process.argv.indexOf('--request-limit') + 1]) : 12,
     qualityBatch: process.argv.includes('--quality-batch'),
     mixedFixture: process.argv.includes('--mixed-fixture'),
+    routeFixture: process.argv.includes('--route-fixture'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,
     qualityCase: qualityIndex < 0 ? null : process.argv[qualityIndex + 1],

@@ -2,6 +2,7 @@
 // Account-wide local concurrency, including separate extension hosts/projects.
 // A slot is permission to dispatch, never an extra spending allowance.
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), crypto = require('node:crypto');
+const ownership = require('./provider-ownership');
 const MAX_ACTIVE = 2;
 function cancelled() { return Object.assign(new Error('Cancelled while waiting for the provider.'), { code: 'INVESTIGATION_SUPERSEDED' }); }
 function localDirectory(directory) {
@@ -10,15 +11,16 @@ function localDirectory(directory) {
   if (fs.lstatSync(root).isSymbolicLink() || process.getuid && fs.statSync(root).uid !== process.getuid()) throw new Error('Unsafe local provider slot directory.');
   return root;
 }
-function removeOwned(file, owner) { try { if (JSON.parse(fs.readFileSync(file, 'utf8')).owner === owner) fs.unlinkSync(file); } catch { /* Already released. */ } }
 function liveEntry(file) {
-  try {
-    const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!Number.isSafeInteger(entry.pid) || entry.pid < 1 || typeof entry.owner !== 'string') return null;
-    try { process.kill(entry.pid, 0); }
-    catch (error) { if (error.code === 'ESRCH') { removeOwned(file, entry.owner); return null; } }
-    return entry;
-  } catch { return null; /* A just-created entry may not have finished writing. */ }
+  const observed = ownership.inspect(file);
+  if (observed?.entry?.quarantine || observed?.state === 'dead' && observed.entry?.dispatching) {
+    const details = observed.entry.quarantine || observed.entry.providerProcess;
+    const state = require('./provider-process').processGroup(details);
+    if (!details?.unverifiedDescendants && state.confirmed && ownership.removeObserved(file, observed)) return null;
+    throw Object.assign(new Error('A previous provider process has not been confirmed stopped. Its capacity is quarantined; check that process before retrying. No new request was reserved.'),
+      { code: 'PROVIDER_TEARDOWN_UNCONFIRMED', quarantine: details || { reason: 'The owner stopped during dispatch before recording its process identity.' } });
+  }
+  return ownership.reap(file, observed)?.entry || null;
 }
 function wait(signal, ms) {
   return new Promise((resolve, reject) => {
@@ -36,9 +38,9 @@ function wait(signal, ms) {
 async function acquire(provider, signal, { timeoutMs = 0, directory, onProgress, pollMs = 100 } = {}) {
   if (!['codex', 'claude'].includes(provider)) throw new Error('Unknown review provider.');
   if (signal?.aborted) throw cancelled();
-  const root = localDirectory(directory), owner = crypto.randomUUID(), start = Date.now(), queuedAt = new Date(start).toISOString();
+  const root = localDirectory(directory), metadata = ownership.ownerMetadata(), owner = metadata.owner, start = Date.now(), queuedAt = new Date(start).toISOString();
   const waiter = path.join(root, `${provider}-wait-${String(start).padStart(16, '0')}-${process.hrtime.bigint().toString().padStart(24, '0')}-${owner}.json`);
-  fs.writeFileSync(waiter, JSON.stringify({ owner, pid: process.pid, startedAt: start }), { flag: 'wx', mode: 0o600 });
+  ownership.publish(waiter, metadata);
   let lastPosition = null;
   const notify = data => { try { onProgress?.(data); } catch { /* A status observer cannot strand a slot. */ } };
   try {
@@ -54,11 +56,23 @@ async function acquire(provider, signal, { timeoutMs = 0, directory, onProgress,
       if (position === 0) for (let i = 0; i < MAX_ACTIVE; i++) {
         const file = path.join(root, `${provider}-${i}.json`);
         try {
-          const descriptor = fs.openSync(file, 'wx', 0o600);
-          try { fs.writeFileSync(descriptor, JSON.stringify({ owner, pid: process.pid, startedAt: Date.now() })); }
-          finally { fs.closeSync(descriptor); }
+          ownership.publish(file, { ...metadata, startedAt: Date.now() });
           const acquiredAt = new Date().toISOString(), waitMs = Date.now() - start;
-          const release = () => removeOwned(file, owner);
+          let quarantined = false;
+          const release = () => { if (!quarantined) ownership.removeOwned(file, owner); };
+          const update = change => {
+            const held = ownership.snapshot(file);
+            if (!held?.entry || held.entry.owner !== owner) throw ownership.resourceError('The provider slot changed before its process ownership could be recorded. Stop new preparation and inspect local provider state.');
+            ownership.publish(file, { ...held.entry, ...change }, true);
+          };
+          const processRecord = details => ({ pid: Number.isSafeInteger(details?.pid) ? details.pid : null,
+            processGroup: Number.isSafeInteger(details?.processGroup) ? details.processGroup : null, birth: details?.birth || null,
+            platform: details?.platform || process.platform, strategy: details?.strategy || 'unknown',
+            unverifiedDescendants: details?.unverifiedDescendants === true, streamsClosed: details?.streamsClosed === true,
+            at: new Date().toISOString() });
+          release.markDispatching = () => update({ dispatching: true });
+          release.attachProcess = details => update({ dispatching: true, providerProcess: processRecord(details) });
+          release.quarantine = details => { quarantined = true; update({ dispatching: true, quarantine: processRecord(details) }); };
           release.capacity = { queuedAt, acquiredAt, waitMs, limit: MAX_ACTIVE };
           notify({ stage: 'provider-capacity', event: 'provider.capacity.acquired', at: acquiredAt, provider, waitMs, queuedAt, activeSlots: activeSlots + 1, limit: MAX_ACTIVE });
           return release;
@@ -74,7 +88,7 @@ async function acquire(provider, signal, { timeoutMs = 0, directory, onProgress,
     throw Object.assign(new Error('Waiting for a free provider slot. No request has been reserved; preparation can continue when capacity is free.'),
       { code: 'PROVIDER_CAPACITY', retryable: true, waitMs: Date.now() - start });
   } finally {
-    removeOwned(waiter, owner);
+    ownership.removeOwned(waiter, owner);
   }
 }
 module.exports = { acquire, MAX_ACTIVE, localDirectory };

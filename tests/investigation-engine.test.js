@@ -28,6 +28,9 @@ async function fixture(t) {
 function response(input) {
   const unit = input.sources.find(unit => unit.name === 'Demo::_add');
   return {
+    inputReviews: (input.semanticInput?.premises || []).map(premise => ({ id: premise.id, status: 'unresolved',
+      reason: 'This controlled counter fixture does not establish the saved premise or a complete execution scenario.',
+      claimIds: ['normal-counter'], eventIds: [], evidence: ['addition'] })),
     property: { text: 'Ordinary counter increments should add the input amount.', basis: 'report-assumption', evidence: [] },
     claims: [{ id: 'normal-counter', allegation: 'The helper subtracts the input.', actor: 'Any caller', entry: unit.id,
       implementation: 'Demo::_add in the supplied fictional checkout', conditions: ['The ordinary checked addition succeeds.'],
@@ -53,7 +56,9 @@ test('normal investigation advances generation, bounded source checks and challe
       return { value: response(input), audit: { phase: input.phase, provider: 'controlled-test-fixture', outcome: 'completed' } };
     } });
   assert.deepEqual(invocations, ['generate', 'challenge']);
-  assert.deepEqual(phases, ['generating', 'checking-source', 'challenging', 'blocked']);
+  // Durable acceptance checkpoints may repeat the same real stage. Preserve
+  // ordering and the separate exact two-provider-request assertion above.
+  assert.deepEqual(phases.filter((phase, index) => !index || phase !== phases[index - 1]), ['generating', 'checking-source', 'challenging', 'blocked']);
   assert.equal(result.publication.ready, false, 'An old partial model response is saved privately, not published as a complete guide.');
   assert.equal(result.claims[0].status, 'contradicted');
   assert.equal(result.evidence[0].quoteVerified, true);
@@ -201,6 +206,21 @@ test('a rejected retry preserves challenge-only evidence and records a completed
   const invalidLimits = { ...reopened, readingLimits: { length: 1 } };
   fs.writeFileSync(path.join(context.root, '.flowboard/investigations', context.findingId + '.json'), JSON.stringify(invalidLimits));
   assert.throws(() => engine.read(context.root, context.findingId), /code-reading limits/);
+});
+test('a replacement generation checkpoint cannot orphan an earlier accepted evidence unit', { skip: !native }, async t => {
+  const context = await fixture(t);
+  const draft = await engine.advance({ ...context, provider:'codex', publish:async()=>{}, invoke:async input => ({ value:response(input), audit:{phase:input.phase,outcome:'completed'} }) });
+  const retained = structuredClone(draft.sources.find(unit=>unit.id===draft.evidence[0].sourceId)); retained.id='older-checked-source'; draft.sources.push(retained);
+  draft.evidence[0].sourceId=retained.id; draft.claims[0].entry=retained.id; draft.claims[0].needsReassessment=true;
+  draft.revision++; engine.write(context.root,draft); let attempts=0;
+  await engine.advance({ ...context,draft,provider:'codex',publish:async()=>{},invoke:async input=>{
+    attempts++;
+    const saved=engine.read(context.root,context.findingId);
+    assert.ok(saved.sources.some(unit=>unit.id===retained.id)); assert.equal(saved.evidence[0].sourceId,retained.id);
+    const value=response(input);value.evidence[0].quote='An intentionally rejected fixture quote';return {value,audit:{phase:input.phase,outcome:'completed'}};
+  }});
+  assert.equal(attempts,2);const saved=engine.read(context.root,context.findingId);
+  assert.equal(saved.evidence[0].sourceId,retained.id);assert.ok(saved.sources.some(unit=>unit.id===retained.id));
 });
 test('existing regression classifier distinguishes no tests, lint diagnostics, setup failure and observed assertions', () => {
   assert.equal(experiment.classify('{}', 'No tests found', 0).outcome, 'no-tests-executed');

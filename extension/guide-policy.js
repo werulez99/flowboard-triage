@@ -8,7 +8,8 @@ const bindings = require('./call-bindings');
 function digest(draft) {
   return crypto.createHash('sha256').update(JSON.stringify({ findingId: draft.findingId, snapshot: draft.snapshot,
     property: draft.property, claims: draft.claims, evidence: draft.evidence, sources: draft.sources,
-    causal: draft.causal, walkthrough: draft.walkthrough, conclusion: draft.conclusion, dependencies: draft.dependencies })).digest('hex');
+    causal: draft.causal, walkthrough: draft.walkthrough, conclusion: draft.conclusion, dependencies: draft.dependencies,
+    semanticInput: draft.semanticInput, inputReviews: draft.inputReviews })).digest('hex');
 }
 const str = { type: 'string' }, strings = { type: 'array', items: str };
 const object = properties => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
@@ -40,6 +41,7 @@ function gate(draft) {
   const fail = (reason, kind = 'structural', target = null) => { problems.push(reason); details.push({ kind, target, reason,
     action: kind === 'material-evidence' ? 'Obtain the named evidence; do not regenerate unchanged claims.' : kind === 'local-reading' ? 'Read the remaining local segments and challenge the affected claim.' : 'Repair the affected references or coverage, retaining accepted source and claims.' }); };
   if (!model || typeof model !== 'object') return { ready: false, problems: ['The saved analysis has no checked explanation model. Prepare it with the current review policy.'] };
+  for (const problem of require('./semantic-input').problems(draft)) fail(problem, 'structural');
   const nonempty = value => typeof value === 'string' && !!value.trim();
   const list = value => Array.isArray(value) ? value : [];
   const units = new Map(list(draft.sources).map(unit => [unit.id, unit])), evidence = new Map(list(draft.evidence).map(entry => [entry.id, entry]));
@@ -123,6 +125,7 @@ function gate(draft) {
         fail: (reason, kind = 'structural') => fail(reason, kind, capacity.target('relationship', link)) });
     }
   }
+  bindings.validateInvocations({ events, links, units, evidence, fail });
   if (!events.length || !Array.isArray(model.order) || model.order.length !== events.length || new Set(model.order).size !== events.length || model.order.some(id => !eventIds.has(id))) fail('The tutorial has no complete, unique reading order.');
   for (let i = 1; i < list(model.order).length; i++) if (!links.some(link => link.from === model.order[i - 1] && link.to === model.order[i])) fail('A move to the next step has no explained handoff or context detour.');
   return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details };
@@ -134,7 +137,7 @@ function expose(draft, report = null) {
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for (const field of ['causal', 'walkthrough', 'explanationReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected']) delete copy[field];
+  for (const field of ['causal', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',
     reason: draft.error || draft.publication?.problems?.[0] || (draft.phase === 'provider-required' ? 'Choose an authenticated provider to prepare the explanation.' : ''),

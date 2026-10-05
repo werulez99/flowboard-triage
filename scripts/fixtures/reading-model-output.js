@@ -40,7 +40,10 @@ function response(input) {
       reason: item.id === 'credit-record' ? 'The += operator adds, not subtracts. The caller and onlyHolder guard scope the holder at the earlier settlement call.' : 'The quoted order and call target match this route; external behavior is not inferred.',
       checkedSourceIds: [...new Set([item.sourceId, ...(item.claimId === 'local-credit' ? [local.id, settle.id, guard.id] : [])])] };
   }) : [];
-  return { value: { property: { text: 'The report expects pending credit to be recorded before removal.', basis: 'report-assumption', evidence: [] }, claims, evidence, explanationReviews,
+  return { value: { inputReviews: (input.semanticInput?.premises || []).map(premise => ({ id: premise.id, status: 'unresolved',
+    reason: 'This controlled partial interpretation separates local and remote holder routes, but does not establish the saved premise for the unavailable remote implementation or a complete collection scenario.',
+    claimIds: claims.map(claim => claim.id), eventIds: [], evidence: ['local-order'] })),
+    property: { text: 'The report expects pending credit to be recorded before removal.', basis: 'report-assumption', evidence: [] }, claims, evidence, explanationReviews,
     transitions: [], questions: [{ id: 'collection-rules', claimId: 'local-credit', text: 'Which code reads recorded credit?', action: 'references', target: 'collected', why: 'Recording credit alone does not establish how it can be used later.' }],
     conclusion: { status: multi ? 'mixed' : challenged ? 'contradicted-in-scope' : 'insufficient-evidence',
       text: challenged ? 'The local no-recording allegation conflicts with the inspected assignment and caller order. Other behavior and the intended specification remain to check.' : 'The initial interpretation needs a code check.',

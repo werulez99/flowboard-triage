@@ -126,6 +126,23 @@ test('parameter links use checked occurrence/index metadata, including interface
   destination.parameterSpans[0].index=0;
   assert.deepEqual(walk.inputLinks(route,step,input).argument.span,{start:1,end:8});
 });
+test('rollback without repeated writes marks this invocation history, but a caught child failure does not erase caller state', () => {
+  const event = { invocationId:'caller', transaction:'tx1', receiver:'Book', claimId:'c1', effect:'intermediate' };
+  const change = { name:'count', before:'old count', operation:'+ amount', after:'old count + amount', units:'items', evidence:['write'] };
+  const route = { steps:[
+    { ...event, id:'write', title:'Record caller state', changes:[change] },
+    { ...event, id:'child-write', invocationId:'child', receiver:'Worker', changes:[{...change,name:'attempts'}] },
+    { ...event, id:'child-revert', invocationId:'child', receiver:'Worker', effect:'rolled-back', changes:[] },
+    { ...event, id:'caught', effect:'read', changes:[] },
+    { ...event, id:'caller-revert', effect:'rolled-back', changes:[] }
+  ] };
+  const failedChild=walk.watchedChanges(route,2);
+  assert.equal(failedChild[0].effect,'rolled-back');
+  assert.equal(failedChild[0].after,'old count + amount','Keep the attempted value as history, not an invented final balance.');
+  assert.equal(failedChild[0].rollbackEventId,'child-revert');
+  assert.equal(walk.watchedChanges(route,3)[0].effect,'intermediate','A separate caught child invocation does not roll back its caller.');
+  assert.equal(walk.watchedChanges(route,4)[0].effect,'rolled-back');
+});
 test('local rule lookup is bounded, source-hashed and excludes reports, instructions and symlinks', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-docs-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'docs'));

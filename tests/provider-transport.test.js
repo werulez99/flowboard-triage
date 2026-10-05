@@ -58,6 +58,36 @@ test('actual fake child CLI exercises stdin, JSON lines, UTF-8 and process exit 
     else assert.ok(original.args.includes('--max-budget-usd'));
   }
 });
+test('explicit schema diagnostic shares the real isolated Codex transport without changing the review schema or sending source', async () => {
+  const reviewSchemaBefore = JSON.stringify(provider.schema); let normalArgs, probeArgs, probeDirectory, probeSchema, stdin = '';
+  const normalize = args => args.map((value, index) => args[index - 1] === '--output-schema' ? '<schema file>' : value);
+  await provider.runCodex(input, { spawn: fakeProcess({ stdout: wire(), inspect: ({ args }) => { normalArgs = normalize(args); } }) });
+  const result = await provider.runSchemaProbe({ requestId: 'controlled-probe-only', spawn: (executable, args, settings) => {
+    assert.equal(executable, 'codex'); assert.equal(settings.shell, false);
+    probeArgs = normalize(args); probeDirectory = settings.cwd;
+    probeSchema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
+    const child = spawn(process.execPath, [path.join(__dirname, 'fixtures/provider-cli.js'), 'probe'], settings), end = child.stdin.end.bind(child.stdin);
+    child.stdin.end = (value, ...other) => { stdin = String(value); return end(value, ...other); }; return child;
+  } });
+  assert.deepEqual(result.value, { ok: true }); assert.deepEqual(probeArgs, normalArgs);
+  assert.deepEqual(probeSchema, { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false });
+  assert.equal(JSON.stringify(provider.schema), reviewSchemaBefore); assert.ok(provider.schema.properties.claims);
+  assert.ok(stdin.includes('Return exactly {"ok":true}')); assert.ok(!stdin.includes(input.finding.title)); assert.ok(!stdin.includes(text));
+  assert.equal(result.audit.phase, 'schema-probe'); assert.equal(result.audit.diagnostic, 'schema-probe');
+  assert.equal(result.audit.requestId, 'controlled-probe-only'); assert.equal(result.audit.inputSections.source, 0); assert.equal(result.audit.inputSections.report, 0);
+  assert.equal(result.audit.effectiveConfiguration.tools, false); assert.equal(result.audit.effectiveConfiguration.reasoningEffort, 'medium');
+  assert.equal(result.audit.deadline.milliseconds, 240000); assert.equal(result.audit.hostAcceptedAt, null);
+  assert.equal(result.audit.teardown.confirmed, true); assert.equal(fs.existsSync(probeDirectory), false);
+});
+test('schema diagnostics reject unexpected values and forbidden tool actions without presenting a review result', async () => {
+  for (const value of [{ ok: false }, { ok: true, ignored: true }, ['ok'], null]) {
+    await assert.rejects(provider.runSchemaProbe({ spawn: fakeProcess({ stdout: wire(value) }) }), error =>
+      error.code === 'PROVIDER_DIAGNOSTIC_RESPONSE' && error.audit.failureKind === 'diagnostic-response' && error.audit.diagnostic === 'schema-probe');
+  }
+  const action = Buffer.from(JSON.stringify({ type: 'item.started', item: { type: 'command_execution' } }) + '\n');
+  await assert.rejects(provider.runSchemaProbe({ spawn: fakeProcess({ stdout: action }) }), error =>
+    error.audit.failureKind === 'unsafe-action' && error.audit.diagnostic === 'schema-probe' && error.audit.teardown.confirmed);
+});
 test('Codex JSON-line boundaries and accented/emoji strings survive every possible two-chunk split', async () => {
   const bytes = wire();
   for (let boundary = 1; boundary < bytes.length; boundary++) {

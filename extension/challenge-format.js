@@ -9,14 +9,17 @@ const object = properties => ({ type: 'object', properties, required: Object.key
 // path. This is a smaller response contract, not a weaker publication gate.
 function checkSchema(full) {
   return object({ result: { enum: ['kept', 'repair'] }, problems: { type: 'array', items: { type: 'string' }, maxItems: 12 },
+    ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
     explanationReviews: full.properties.explanationReviews,
     checks: full.properties.causal.properties.checks });
 }
 function checked(value, previous, full) {
+  if (full.properties.inputReviews && !previous.inputReviews?.length && value?.inputReviews === undefined) value = { ...value, inputReviews: [] };
   if (!valid(value, checkSchema(full))) throw new Error('The explanation check returned incomplete checks.');
   if (value.result !== 'kept' || value.problems.length) throw Object.assign(new Error(value.problems.join('\n') || 'The reasoning check requested a specific repair.'), { reviewProblems: value.problems });
   const result = structuredClone(previous);
   result.explanationReviews = value.explanationReviews;
+  if (full.properties.inputReviews) result.inputReviews = value.inputReviews;
   result.causal.checks = value.checks;
   return result;
 }
@@ -25,15 +28,17 @@ const PATCH = 'review-patch-v1';
 function patchSchema(full) {
   return object({ mode: { enum: [PATCH] }, updates: { type: 'array', maxItems: 80,
     items: object({ path: { type: 'string' }, valueJSON: { type: 'string' } }) },
+    ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
     explanationReviews: full.properties.explanationReviews, checks: full.properties.causal.properties.checks });
 }
 function apply(value, previous, full) {
+  if (full.properties.inputReviews && !previous.inputReviews?.length && value?.inputReviews === undefined) value = { ...value, inputReviews: [] };
   if (!valid(value, patchSchema(full))) throw new Error('The targeted repair has an invalid shape.');
   const result = structuredClone(previous), touched = new Set();
   for (const update of value.updates) {
     const keys = update.path.split('/').slice(1);
     if (!update.path.startsWith('/') || !keys.length || keys.length > 5 || keys.some(key => !key || ['__proto__','constructor','prototype'].includes(key)) || touched.has(update.path) || update.valueJSON.length > 64000) throw new Error('The targeted repair has an unsafe or repeated field.');
-    if (keys[0] === 'explanationReviews' || keys.join('/') === 'causal/checks') throw new Error('Fresh checks cannot be patched or inherited.');
+    if (['explanationReviews', 'inputReviews'].includes(keys[0]) || keys.join('/') === 'causal/checks') throw new Error('Fresh checks cannot be patched or inherited.');
     touched.add(update.path);
     let target = result, shape = full;
     for (let i = 0; i < keys.length; i++) {
@@ -56,6 +61,7 @@ function apply(value, previous, full) {
     }
   }
   result.explanationReviews = value.explanationReviews; result.causal.checks = value.checks;
+  if (full.properties.inputReviews) result.inputReviews = value.inputReviews;
   if (!valid(result, full)) throw new Error('The targeted repair left an incomplete review.');
   return result;
 }
@@ -74,6 +80,7 @@ function pick(value, schema) {
 }
 function earlier(draft, schema) {
   const value = pick(draft, schema);
+  if (schema.properties.inputReviews) value.inputReviews ||= [];
   value.evidence = draft.evidence.map(item => pick({ ...item, line: item.source.line, endLine: item.source.endLine, explanation: item.note }, schema.properties.evidence.items));
   const status = draft.conclusion.scopedStatus || draft.conclusion.status;
   value.conclusion.status = schema.properties.conclusion.properties.status.enum.includes(status) ? status : 'insufficient-evidence';
@@ -93,7 +100,9 @@ function valid(value, schema) {
   return true;
 }
 function expand(value, previous, fullSchema) {
+  if (fullSchema.properties.inputReviews && !previous?.inputReviews?.length && value?.changes && value.changes.inputReviews === undefined) value = { ...value, changes: { ...value.changes, inputReviews: null } };
   if (!valid(value, schemaFor(fullSchema)) || !previous || !Array.isArray(previous.evidence)) throw new Error('The second pass returned an incomplete review update. The earlier draft was preserved.');
+  if (previous.inputReviews?.length && value.changes.inputReviews === null) throw new Error('The challenge must freshly review saved researcher premises.');
   const result = structuredClone(previous);
   for (const [key, change] of Object.entries(value.changes)) if (change !== null) result[key] = structuredClone(change);
   result.causal ||= {};

@@ -106,7 +106,11 @@ test('selection generates and repairs an incorrect real-code explanation, keeps 
 test('a challenge cannot silently omit the unresolved implementation or bless a changed note as unchanged', { skip: !native }, async t => {
   let previous, next, units;
   const host = await start({ reading: true, provider: 'codex', invoke: async input => {
-    if (input.phase === 'challenge') { previous = input.earlierDraft; const value = response(input).value; value.claims = value.claims.filter(claim => claim.id !== 'remote-credit'); value.evidence = value.evidence.filter(item => item.claimId !== 'remote-credit'); return { value, audit: { phase: input.phase, outcome: 'completed' } }; }
+    if (input.phase === 'challenge') { previous = input.earlierDraft; const value = response(input).value; value.claims = value.claims.filter(claim => claim.id !== 'remote-credit'); value.evidence = value.evidence.filter(item => item.claimId !== 'remote-credit');
+      // Keep the adversarial response internally well-formed so this test
+      // isolates challenge scope loss, not an unknown saved-input claim ID.
+      for (const review of value.inputReviews) review.claimIds = review.claimIds.filter(id => id !== 'remote-credit');
+      return { value, audit: { phase: input.phase, outcome: 'completed' } }; }
     return response(input);
   } }); t.after(() => host.close()); const c = await client(host); await c.select('I-02');
   const state = await c.wait(value => value.investigation?.phase === 'blocked');

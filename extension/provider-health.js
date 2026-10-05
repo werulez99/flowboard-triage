@@ -1,8 +1,9 @@
 'use strict';
 // Shared local provider health is not an allowance. Only repeated transport
 // failures trip it; rejected reasoning/schema and unavailable evidence do not.
-const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const path = require('node:path'), crypto = require('node:crypto');
 const { localDirectory } = require('./provider-slots');
+const ownership = require('./provider-ownership');
 const THRESHOLD = 2, WINDOW_MS = 10 * 60 * 1000;
 const transportFailures = new Set(['timeout', 'spawn', 'transport', 'provider-exit']);
 function identity(provider, options = {}) {
@@ -17,44 +18,53 @@ function files(provider, options) {
   return { file: path.join(root, `health-${key}.json`), lock: path.join(root, `health-${key}.lock`) };
 }
 function read(file) {
-  try { const value = JSON.parse(fs.readFileSync(file, 'utf8')); if (value.version === 1 && Array.isArray(value.failures)) return value; }
-  catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
+  try {
+    const observed = ownership.snapshot(file);
+    if (observed) {
+      const value = observed.entry;
+      if (!value || value.version !== 1 || !Array.isArray(value.failures) || value.failures.some(item => !item || typeof item.requestId !== 'string' || !Number.isFinite(Date.parse(item.at))) ||
+          value.openedAt !== null && !Number.isFinite(Date.parse(value.openedAt))) throw unavailable('Provider health data is incomplete. Automatic requests are stopped; preserve the file and repair local provider state before retrying.');
+      return value;
+    }
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   return { version: 1, failures: [], openedAt: null, lastSuccessAt: null };
 }
+function unavailable(message) { return Object.assign(new Error(message), { code: 'PROVIDER_HEALTH_UNAVAILABLE', retryable: true }); }
 function status(provider, options = {}) {
   const value = read(files(provider, options).file);
   return { ...value, open: !!value.openedAt, threshold: THRESHOLD, windowMs: WINDOW_MS };
 }
 function check(provider, options = {}) {
+  const { lock } = files(provider, options);
+  try {
+    const held = ownership.reap(lock);
+    if (held) throw unavailable('Provider health is being updated by another live owner. No new request was dispatched; retry after that update finishes.');
+  } catch (error) { if (error.code === 'PROVIDER_RESOURCE_UNAVAILABLE') throw unavailable(error.message); throw error; }
   const current = status(provider, options);
   if (current.open) throw Object.assign(new Error(`The ${provider} review provider failed ${current.failures.length} recent transport attempts (${current.reason}). Automatic requests are stopped. Check provider access, then explicitly retry preparation; accepted work is saved.`),
     { code: 'PROVIDER_HEALTH_OPEN', providerHealth: current });
   return current;
 }
 async function update(provider, options, change) {
-  const { file, lock } = files(provider, options), owner = crypto.randomUUID(), started = Date.now();
-  let descriptor;
-  while (descriptor === undefined) {
-    try { descriptor = fs.openSync(lock, 'wx', 0o600); fs.writeFileSync(descriptor, JSON.stringify({ owner, pid: process.pid })); }
+  const { file, lock } = files(provider, options), metadata = ownership.ownerMetadata(), started = Date.now();
+  let acquired = false;
+  while (!acquired) {
+    try { ownership.publish(lock, metadata); acquired = true; }
     catch (error) {
       if (error.code !== 'EEXIST') throw error;
       try {
-        const previous = JSON.parse(fs.readFileSync(lock, 'utf8'));
-        try { process.kill(previous.pid, 0); }
-        catch (probe) { if (probe.code === 'ESRCH' && JSON.parse(fs.readFileSync(lock, 'utf8')).owner === previous.owner) fs.unlinkSync(lock); }
-      } catch { /* An owner may still be writing or releasing. */ }
-      if (Date.now() - started > 2000) throw Object.assign(new Error('Provider health could not be updated. No new request should be dispatched until it can be checked.'), { code: 'PROVIDER_HEALTH_UNAVAILABLE' });
+        ownership.reap(lock);
+      } catch (probe) { if (probe.code !== 'PROVIDER_RESOURCE_UNAVAILABLE') throw probe; }
+      if (Date.now() - started >= Math.max(20, Math.min(2000, options.lockWaitMs || 2000))) throw unavailable('Provider health could not be updated because its lock still has a live or unknown owner. Accepted provider results must be retained; no new request should be dispatched until the lock can be checked.');
       await new Promise(resolve => setTimeout(resolve, 10));
     }
   }
   try {
-    const next = change(read(file)), temporary = `${file}.${owner}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify(next), { flag: 'wx', mode: 0o600 });
-    fs.renameSync(temporary, file);
+    const next = change(read(file));
+    ownership.publish(file, next, true);
     return { ...next, open: !!next.openedAt, threshold: THRESHOLD, windowMs: WINDOW_MS };
   } finally {
-    fs.closeSync(descriptor);
-    try { if (JSON.parse(fs.readFileSync(lock, 'utf8')).owner === owner) fs.unlinkSync(lock); } catch { /* Already released. */ }
+    ownership.removeOwned(lock, metadata.owner);
   }
 }
 async function record(provider, audit, options = {}) {

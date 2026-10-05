@@ -43,6 +43,215 @@ async function fixture(t, count = 3, invoke, report = reportText(count), source 
   t.after(async () => { runner.dispose(); await runner.loop; fs.rmSync(root, { recursive: true, force: true }); });
   return { root, options, runner, calls, updates, replaceCatalog: value => catalog = value };
 }
+test('selection promotes two durable stages without owning preparation or starving siblings', { skip: !native }, async t => {
+  let release, entered;
+  const held = new Promise(resolve => release = resolve), started = new Promise(resolve => entered = resolve);
+  const f = await fixture(t, 3, async input => {
+    if (input.finding.id === 'I-1' && input.phase === 'generate') { entered(); await held; }
+    return response(input);
+  });
+  f.options.configuration = () => ({ provider: 'codex', workers: 1, requestLimit: 6 });
+  const running = f.runner.ensure(); await started;
+  try {
+    f.runner.prioritize('I-3'); f.runner.prioritize('I-3');
+    assert.equal(f.calls.length, 1, 'Selection must not dispatch alongside the current worker.');
+  } finally { release(); }
+  await running;
+  assert.deepEqual(f.calls.slice(0, 3).map(([id, phase]) => [id, phase]),
+    [['I-1', 'generate'], ['I-3', 'generate'], ['I-3', 'challenge']]);
+  assert.equal(f.runner.status().ready, 3); assert.equal(f.calls.length, 6);
+  f.runner.control('pause'); const before = f.calls.length;
+  f.runner.prioritize('I-2'); await f.runner.ensure();
+  assert.equal(f.calls.length, before, 'Priority does not authorize resuming or spending.');
+});
+test('corrupt individual investigations cannot prevent intact siblings reopening with no provider', { skip: !native }, async t => {
+  for (const brokenId of ['I-1', 'I-2']) {
+    const f = await fixture(t, 2); await f.runner.ensure();
+    const intactId = brokenId === 'I-1' ? 'I-2' : 'I-1';
+    const intact = engine.read(f.root, intactId), before = f.calls.length;
+    const file = path.join(f.root, `.flowboard/investigations/${brokenId}.json`), corrupt = '{ interrupted private record';
+    fs.writeFileSync(file, corrupt); f.runner.dispose(); await f.runner.loop;
+    const reopened = new ReportPreparation(f.root, { ...f.options, configuration: () => ({ provider: 'none' }) });
+    t.after(() => reopened.dispose()); await reopened.ensure();
+    assert.ok(reopened.published(intact), 'A single damaged record must not block a later valid guide.');
+    assert.equal(reopened.status().ready, 1); assert.equal(f.calls.length, before);
+    assert.equal(reopened.state.jobs[brokenId].state, 'failed');
+    assert.match(reopened.state.jobs[brokenId].reason, /record|saved|recover/i);
+    assert.equal(fs.readFileSync(file, 'utf8'), corrupt, 'Original invalid bytes remain available for recovery.');
+    await reopened.ensure(); assert.ok(reopened.published(intact));
+  }
+});
+test('a fresh host restores an intact sibling with no provider despite missing, malformed and corrupt records', { skip: !native }, async t => {
+  const f = await fixture(t, 4); await f.runner.ensure(); f.runner.dispose(); await f.runner.loop;
+  const file = id => path.join(f.root, `.flowboard/investigations/${id}.json`);
+  fs.writeFileSync(file('I-1'), '{ broken private JSON'); fs.unlinkSync(file('I-2'));
+  fs.writeFileSync(file('I-3'), JSON.stringify({ findingId: 'I-3', claims: 'not a draft' }));
+  const bytes = fs.readFileSync(file('I-1'), 'utf8');
+  const child = require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'fixtures/reopen-preparation-host.js'), f.root, 'restore'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(child.status, 0, child.stderr);
+  const restored = JSON.parse(child.stdout);
+  assert.notEqual(restored.pid, process.pid); assert.equal(restored.indexes, 1);
+  assert.deepEqual(restored.calls, []); assert.deepEqual(restored.readable, ['I-4']);
+  assert.equal(restored.jobs['I-1'].state, 'failed'); assert.equal(restored.jobs['I-3'].state, 'failed');
+  assert.equal(restored.jobs['I-2'].publishable, false);
+  assert.equal(fs.readFileSync(file('I-1'), 'utf8'), bytes);
+});
+test('a crash after a durable provider response reuses generation in a fresh process without a phantom reservation', { skip: !native }, async t => {
+  const f = await fixture(t, 1), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
+  const request = f.runner.request(entries[0], catalog, report), issue = f.runner.issue(entries[0]);
+  const value = response({ phase: 'challenge', sources: engine.makeContext(catalog, request, issue).units });
+  // The full challenged controlled fixture can be accepted in either stage.
+  fs.writeFileSync(path.join(f.root, '.flowboard/controlled-answer.json'), JSON.stringify(value));
+  const run = mode => require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'fixtures/reopen-preparation-host.js'), f.root, mode], { encoding: 'utf8', timeout: 15000 });
+  const crash = run('crash-after-response'); assert.equal(crash.status, 73, crash.stderr);
+  const saved = engine.read(f.root, 'I-1'); assert.ok(saved.pendingResponse); assert.equal(saved.claims.length, 0);
+  const state = JSON.parse(fs.readFileSync(path.join(f.root, '.flowboard/report-preparation.json')));
+  assert.equal(state.resources.requests, 1);
+  assert.deepEqual(Object.values(state.resources.receipts).map(receipt => receipt.outcome), ['completed']);
+  const resumed = run('resume'); assert.equal(resumed.status, 0, resumed.stderr);
+  const result = JSON.parse(resumed.stdout);
+  assert.deepEqual(result.calls, ['challenge'], 'The completed generation is read from the private checkpoint, not dispatched again.');
+  assert.deepEqual(result.readable, ['I-1']); assert.equal(result.status.requests, 2);
+  assert.ok(Object.values(result.receipts).every(receipt => receipt.finishedAt && receipt.outcome === 'completed'));
+  const accepted = engine.read(f.root, 'I-1'); assert.ok(accepted.runs.some(run => run.phase === 'generate' && run.reusedResponse));
+  assert.equal(accepted.pendingResponse, undefined);
+  const reopen = run('restore'); assert.equal(reopen.status, 0, reopen.stderr);
+  assert.deepEqual(JSON.parse(reopen.stdout).calls, []); assert.deepEqual(JSON.parse(reopen.stdout).readable, ['I-1']);
+});
+test('a live health lock cannot discard a completed generation, consume a phantom receipt, or require regeneration', { skip: !native }, async t => {
+  const health = require('../extension/provider-health'), ownership = require('../extension/provider-ownership');
+  let heldLock, heldOwner, lockOnce = true;
+  const f = await fixture(t, 1, input => {
+    if (lockOnce) {
+      lockOnce = false;
+      heldLock = path.join(f.root, 'provider-state', `health-${health.identity('codex')}.lock`);
+      const owner = ownership.ownerMetadata(); heldOwner = owner.owner; ownership.publish(heldLock, owner);
+    }
+    return response(input);
+  });
+  f.options.invoke.isProviderTransport = true;
+  f.options.providerResources = { directory: path.join(f.root, 'provider-state'), lockWaitMs: 20 };
+  t.after(() => { if (heldLock) ownership.removeOwned(heldLock, heldOwner); });
+  await f.runner.ensure();
+  const draft = engine.read(f.root, 'I-1');
+  assert.deepEqual(f.calls.map(call => call[1]), ['generate']);
+  assert.equal(draft.claims.length, 1); assert.ok(draft.runs[0].resultAccepted);
+  assert.equal(draft.runs[0].healthUpdateError.code, 'PROVIDER_HEALTH_UNAVAILABLE');
+  assert.equal(draft.checkpoint.stage, 'challenge'); assert.equal(f.runner.state.mode, 'paused');
+  assert.equal(f.runner.state.resources.requests, 1);
+  assert.deepEqual(Object.values(f.runner.state.resources.receipts).map(receipt => receipt.outcome), ['completed']);
+  ownership.removeOwned(heldLock, heldOwner);
+  await f.runner.ensure({ retry: true });
+  assert.deepEqual(f.calls.map(call => call[1]), ['generate', 'challenge']);
+  assert.equal(f.runner.status().ready, 1); assert.equal(f.runner.status().requests, 2);
+  assert.ok(Object.values(f.runner.state.resources.receipts).every(receipt => receipt.finishedAt));
+});
+test('superseded indexing restarts queued jobs without replacing interruption with user pause', { skip: !native }, async t => {
+  const f = await fixture(t, 2), obtain = f.options.catalog;
+  let entered, indexes = 0; const started = new Promise(resolve => entered = resolve);
+  f.options.catalog = async signal => {
+    indexes++;
+    if (indexes === 1) { entered(); await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Source indexing consumer cancelled')), { once: true })); }
+    return obtain();
+  };
+  const pending = f.runner.ensure(); await started;
+  f.runner.invalidate('Saved source changed during indexing.');
+  f.runner.ensure(); await pending;
+  assert.equal(indexes, 2, 'Only the superseded and current indexes are requested.');
+  assert.equal(f.runner.status().ready, 2);
+  assert.equal(f.calls.length, 4); assert.equal(f.runner.state.mode, 'completed');
+  assert.equal(f.runner.tasks.size, 0);
+});
+test('a genuine index failure is finite and an explicit pause survives edit-during-index', { skip: !native }, async t => {
+  const broken = await fixture(t, 1);
+  broken.options.catalog = async () => { throw new Error('Controlled parser initialization failure'); };
+  await broken.runner.ensure();
+  assert.equal(broken.runner.state.mode, 'paused'); assert.match(broken.runner.state.reason, /parser initialization/);
+  assert.equal(broken.calls.length, 0); assert.equal(broken.runner.tasks.size, 0); assert.equal(broken.runner.loop, null);
+  const f = await fixture(t, 1), obtain = f.options.catalog; let begin, indexes = 0;
+  const started = new Promise(resolve => begin = resolve);
+  f.options.catalog = async signal => {
+    indexes++;
+    if (indexes === 1) { begin(); await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Source indexing consumer cancelled')), { once: true })); }
+    return obtain();
+  };
+  const pending = f.runner.ensure(); await started; await f.runner.control('pause');
+  f.runner.invalidate('A saved edit superseded indexing.'); await pending;
+  assert.equal(f.runner.state.mode, 'paused'); assert.equal(indexes, 1); assert.equal(f.calls.length, 0);
+  await f.runner.ensure({ retry: true }); assert.equal(f.runner.status().ready, 1); assert.equal(f.calls.length, 2);
+});
+test('an abandoned pre-metadata report lock recovers, while a live owner cannot lose its state', { skip: !native || process.platform !== 'linux' }, async t => {
+  const f = await fixture(t, 1), file = path.join(f.root, '.flowboard/report-preparation.lock.json');
+  fs.writeFileSync(file, ''); await f.runner.ensure(); assert.equal(f.runner.status().ready, 1);
+  const ownership = require('../extension/provider-ownership'), owner = ownership.ownerMetadata(); ownership.publish(file, owner);
+  const original = fs.readFileSync(path.join(f.root, '.flowboard/report-preparation.json'), 'utf8');
+  await f.runner.ensure();
+  assert.equal(fs.readFileSync(path.join(f.root, '.flowboard/report-preparation.json'), 'utf8'), original);
+  assert.equal(ownership.snapshot(file).entry.owner, owner.owner);
+  ownership.removeOwned(file, owner.owner);
+});
+test('a missed saved-input event rejects late old-scope answers but verdict-only changes do not cancel analysis', { skip: !native }, async t => {
+  for (const semantic of [true, false]) {
+    let begin, release; const started = new Promise(resolve => begin = resolve), held = new Promise(resolve => release = resolve);
+    const f = await fixture(t, 1, async input => { if (input.phase === 'generate') { begin(); await held; } return response(input); });
+    const pending = f.runner.ensure(); await started;
+    try {
+      const { report, entries } = reconcile(f.root), catalog = await f.options.catalog(), request = f.runner.request(entries[0], catalog, report);
+      if (semantic) request.finding.preconditions = ['accepted must be true']; else request.finding.status = 'insufficient-evidence';
+      require('../extension/store').writeDraft(f.root, 'I-1', request);
+    } finally { release(); await pending; }
+    assert.equal(f.runner.status().ready, semantic ? 0 : 1);
+    assert.equal(f.calls.length, semantic ? 1 : 2);
+    assert.ok(Object.values(f.runner.state.resources.receipts).every(receipt => receipt.finishedAt));
+  }
+});
+test('saved conditions and edited summary reach generation and challenge, and cannot silently retain the old scope', { skip: !native }, async t => {
+  const packets = []; let addressPremises = false;
+  const f = await fixture(t, 1, input => {
+    packets.push(JSON.parse(JSON.stringify(input)));
+    const value = response(input);
+    if (addressPremises) {
+      value.inputReviews = input.semanticInput.premises.map(premise => ({ id: premise.id, status: 'applied',
+        reason: 'The supplied researcher condition selects true. The original report specifically alleges the distinct false input.',
+        claimIds: ['c1'], eventIds: ['event'], evidence: ['guard'] }));
+      if (!input.checkOnly) {
+        const note = 'Under the researcher-selected true input the guard succeeds. The report requires false, which is outside this selected scenario; this does not establish behavior in other implementations.';
+        value.claims[0].conditions = ['accepted is true']; value.claims[0].reason = note;
+        value.evidence[0].explanation = note; value.causal.summary = note;
+        value.causal.scope = 'Only the researcher-selected true input, not a conclusion about unrelated inputs or implementations.';
+        Object.assign(value.causal.events[0], { title: 'True satisfies the guard', conditions: ['accepted is true'], what: note, why: note, effect: 'condition' });
+        value.conclusion.text = note; value.walkthrough.assessment.why = note;
+        for (const obligation of value.causal.obligations) obligation.reason = note;
+      }
+    }
+    return value;
+  });
+  await f.runner.ensure(); assert.ok(f.runner.artifact('I-1'));
+  const { report, entries } = reconcile(f.root), catalog = await f.options.catalog();
+  const saved = f.runner.request(entries[0], catalog, report);
+  saved.finding.preconditions = ['accepted must be true'];
+  saved.finding.summary = 'Researcher scope: check the true-input route.';
+  require('../extension/store').writeDraft(f.root, 'I-1', saved);
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 12, findingRequestLimit: 12 });
+  f.runner.invalidate('Researcher changed scope.', { findingId: 'I-1', saved: true });
+  await f.runner.ensure();
+  assert.equal(f.runner.artifact('I-1'), null, 'An unchanged false-input answer cannot pass under a new premise hash.');
+  const failed = engine.read(f.root, 'I-1'); assert.match(failed.error, /saved preconditions|saved summary/);
+  addressPremises = true; await f.runner.ensure({ retry: true });
+  const draft = engine.read(f.root, 'I-1'); assert.ok(f.runner.published(draft), draft.error);
+  const changed = packets.filter(packet => packet.finding.preconditions?.length);
+  assert.ok(changed.some(packet => packet.phase === 'generate')); assert.ok(changed.some(packet => packet.phase === 'challenge'));
+  for (const packet of changed) {
+    assert.deepEqual(packet.semanticInput.saved.preconditions, ['accepted must be true']);
+    assert.equal(packet.semanticInput.saved.summary, saved.finding.summary);
+    assert.equal(packet.finding.savedSummary, saved.finding.summary);
+    assert.ok(packet.finding.reportParagraphs.some(paragraph => paragraph.text.includes('false')), 'Original report quotation is retained unchanged.');
+  }
+  assert.deepEqual(draft.claims[0].conditions, ['accepted is true']);
+  assert.equal(draft.inputReviews.length, 2); assert.equal(draft.inputReviews[0].status, 'applied');
+});
 test('phase group is accounted as context; ambiguous sections block instead of disappearing', () => {
   const parsed = parseReport(reportText(3), { manifest: true });
   assert.equal(parsed.issues.length, 3); assert.equal(parsed.manifest.findingCount, 3);

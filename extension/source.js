@@ -370,6 +370,42 @@ class SourceCatalog {
     // ambiguity is preferable to an incorrect single dispatch arrow.
     return [...new Set([...types].map(type => this.runner.flowboardReceiverType(scoped, fn.contract, site, new Map(params).set(root, type))).filter(Boolean))];
   }
+  initialization(fn) {
+    if (!fn?.contract) return null;
+    this.initializations ||= new Map();
+    const key = `${fn.file}:${fn.contract}`;
+    if (this.initializations.has(key)) return structuredClone(this.initializations.get(key));
+    this.importContext ||= new (require('./source-imports').ImportContext)(this);
+    const scopes = [], gaps = [], visited = new Set();
+    const visit = (contract, file) => {
+      const key = `${file}:${contract}`; if (visited.has(key)) return; visited.add(key);
+      const document = this.document(this.relative(file)), clean = lexicalCode(document.text);
+      const matches = this.runner.flowboardContracts(clean).filter(item => item.name === contract);
+      if (matches.length !== 1) { gaps.push(`No unique initialization scope for ${contract} in ${this.relative(file)}.`); return; }
+      const definition = matches[0], start = clean.indexOf('{', definition.start), constructors = [];
+      for (const match of clean.slice(start + 1, definition.end).matchAll(/\bconstructor\s*\(/g)) {
+        const at = start + 1 + match.index;
+        const depth = [...clean.slice(start + 1, at)].reduce((level, char) => level + (char === '{' ? 1 : char === '}' ? -1 : 0), 0);
+        if (depth) continue;
+        const line = clean.slice(0, at).split('\n').length;
+        const candidates = this.functions.filter(item => item.file === file && item.contract === contract && item.name === 'constructor' && item.startLine === line && this.anatomy(item));
+        if (candidates.length !== 1) { gaps.push(`The constructor of ${contract} at ${this.relative(file)}:${line} remains unreadable.`); continue; }
+        constructors.push({ file: this.relative(file), contract, line, endLine: candidates[0].endLine,
+          sourceHash: crypto.createHash('sha256').update(document.text).digest('hex') });
+      }
+      scopes.push({ file: this.relative(file), contract, sourceHash: crypto.createHash('sha256').update(document.text).digest('hex'),
+        constructors, constructorAbsent: constructors.length === 0 && !gaps.some(gap => gap.includes(`constructor of ${contract} `)) });
+      for (const base of this.result.contractBases.get(contract) || []) {
+        const found = [...this.importContext.files(file)].flatMap(candidate => this.runner.flowboardContracts(lexicalCode(this.document(this.relative(candidate)).text))
+          .filter(item => item.name === base).map(() => candidate));
+        if (found.length !== 1) { gaps.push(`The initialization scope of base ${base} is unavailable or ambiguous.`); continue; }
+        visit(base, found[0]);
+      }
+    };
+    visit(fn.contract, fn.file);
+    const value = { complete: gaps.length === 0, scopes, gaps };
+    this.initializations.set(key, value); return structuredClone(value);
+  }
   callLinks(fn) {
     const key = this.key(fn);
     if (this.links.has(key)) return this.links.get(key);
@@ -447,7 +483,7 @@ class SourceCatalog {
               sourceHash: crypto.createHash('sha256').update(doc.text).digest('hex') });
         }
       }
-      links.push({ id: site.id, span: site.span, nameSpan: site.nameSpan, argumentSpans: site.argumentSpans, options: site.options, callKind, failure, creationTargets, internalLibrary, declarations,
+      links.push({ id: site.id, span: site.span, nameSpan: site.nameSpan, argumentSpans: site.argumentSpans, options: site.options, callKind, failure, ...(site.tryContext ? { tryContext: site.tryContext } : {}), creationTargets, internalLibrary, declarations,
         receiverExpression: site.receiverExpression, receiverSpan: site.receiverSpan, sourceExpression: site.sourceExpression,
         name, receiver: site.receiverExpression || 'internal', arguments: site.arguments,
         implicitReceiver: !!target && libraryCandidates.has(this.key(target)), receiverTypes, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.receiverExpression ? site.receiverExpression + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates,

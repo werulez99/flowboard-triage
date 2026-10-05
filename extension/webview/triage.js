@@ -18,7 +18,7 @@
   let preparing = null;
   let checkedLocation = null;
   let guide = null, guideIndex = 0, guideMode = 'closed', guideReturn = null, guideNavigation = null, guidePending = false, guideOpinion = window.innerWidth > 800;
-  let guideDetour = null;
+  let guideDetour = null, guideError = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true;
   let reportPreparation = null;
   let guideAvailability = null;
@@ -137,7 +137,7 @@
   function preparationContent(parent) {
     if (guideAvailability?.ready === false) {
       parent.append(element('h2', '', 'Your saved board is available'), element('p', '', guideAvailability.reason || 'The walkthrough needs another function card.'),
-        element('p', 'triage-muted', 'Remove an exploration card, then start the walkthrough again. Your notes, layout and checked review are preserved; this does not request another AI review.'),
+        element('p', 'triage-muted', 'Free the requested card slots, then start the walkthrough again. Your notes, layout and checked review are preserved; this does not request another AI review.'),
         button('Explore code', () => { guideIntent = 'explore'; renderPreparation(); show('flow'); }), button('Start walkthrough', guideStart));
       return;
     }
@@ -292,8 +292,15 @@
   }
   function guideRestore() {
     if (!guide || sourceStale) return;
-    const saved = guideReturn; guideReturn = null; guideMode = 'guided'; guideNavigation = null; guidePending = false; guideDetour = null;
+    const saved = guideReturn; guideReturn = null; guideMode = 'guided'; guideNavigation = null; guidePending = false; guideDetour = null; guideError = null;
     if (!saved) { guideGo(guideIndex); return; }
+    const expected = guide.steps[saved.guideIndex];
+    if (!expected?.unit || saved.selectedCard !== guideCard(expected.unit) || JSON.stringify(saved.checkedLocation) !== JSON.stringify(expected.evidence?.source)) {
+      // Old navigation checkpoints may contain the card selected AFTER the
+      // guide was paused. Reconstruct from the accepted step, never pair that
+      // unrelated card with the current explanation.
+      guideGo(saved.guideIndex); return;
+    }
     ({ selectedCard, activeClaim, activeInvestigationClaim, claimFocus, spotlight, checkedLocation, guideIndex } = saved);
     if (!cards.has(selectedCard)) { guideGo(guideIndex); return; }
     guideWrap = saved.wrap !== false; guideIntent = 'guided';
@@ -306,6 +313,7 @@
     if (cards.has(selectedCard)) cards.get(selectedCard).codeEl.parentElement.scrollTop = saved.codeScroll || 0;
   }
   function guidePause() {
+    guideNavigation = null; guidePending = false;
     guideIntent = 'explore'; renderPreparation();
     if (!guide || guideMode === 'closed') return;
     if (!guideReturn) guideReturn = guideCapture();
@@ -314,7 +322,7 @@
   function beginGuideDetour(identity) {
     if (!guide || sourceStale || guideMode === 'closed') return false;
     if (!guideReturn) guideReturn = guideCapture();
-    guideMode = 'detour'; guideIntent = 'explore'; guideNavigation = null; guidePending = false;
+    guideMode = 'detour'; guideIntent = 'explore'; guideNavigation = null; guidePending = false; guideError = null;
     guideDetour = identity || null;
     return true;
   }
@@ -372,10 +380,20 @@
   function guideStart() {
     guideIntent = 'waiting'; renderPreparation();
     if (sourceStale || readOnly) return false;
-    if (guideAvailability?.ready === false && cards.size >= (guideAvailability.limit || 200)) return false;
-    guideAvailability = null;
     const prepared = FlowboardWalkthrough.build(investigationDraft, report);
     if (!prepared) return false;
+    const missing = [...new Map(prepared.steps.filter(step => step.unit && !guideCard(step.unit)).map(step => [step.unit.id, step.unit])).keys()];
+    const limit = guideAvailability?.limit || 200, deficit = Math.max(0, cards.size + missing.length - limit);
+    if (deficit) {
+      guideAvailability = { ready:false, missingSourceIds:missing, limit, materializedCount:cards.size, deficit,
+        reason:`This walkthrough needs ${missing.length} missing function card${missing.length === 1 ? '' : 's'}. Remove ${deficit} exploration card${deficit === 1 ? '' : 's'}, then start again.` };
+      renderPreparation(); return false;
+    }
+    // A native deletion normally saves after 400 ms. Reconcile its freed
+    // slots before asking the host to materialize the missing guide card;
+    // otherwise an immediate Start can still see the old full canvas.
+    if (missing.length) persistNow();
+    guideAvailability = null;
     if (guide?.key === prepared.key) { guideRestore(); return true; }
     guide = prepared; guidePositions.clear(); guideIndex = 0; guideReturn = null; guideGo(0); return true;
   }
@@ -384,7 +402,7 @@
     const oldCard = selectedCard;
     if (guideMode === 'guided') guidePositions.set(guideIndex, guideCapture());
     guideIndex = Math.max(0, Math.min(guide.steps.length - 1, index)); guideMode = 'guided'; guideIntent = 'guided'; guideReturn = null;
-    guideDetour = null;
+    guideDetour = null; guideError = null;
     const step = guide.steps[guideIndex];
     activeInvestigationClaim = step.claimId || activeInvestigationClaim; activeClaim = null; claimFocus = false; spotlight = false;
     visibleInvestigation = guide.draft;
@@ -472,9 +490,7 @@
     if (unknowns.length > 1) { const more = element('details'); more.append(element('summary', '', `${unknowns.length - 1} more open questions`)); for (const text of unknowns.slice(1)) more.append(element('p', '', text)); remains.append(more); }
     parent.append(opinion);
   }
-  function renderGuide() {
-    renderPreparation();
-    const focusedControl = guideControls.contains(document.activeElement) ? document.activeElement.textContent : null;
+  function syncReadingLayout() {
     const open = !!guide && guideMode !== 'closed' && !sourceStale;
     document.body.classList.toggle('guide-open', open); guideControls.hidden = guideAside.hidden = !open;
     document.body.classList.toggle('guide-reading', open && ['guided', 'detour'].includes(guideMode) && !sourceStale);
@@ -483,6 +499,12 @@
     for (const card of cards.values()) card.el.classList.toggle('guide-active-card', card.id === selectedCard);
     document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(680, flowboard.clientWidth - 48))}px`);
     placeGuideAnchor();
+    return open;
+  }
+  function renderGuide() {
+    renderPreparation();
+    const focusedControl = guideControls.contains(document.activeElement) ? document.activeElement.textContent : null;
+    const open = syncReadingLayout();
     guideControls.replaceChildren(); guideAside.replaceChildren();
     document.querySelectorAll('.guide-handoff').forEach(node => node.remove());
     if (!open) return;
@@ -519,6 +541,8 @@
     if (guideMode !== 'guided') guideAside.append(element('p', 'guide-paused', guideMode === 'detour' ? 'Evidence detour. Return restores your step and reading position.' : 'Exploring freely. Your step is saved.'));
     const note = element('section', 'guide-annotation'); note.dataset.stepId = step.id;
     note.append(element('h2', '', step.title));
+    if (guideError) note.append(element('p', 'triage-warning', `Could not open this step's code. ${guideError}`),
+      button('Retry opening code', () => guideStart()), button('Explore freely', guidePause));
     if (guideMode === 'guided' && step.role && !guide.steps.slice(0, guideIndex).some(prior => prior.unit?.id === step.unit?.id)) note.append(element('p', 'guide-function-role', step.role));
     if (guidePending) { const loading = element('p', 'triage-muted', 'Opening the checked code…'); loading.setAttribute('role', 'status'); note.append(loading); }
     let statement;
@@ -599,7 +623,7 @@
         element('p', 'triage-muted', 'Last shown changes in this invocation only. Code interpretation, not an executed trace.'));
       for (const change of watched) {
         const row = element('div', 'guide-watched-value');
-        row.append(element('strong', '', change.name), element('p', '', `${change.after} (${change.units})`),
+        row.append(element('strong', '', change.name), element('p', '', `${change.effect === 'rolled-back' ? 'Attempted value, not persisted: ' : ''}${change.after} (${change.units})`),
           element('small', 'triage-muted', `${change.effect === 'rolled-back' ? 'Rolled back · not persisted' : change.effect === 'committed' ? 'Predicted successful outcome' : 'Provisional change'} · ${change.title}`));
         evidenceActions(row, change.evidence); watch.append(row);
       }
@@ -641,7 +665,7 @@
     return new Set([...cards.values()].filter(card => hints[card.id] && sources.some(link => FlowboardInline.forSource([link.entry], hints[card.id]).length)).map(card => card.id));
   }
   function focusClaim(id) {
-    rememberLocation();
+    rememberLocation(); guidePause();
     checkedLocation = null;
     activeInvestigationClaim = null;
     activeClaim = id; claimFocus = true; spotlight = false;
@@ -654,6 +678,7 @@
   function addClaim(text) {
     if (readOnly || profile().claims.length >= 20) return;
     if (text.length > 2000) { window.alert('Select one focused statement of at most 2000 characters.'); return; }
+    guidePause();
     const id = `claim-${crypto.randomUUID()}`;
     editProfile(value => value.claims.push({ id, text, state: 'unreviewed', evidence: [], questions: [] }));
     activeClaim = id; claimFocus = false; selectedCard = null; show('claims'); drawer.querySelector('[aria-label="Report statement"]')?.focus();
@@ -687,12 +712,12 @@
       drawer.append(FlowboardInvestigation.render({ draft: investigationDraft, selected: activeInvestigationClaim,
         disabled: readOnly || sourceStale, correction: investigationCorrection, changed: () => schedulePersist(),
         select: id => {
-          rememberLocation(); activeInvestigationClaim = id; visibleInvestigation = structuredClone(investigationDraft); activeClaim = null; claimFocus = false;
+          rememberLocation(); guidePause(); activeInvestigationClaim = id; visibleInvestigation = structuredClone(investigationDraft); activeClaim = null; claimFocus = false;
           show('claims'); pushLocation('investigation:' + id);
           const claim = investigationDraft.claims.find(item => item.id === id), item = investigationDraft.evidence.find(item => claim?.evidence.includes(item.id));
           if (item) send('triage:investigationFocus', { evidenceId: item.id, claimId: id });
         },
-        focus: payload => { rememberLocation(); visibleInvestigation = structuredClone(investigationDraft); activeInvestigationClaim = payload.claimId || activeInvestigationClaim; send('triage:investigationFocus', payload); },
+        focus: payload => { rememberLocation(); guidePause(); visibleInvestigation = structuredClone(investigationDraft); activeInvestigationClaim = payload.claimId || activeInvestigationClaim; send('triage:investigationFocus', payload); },
         correct: (change, revision) => send('triage:investigationCorrect', { change, revision }),
         retry: () => send('triage:investigationRetry'), enable: () => send('triage:investigationEnable'),
         runTest: (sourceId, claimId) => send('triage:investigationTest', { sourceId, claimId }) }));
@@ -733,7 +758,7 @@
   function show(tab) {
     if (guideMode === 'guided') guidePause();
     else { guideIntent = 'explore'; renderPreparation(); }
-    drawerTab = tab; drawer.dataset.tab = tab; drawer.classList.add('visible'); document.body.classList.add('triage-drawer-open'); renderDrawer(); redrawEdges();
+    drawerTab = tab; drawer.dataset.tab = tab; drawer.classList.add('visible'); document.body.classList.add('triage-drawer-open'); syncReadingLayout(); renderDrawer(); redrawEdges();
     schedulePersist();
   }
   function currentFinding() {
@@ -764,6 +789,10 @@
     let index = navigationIndex + offset;
     while (index >= 0 && index < navigation.length && !cards.has(navigation[index]) && !navigationViews[index]?.activeClaim && !navigationViews[index]?.activeInvestigationClaim) index += offset;
     if (index >= 0 && index < navigation.length) {
+      // Pausing must capture the complete step before history changes its
+      // function, highlight or drawer. Otherwise Resume pairs B's explanation
+      // with A's card and loses B's exact range.
+      guidePause();
       navigationIndex = index; const view = navigationViews[index];
       if (!view) { inspectCard(cards.get(navigation[index]), false); return; }
       checkedLocation = null;
@@ -776,7 +805,7 @@
     else { guideIntent = 'explore'; renderPreparation(); }
     drawerTab = tab; const same = drawer.dataset.tab === tab && drawer.classList.contains('visible');
     drawer.classList.toggle('visible', !same); drawer.dataset.tab = tab;
-    document.body.classList.toggle('triage-drawer-open', !same); renderDrawer(); redrawEdges();
+    document.body.classList.toggle('triage-drawer-open', !same); syncReadingLayout(); renderDrawer(); redrawEdges();
   }
   function select(id) {
     if ((dirtyReview || hasEvidenceDraft()) && !window.confirm('Switch finding? Your unfinished review will be checkpointed locally, not submitted as an assessment.')) return;
@@ -850,14 +879,14 @@
     if (start.kind === 'context' && start.source) { rememberLocation(); send('triage:addContext', { source: start.source }); return; }
     if (start.kind === 'investigation') { rememberLocation(); visibleInvestigation = structuredClone(investigationDraft); send('triage:investigationFocus', { sourceId: start.sourceId, claimId: start.claimId }); return; }
     const card = cards.get(start.cardId); if (!card) { show('report'); return; }
-    rememberLocation(); selectedCard = card.id;
+    rememberLocation(); guidePause(); selectedCard = card.id;
     if (start.claimId) { activeInvestigationClaim = start.claimId; visibleInvestigation = structuredClone(investigationDraft); }
     if (start.entry) {
       checkedLocation = { ...start.entry.source };
       if (start.entry.origin === 'model-interpretation') { visibleInvestigation = structuredClone(investigationDraft); activeInvestigationClaim = start.entry.claimId; }
     } else checkedLocation = null;
     redrawEdges();
-    if (window.innerWidth <= 700) { drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); }
+    if (window.innerWidth <= 700) { drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); syncReadingLayout(); }
     if (start.entry) focusSourceLine(card, start.entry.source.line); else focusReadable(card);
     pushLocation(card.id); updateReadingLocation();
   }
@@ -902,8 +931,13 @@
     }
     schedulePersist();
   }
-  function inspectEvidence(item) { if (beginGuideDetour(item.id)) renderGuide(); send('triage:inspectEvidence', { evidence: item }); }
+  function inspectEvidence(item) {
+    beginGuideDetour(item.id); guideNavigation = crypto.randomUUID();
+    if (guide) renderGuide();
+    send('triage:inspectEvidence', { evidence:item, navigationId:guideNavigation });
+  }
   function renderDrawer() {
+    syncReadingLayout();
     if (renderedTab) scrollPositions.set(renderedTab, drawer.scrollTop);
     renderDrawerContent(); renderedTab = drawerTab;
     updateStickyOffsets();
@@ -1291,7 +1325,7 @@
       if (strongest) {
         const fact = element('div', 'triage-brief-block'); fact.append(element('strong', '', 'What the code shows'), element('small', 'triage-muted', FlowboardReading.relation(strongest.stance, 'statement', relevant.id)));
         const why = element('details'); why.append(element('summary', '', 'Why it matters'), element('p', '', strongest.note)); rememberDisclosure(why, `brief:strongest:${relevant.id}`);
-        fact.append(why, button('Read this note', () => { visibleInvestigation = structuredClone(draft); activeInvestigationClaim = relevant.id; send('triage:investigationFocus', { evidenceId: strongest.id, claimId: relevant.id }); })); start.append(fact);
+        fact.append(why, button('Read this note', () => { guidePause(); visibleInvestigation = structuredClone(draft); activeInvestigationClaim = relevant.id; send('triage:investigationFocus', { evidenceId: strongest.id, claimId: relevant.id }); })); start.append(fact);
       }
     }
     const question = investigationDraft?.claims?.find(item => item.id === activeInvestigationClaim)?.nextQuestion || investigationDraft?.claims?.[0]?.nextQuestion || value.openQuestions?.[0] || investigation?.nextQuestion || FlowboardReview.nextQuestion(value)?.question;
@@ -1515,7 +1549,7 @@
       }
       const actions = element('div', 'triage-inline-actions');
       actions.append(button('Read code', () => { openNote(item, note); focusSourceLine(card, item.source.line); }), element('span', 'triage-note-file', `${item.source.file}:${item.source.line}${through !== item.source.line ? '–' + through : ''}`));
-      if (automated) actions.append(button('Open in editor', () => send('triage:investigationFocus', { evidenceId: item.id, editor: true })), button('Read statement', () => { activeInvestigationClaim = item.claimId; show('claims'); }));
+      if (automated) actions.append(button('Open in editor', () => send('triage:investigationFocus', { evidenceId: item.id, editor: true })), button('Read statement', () => { guidePause(); activeInvestigationClaim = item.claimId; show('claims'); }));
       else actions.append(button('Open in editor', () => inspectEvidence(item)), button('Edit note', () => { navigateNote(item, card); editingEvidence = item.id; evidenceFilter = 'all'; show('review'); renderGuide(); drawer.querySelector('[aria-label="Edit evidence explanation"]')?.focus({ preventScroll: true }); })); note.append(actions);
       const row = byLine.get(item.source.line);
       if (row) {
@@ -1740,6 +1774,7 @@
       if (guide && savedGuide?.position) guideAside.scrollTop = savedGuide.position.guideScroll || 0;
       drawer.classList.add('visible'); document.body.classList.add('triage-drawer-open');
       if (guide && guideMode === 'guided') { drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); }
+      syncReadingLayout();
       if (!view && cards.size) {
         const start = readingStart(), first = cards.get(start.cardId) || cards.values().next().value;
         if (start.entry) { selectedCard = first.id; checkedLocation = { ...start.entry.source }; redrawEdges(); focusSourceLine(first, start.entry.source.line); }
@@ -1813,7 +1848,7 @@
         }
         schedulePersist(); return;
       }
-      rememberLocation(); selectedCard = card.id; activeClaim = null; claimFocus = false; spotlight = false;
+      rememberLocation(); guidePause(); selectedCard = card.id; activeClaim = null; claimFocus = false; spotlight = false;
       activeInvestigationClaim = message.claimId || activeInvestigationClaim; visibleInvestigation = structuredClone(investigationDraft);
       checkedLocation = message.source; show('claims'); focusSourceLine(card, message.source.line); redrawEdges(); pushLocation('investigation:' + (activeInvestigationClaim || card.id));
     }
@@ -1837,13 +1872,21 @@
       if (before === JSON.stringify(evidenceInput)) evidenceInput = {};
       editProfile(value => { if (!value.evidence.some(item => item.id === message.evidence.id)) value.evidence.push(message.evidence); }, true);
     }
-    else if (message?.type === 'triage:evidenceInspected' && message.issueId === active && message.token === token && profile().evidence.some(item => item.id === message.evidence.id)) {
-      evidencePreview = { ...message, evidence: profile().evidence.find(item => item.id === message.evidence.id) };
+    else if (message?.type === 'triage:evidenceInspected' && message.issueId === active && message.token === token && !sourceStale && message.navigationId && message.navigationId === guideNavigation && profile().evidence.some(item => item.id === message.evidence.id)) {
+      guideNavigation = null;
+      const current = profile().evidence.find(item => item.id === message.evidence.id);
+      if (current.needsReview || JSON.stringify(current.source) !== JSON.stringify(message.evidence.source) || current.quote !== message.evidence.quote) return;
+      evidencePreview = { ...message, evidence:current };
       for (const card of cards.values()) card.el.classList.remove('triage-evidence-focus');
       const source = message.evidence.source;
-      const card = source && [...cards.values()].find(card => hints[card.id]?.file === source.file && source.line >= hints[card.id].line && source.line <= hints[card.id].endLine);
-      if (card) { navigateNote(message.evidence, card); card.el.classList.add('triage-evidence-focus'); focusSourceLine(card, source.line); redrawEdges(); }
-      if (drawerTab === 'review') renderDrawer();
+      const card = source && [...cards.values()].find(card => hints[card.id]?.file === source.file && hints[card.id]?.sourceHash === source.sourceHash && source.line >= hints[card.id].line && (source.endLine || source.line) <= hints[card.id].endLine);
+      if (card) { navigateNote(current, card); card.el.classList.add('triage-evidence-focus'); focusSourceLine(card, source.line); redrawEdges(); }
+      if (drawerTab === 'review' && !drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
+    }
+    else if (message?.type === 'triage:navigationFailed' && message.issueId === active && message.token === token && message.navigationId === guideNavigation) {
+      guideNavigation = null; guidePending = false; guideError = message.reason || 'The checked code could not be opened.';
+      if (message.guideAvailability) guideAvailability = message.guideAvailability;
+      renderGuide();
     }
     else if (message?.type === 'triage:reviewSaved' && message.issueId === active && message.token === token) {
       finding = message.finding; library = message.library;

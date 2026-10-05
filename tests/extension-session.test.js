@@ -25,7 +25,7 @@ async function setup(t, options = {}) {
   if (!options.empty) await importReport(options.reportFixture || path.resolve(__dirname, '../scripts/fixtures/workflow-report.md'), root, native);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const commands = new Map(), callbacks = {}, watchers = new Map(), instances = [], opened = [], errors = [], logs = [], progress = [];
-  const analysis = { count: 0, hold: null }, documents = { hold: null }, configuration = { analysisMode: 'source', ...options.configuration };
+  const analysis = { count: 0, hold: options.analysisHold || null }, documents = { hold: null }, configuration = { analysisMode: 'source', ...options.configuration };
   const uri = fsPath => ({ fsPath, toString: () => fsPath }), disposable = () => ({ dispose() {} });
   const folder = { uri: uri(root) };
   class Board {
@@ -79,7 +79,7 @@ async function setup(t, options = {}) {
     // Only the model response is controlled. Keep the real extension callback,
     // coordinator, source acquisition, source gate and artifact persistence.
     ReportPreparation: class extends ReportPreparation {
-      constructor(project, settings) { super(project, { ...settings, invoke: options.preparationInvoke }); }
+      constructor(project, settings) { super(project, { ...settings, invoke: options.preparationInvoke, providerResources: options.providerResources }); }
     }
   } : name === './runner-adapter' ? {
     analyze: async (...args) => {
@@ -250,6 +250,67 @@ test('a dirty finding buffer cancels only its in-flight work and rejects its lat
   assert.equal(preparation.artifact('I-2'), null, 'The superseded response cannot publish B.');
   assert.equal(requests.filter(([id]) => id === 'I-1').length, 2, 'A was not cancelled or regenerated.');
   assert.equal(preparation.tasks.size, 0); assert.notEqual(preparation.state.jobs['I-2'].state, 'running');
+});
+
+test('removing a workspace revokes preparation ownership during generation and challenge', { skip: !native }, async t => {
+  for (const phase of ['generate', 'challenge']) {
+    const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation'), hold = gate(), calls = [];
+    let signal;
+    const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'),
+      configuration: { semanticProvider: 'codex', reportRequestLimit: 20, preparationWorkers: 1 }, preparationInvoke: async (input, options) => {
+        calls.push([input.finding.id, input.phase]);
+        if (input.finding.id === 'I-1' && input.phase === phase) { signal = options.signal; hold.entered(); await hold.held; }
+        return { value: require('../scripts/fixtures/mixed-ready-output').response(input), audit: { phase: input.phase, outcome: 'completed', provider: 'controlled-fixture' } };
+      } });
+    const coordinator = env.board.callbacks.reportPreparation(), pending = coordinator.ensure();
+    try {
+      await hold.started; const folder = env.vscode.workspace.workspaceFolders[0], before = calls.length;
+      env.vscode.workspace.workspaceFolders = []; env.callbacks.folders({ removed: [folder], added: [] });
+      assert.ok(signal.aborted, 'Folder removal, unlike board navigation, cancels its owned provider work.');
+      hold.release(); await pending;
+      assert.equal(calls.length, before, 'A detached workspace cannot dispatch the next stage or another finding.');
+      assert.equal(coordinator.tasks.size, 0); assert.ok(coordinator.disposed);
+      assert.equal(env.board.callbacks.reportPreparation(), null, 'A stale board callback cannot recreate an owner.');
+      assert.equal(coordinator.artifact('I-1'), null);
+    } finally { hold.release(); await pending; }
+  }
+});
+test('workspace removal cancels source acquisition and a later explicit re-add owns a fresh run', { skip: !native }, async t => {
+  const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation'), hold = gate(), calls = [];
+  const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'), analysisHold: hold,
+    configuration: { semanticProvider: 'codex', reportRequestLimit: 20, preparationWorkers: 1 }, preparationInvoke: async input => {
+      calls.push(input.phase); return { value: require('../scripts/fixtures/mixed-ready-output').response(input), audit: { phase: input.phase, outcome: 'completed' } };
+    } });
+  const old = env.board.callbacks.reportPreparation(), pending = old.ensure();
+  await hold.started;
+  const folder = env.vscode.workspace.workspaceFolders[0];
+  env.vscode.workspace.workspaceFolders = []; env.callbacks.folders({ removed: [folder], added: [] });
+  assert.ok(old.indexAbort.signal.aborted); hold.release(); await pending;
+  assert.deepEqual(calls, []); assert.ok(old.disposed); assert.equal(old.tasks.size, 0);
+  env.vscode.workspace.workspaceFolders = [folder]; env.callbacks.folders({ removed: [], added: [folder] });
+  const restored = env.board.callbacks.reportPreparation(); assert.notEqual(restored, old); await restored.ensure();
+  assert.equal(restored.status().ready, 2); assert.equal(calls.length, 8, 'The intact four-finding manifest resumes once, including its blocked/failed controls.');
+  assert.equal(env.analysis.count, 2, 'The removed owner cannot cache or revive its late index.');
+});
+test('workspace removal releases a capacity waiter without reserving or dispatching a request', { skip: !native }, async t => {
+  const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-workspace-capacity-'));
+  const slots = require('../extension/provider-slots'), releases = [await slots.acquire('codex', null, { directory }), await slots.acquire('codex', null, { directory })];
+  let calls = 0;
+  const invoke = async () => { calls++; throw new Error('No request may dispatch while both slots are held.'); };
+  invoke.isProviderTransport = true;
+  const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'),
+    configuration: { semanticProvider: 'codex', reportRequestLimit: 20, preparationWorkers: 1 }, preparationInvoke: invoke, providerResources: { directory } });
+  const coordinator = env.board.callbacks.reportPreparation(), pending = coordinator.ensure();
+  try {
+    const deadline = Date.now() + 3000;
+    while (!coordinator.status()?.concurrency.waiting && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(coordinator.status().concurrency.waiting, 1);
+    const folder = env.vscode.workspace.workspaceFolders[0]; env.vscode.workspace.workspaceFolders = [];
+    env.callbacks.folders({ removed: [folder], added: [] }); await pending;
+    assert.equal(calls, 0); assert.equal(coordinator.status().requests, 0); assert.equal(coordinator.tasks.size, 0);
+    assert.ok(coordinator.disposed); assert.equal(fs.readdirSync(directory).filter(file => file.includes('-wait-')).length, 0);
+  } finally { releases.forEach(release => release()); fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('queued and in-flight old selections cannot publish after the newer selection', { skip: !native }, async t => {

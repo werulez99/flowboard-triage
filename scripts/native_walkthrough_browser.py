@@ -19,8 +19,10 @@ from playwright.sync_api import sync_playwright
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True)
 parser.add_argument('--baseline', action='store_true')
+parser.add_argument('--product-root', help='Render an archived product tree with the same controlled UI fixture.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
+product = Path(args.product_root).resolve() if args.product_root else root
 upstream = Path(os.environ['FLOWBOARD_EXTENSION_PATH'])
 output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
 fixture = {}
@@ -31,7 +33,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == '/':
             body, kind = fixture['html'].encode(), 'text/html'
         elif route.split('/')[-1] in assets and route.startswith(('/native/', '/tool/')):
-            folder = upstream / 'webview' if route.startswith('/native/') else root / 'extension/webview'
+            folder = upstream / 'webview' if route.startswith('/native/') else product / 'extension/webview'
             body, kind = (folder / Path(route).name).read_bytes(), 'text/javascript'
         else:
             self.send_error(404); return
@@ -40,10 +42,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 server = HTTPServer(('127.0.0.1', 0), Handler)
 origin = f'http://127.0.0.1:{server.server_port}'
-fixture.update(json.loads(subprocess.check_output(['node', str(root / 'scripts/render-fixture.js'), origin])))
+fixture.update(json.loads(subprocess.check_output(['node', str(product / 'scripts/render-fixture.js'), origin])))
 threading.Thread(target=server.serve_forever, daemon=True).start()
 message = fixture['message']
-policy = subprocess.check_output(['node', '-p', 'require("./extension/webview/review-capacity").POLICY'], cwd=root, text=True).strip()
+policy = subprocess.check_output(['node', '-p', 'require("./extension/webview/review-capacity").POLICY'], cwd=product, text=True).strip()
 sources = []
 for index, card in enumerate(message['state']['cards']):
     hint = message['hints'][card['id']]
@@ -106,6 +108,84 @@ try:
         load(); page.screenshot(path=str(output / 'initial.png'))
         controls = page.locator('.guide-controls')
         before = capture()
+        # Native history and guide progress describe different locations. The
+        # return snapshot must be captured before history mutates the selection.
+        page.locator('.card').filter(has=page.get_by_text('Demo::increment(uint256)',exact=True)).get_by_role('button',name='Explore function',exact=True).click()
+        page.locator('.card').filter(has=page.get_by_text('Demo::_add(uint256)',exact=True)).get_by_role('button',name='Explore function',exact=True).click()
+        page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
+        controls.get_by_role('button',name='Next step',exact=True).click()
+        guided_b=capture()
+        page.keyboard.press('Alt+ArrowLeft')
+        history_a=capture()
+        controls.get_by_role('button',name='Resume walkthrough',exact=True).click()
+        result['observed']['historyGuideReturn']={'expected':guided_b,'explored':history_a,'returned':capture()}
+        if not args.baseline:
+            assert capture()==guided_b, 'History must pause before changing the active guide source or checked lines.'
+            result['checks'].append('Native history detours capture the guide before changing cards; Resume restores its exact original step/range/camera.')
+        load()
+        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        page.locator('.guide-annotation').get_by_role('button',name='src/Demo.sol:8 · Open in editor',exact=True).click()
+        inspection=page.evaluate('window.sent.findLast(m=>m.type==="triage:inspectEvidence")')
+        controls.get_by_role('button',name='Return to step',exact=True).click()
+        controls.get_by_role('button',name='Next step',exact=True).click()
+        before_late=capture()
+        emit({'type':'triage:evidenceInspected','issueId':'I-01','token':base['token'],'navigationId':inspection.get('navigationId'),
+              'evidence':base['finding']['triage']['evidence'][0],'excerpt':'Original checked declaration.'})
+        result['observed']['lateManualEvidence']={'before':before_late,'after':capture()}
+        if not args.baseline:
+            assert capture()==before_late, 'A superseded manual evidence result must not replace a later step.'
+            page.locator('.guide-active-card .triage-line-number').first.click()
+            field=page.locator('#triage-evidence-note');field.fill('Keep this later note and selection.')
+            field.evaluate('node=>node.setSelectionRange(5,15)');editing=capture()
+            emit({'type':'triage:evidenceInspected','issueId':'I-01','token':base['token'],'navigationId':inspection.get('navigationId'),
+                  'evidence':base['finding']['triage']['evidence'][0],'excerpt':'A superseded inspection delivered again.'})
+            assert capture()==editing and field.input_value()=='Keep this later note and selection.'
+            assert field.evaluate('node=>[node.selectionStart,node.selectionEnd]')==[5,15]
+            result['checks'].append('Late manual evidence responses cannot retarget a subsequent step or rebuild a later note editor, text or caret.')
+        load()
+        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        page.locator('#triage-bar').get_by_text('More',exact=True).click()
+        page.locator('.triage-more-menu').get_by_role('button',name='Edit review',exact=True).click()
+        result['observed']['noteEditLayout']=page.evaluate('document.body.classList.contains("guide-note-editing")')
+        page.get_by_role('tab',name='Functions',exact=True).click()
+        result['observed']['functionsAfterNoteLayout']=page.evaluate('document.body.classList.contains("guide-note-editing")')
+        load(); page.locator('.guide-active-card .triage-line-number').first.click()
+        page.get_by_role('tab',name='Functions',exact=True).click()
+        result['observed']['functionsAfterGutterLayout']=page.evaluate('document.body.classList.contains("guide-note-editing")')
+        if not args.baseline:
+            assert result['observed']['noteEditLayout'] and not result['observed']['functionsAfterNoteLayout'] and not result['observed']['functionsAfterGutterLayout']
+            result['checks'].append('Every drawer route recomputes the note-editor layout after its tab and visibility change.')
+            crowded=copy.deepcopy(base); crowded['draftFingerprint']='crowded-two-missing'
+            crowded['state']['cards']=[];crowded['state']['edges']=[];crowded['hints']={};crowded['connections']=[]
+            for index in range(199):
+                card=copy.deepcopy(base['state']['cards'][0]);card.update(id=f'explore-{index}',name='exploration',file='Exploration.sol',code='    function exploration() external {}',startLine=50,endLine=50,x=30+index*720,y=30)
+                hint=copy.deepcopy(base['hints'][base['state']['cards'][0]['id']]);hint.update(file='src/Exploration.sol',line=50,endLine=50,range='src/Exploration.sol:50-50')
+                crowded['state']['cards'].append(card);crowded['hints'][card['id']]=hint
+            crowded['guideAvailability']={'ready':False,'limit':200,'materializedCount':199,'deficit':1,'missingSourceIds':['u0','u1'],'reason':'The guide needs two missing function cards.'}
+            emit(crowded)
+            page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
+            assert page.locator('.guide-annotation').count()==0
+            assert 'Remove 1 exploration card' in page.locator('.guide-preparation').inner_text()
+            page.locator('.guide-status-row').get_by_role('button',name='Close status',exact=True).click()
+            page.locator('.triage-drawer').get_by_role('button',name='Close review panel',exact=True).click()
+            page.locator('#triage-bar').get_by_text('More',exact=True).click()
+            page.locator('#mode-btn').click()
+            page.locator('#triage-bar').get_by_text('More',exact=True).click()
+            # Header padding selects the native card. Its title deliberately
+            # allows text selection instead and must not be treated as delete.
+            page.locator('.card-header').first.click(position={'x':4,'y':4});page.keyboard.press('Delete')
+            assert page.locator('.card').count()==198
+            page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
+            pending=page.evaluate('window.sent.findLast(m=>m.type==="triage:investigationFocus")')
+            assert page.evaluate('()=>{const focus=window.sent.findLastIndex(m=>m.type==="triage:investigationFocus"),saved=window.sent.findLastIndex(m=>m.type==="triage:persist"&&m.state.cards.length===198);return saved>=0&&saved<focus}'), 'Freed native slots must reach the host before an immediate materialization request.'
+            assert 'Opening the checked code' in page.locator('.guide-annotation').inner_text()
+            emit({'type':'triage:navigationFailed','issueId':'I-01','token':base['token'],'navigationId':pending['navigationId'],'reason':'The original code changed before this card could open.'})
+            assert 'Opening the checked code' not in page.locator('.guide-annotation').inner_text()
+            assert 'Could not open this step' in page.locator('.guide-annotation').inner_text()
+            assert page.locator('.guide-annotation').get_by_role('button',name='Retry opening code',exact=True).is_visible()
+            assert page.locator('.card').count()==198
+            result['checks'].append('A 199-card board with two missing guide functions reports its exact deficit; native deletion frees room, and failed materialization stops with a retry instead of a spinner.')
+        load()
         if not args.baseline:
             assert page.evaluate('()=>[...CSS.highlights.get("flowboard-call-occurrence")].map(range=>range.toString())') == ['_add(amount)']
         page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
