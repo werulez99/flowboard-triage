@@ -51,7 +51,7 @@ def unpack(archive, destination):
 
 
 def workload_identity(repository):
-    names=['scripts/native_route_browser.py','scripts/workflow-host.js','scripts/fixtures/route-ready-output.js',
+    names=['scripts/native_route_browser.py','scripts/workflow-host.js','scripts/production-editor-io.js','scripts/fixtures/route-ready-output.js',
            'extension/review-capacity.js','extension/webview/review-capacity.js']
     files={name:hashlib.sha256((repository/name).read_bytes()).hexdigest() for name in names}
     files['scripts/fixtures/route-preparation/']=tree_hash(repository/'scripts/fixtures/route-preparation')
@@ -90,6 +90,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline',default='0fc6f25',help='Git commit/ref to export without changing the working tree.')
     parser.add_argument('--current-extension',help='Explicit current/installed extension directory. Defaults to this repository\'s extension/.')
+    parser.add_argument('--production-selection',action='store_true',help='Use the actual extension activation/selection/cache path in both arms.')
     parser.add_argument('--output',required=True,help='New local directory for before/after screenshots, logs and paired metrics.')
     parser.add_argument('--samples',type=int,default=3,choices=range(1,11))
     parser.add_argument('--reopens',type=int,default=20,choices=range(1,51))
@@ -131,6 +132,7 @@ def main():
                 command=[sys.executable,str(repository/'scripts/native_route_browser.py'),'--product-extension',str(extension),
                     '--output',str(folder),'--samples',str(args.samples),'--reopens',str(args.reopens)]
                 if label=='before':command.append('--baseline')
+                if args.production_selection:command.append('--production-selection')
                 result.setdefault('commands',{})[label]=command
                 environment=os.environ.copy();environment['FLOWBOARD_EXTENSION_PATH']=str(native)
                 environment['FLOWBOARD_TRIAGE_EXTENSION_PATH']=str(extension)
@@ -149,7 +151,7 @@ def main():
             before,after=runs['before'],runs['after']
             if before['fixtureHashes']!=after['fixtureHashes'] or any(before[key]!=after[key] for key in ['functions','events','codeLines']):
                 raise RuntimeError('Before and after did not use the same source/report and route shape.')
-            result.update(status='passed',beforeVersion=before['version'],afterVersion=after['version'],
+            result.update(status='passed',selectionRoute=after.get('selectionRoute'),beforeVersion=before['version'],afterVersion=after['version'],
                 navigation=paired_metric(before,after,'navigation'),controllerReopen=paired_metric(before,after,'cachedHostReopen'),
                 observedTargets={'before':before['targets'],'after':after['targets']},
                 dataset={key:after[key] for key in ['functions','events','codeLines','fixtureHashes']},

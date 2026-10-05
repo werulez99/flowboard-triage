@@ -15,10 +15,11 @@ from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True)
+parser.add_argument('--local-retry', action='store_true')
 args = parser.parse_args()
 repository = Path(__file__).resolve().parent.parent
 output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
-process = subprocess.Popen(['node', str(repository/'scripts/workflow-host.js'), '--mixed-fixture', '--defer-mapping'],
+process = subprocess.Popen(['node', str(repository/'scripts/workflow-host.js'), '--mixed-fixture', '--defer-mapping'] + (['--local-retry-fixture'] if args.local_retry else []),
     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=repository)
 result = {'boundary':'Real importer, native parser, coordinator, engine, host gate, storage and native renderer. Fixed fictional model responses; simulated editor IO; no external provider calls.', 'checks':[]}
 try:
@@ -61,22 +62,44 @@ try:
             raise AssertionError(json.dumps({'status':state.get('reportPreparation'),'errors':state.get('errors'),'pageErrors':errors},indent=2))
         def position():
             return page.evaluate('()=>({camera:{scale,panX,panY},step:document.querySelector(".guide-annotation")?.dataset.stepId,lines:[...document.querySelectorAll(".triage-claim-line")].map(n=>Number(n.dataset.sourceLine)),codeScroll:document.querySelector(".guide-active-card .card-code")?.parentElement.scrollTop})')
-        def open_finding(identity):
+        def open_finding(identity, ready=True):
             old=request('/state').get('token')
             page.locator('#triage-bar').get_by_role('button',name='Findings',exact=True).click()
             page.locator(f'[data-finding-id="{identity}"]').click()
             page.wait_for_function('value=>window.sent.some(m=>m.type==="triage:rendered"&&m.issueId===value.id&&m.token!==value.old)',arg={'id':identity,'old':old})
-            page.wait_for_selector('.guide-annotation')
+            if ready: page.wait_for_selector('.guide-annotation')
         def stop_polling():
             page.evaluate('()=>{window.__workflowClosing=true;clearInterval(window.__workflowPollTimer)}')
             page.wait_for_timeout(80)
         page.goto(host['origin'])
         page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:library")')
-        state=wait(lambda state: state.get('mixedHeld') and job(state,'I-1')['publishable'] and job(state,'I-3')['state']=='blocked' and job(state,'I-4')['state']=='failed')
+        state=wait(lambda state: (job(state,'I-2')['state']=='failed' if args.local_retry else state.get('mixedHeld')) and job(state,'I-1')['publishable'] and job(state,'I-3')['state']=='blocked' and job(state,'I-4')['state']=='failed')
         assert state['reportPreparation']['total']==4 and not state['reportPreparation']['published']
-        assert len(state['library'])==4 and state['reportPreparation']['mode']=='running'
+        assert len(state['library'])==4
+        if args.local_retry:
+            open_finding('I-2', ready=False)
+            state=request('/state')
+            request('/message',{'type':'triage:reportControl','issueId':'I-2','token':state['token'],'action':'pause'})
+            wait(lambda value: value['reportPreparation']['mode']=='paused')
+            before=request('/state'); other_jobs=[job(before,key) for key in ['I-1','I-3','I-4']]
+            calls_before=len(before['providerCalls'])
+            page.locator('#triage-bar').get_by_role('button', name='Walkthrough', exact=True).click()
+            page.get_by_role('button', name='Continue this finding', exact=True).click()
+            state=wait(lambda value: value.get('mixedHeld'))
+            assert state['reportPreparation']['mode']=='paused'
+            assert [job(state,key) for key in ['I-1','I-3','I-4']]==other_jobs
+            assert len(state['providerCalls'])==calls_before+1
+            assert state['providerCalls'][-1]['input']['phase']=='challenge'
+            assert state['providerCalls'][-1]['input']['finding']['id']=='I-2'
+            stale_retry={'type':'triage:investigationRetry','issueId':'I-2','token':state['token']}
+            result['checks'].append('The actual Continue this finding button resumes only B’s saved challenge while the report stays paused; A/C/D and their preparation states are unchanged.')
+        else:
+            assert state['reportPreparation']['mode']=='running'
         opened_at=time.monotonic(); open_finding('I-1'); first_readable_ms=(time.monotonic()-opened_at)*1000
         state=request('/state'); draft=state['investigation']
+        if args.local_retry:
+            request('/message',stale_retry)
+            assert len(request('/state')['providerCalls'])==len(state['providerCalls']), 'A stale finding/view retry must not acquire dispatch authority.'
         assert draft['phase']=='ready' and draft['publication']['ready']
         assert draft['claims'][0]['status']=='contradicted' and draft['causal']['outcome']=='refuted'
         assert state['privatePreparationDraft']['publication']['digest']==draft['publication']['digest']

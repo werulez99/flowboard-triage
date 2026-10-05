@@ -751,7 +751,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         try {
           if (transport) health.check(provider, healthOptions);
           ensure(); release.markDispatching?.();
-          reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)) });
+          reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)), input });
           const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
             onProcessStart: details => release.attachProcess?.(details) });
           terminalAudit = result.audit || {};

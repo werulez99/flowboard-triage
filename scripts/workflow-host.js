@@ -17,7 +17,7 @@ const { analyze } = require(path.join(productionExtension, 'runner-adapter'));
 const { SourceCatalog } = require(path.join(productionExtension, 'source'));
 const { importReport } = require(path.join(productionExtension, 'report'));
 
-function boardClass(storage, invoke) {
+function boardClass(storage, invoke, trace) {
   // A read-only external workspace gets an isolated, in-memory canvas store.
   // Never replace process-wide fs/store modules or follow its request watcher.
   const filename = path.join(productionExtension, 'board.js');
@@ -27,7 +27,11 @@ function boardClass(storage, invoke) {
   loaded.require = name => {
     if (name === './store') return storage;
     const value = normalRequire(name);
-    return name === './investigation-engine' && invoke ? { ...value, advance: options => value.advance({ ...options, invoke }) } : value;
+    if (name === './investigation-engine') return { ...value,
+      ...(invoke ? { advance: options => value.advance({ ...options, invoke }) } : {}),
+      ...(trace ? { validateCurrent: (...args) => { const start = performance.now(); trace('saved-guide-validation-start');
+        try { return value.validateCurrent(...args); } finally { trace('saved-guide-validation-end', { durationMs: performance.now() - start }); } } } : {}) };
+    return value;
   };
   loaded._compile(fs.readFileSync(filename, 'utf8'), filename);
   return loaded.exports.TriageBoard;
@@ -38,6 +42,7 @@ async function start(options = {}) {
   const extension = productionExtension;
   const readOnly = !!options.workspace;
   const configuration = { semanticProvider: options.provider || 'none' };
+  if (options.productionSelection && !options.routeFixture && !options.mixedFixture) throw new Error('Production selection measurement currently requires an isolated controlled native fixture.');
   if(options.mixedFixture&&options.routeFixture)throw new Error('Choose one controlled fixture.');
   if (options.mixedFixture || options.routeFixture) {
     if (readOnly || options.invoke || options.qualityCase || options.qualityBatch || options.qualityResponses || options.qualityRecording) throw new Error('Controlled preparation is an isolated fictional fixture.');
@@ -72,7 +77,9 @@ async function start(options = {}) {
   }
   const secret = crypto.randomBytes(24).toString('hex');
   const pending = [], received = [], opened = [], logs = [], errors = [], assets = new Map(), checkpoints = new Map();
-  let html = '', board, panel, origin, selection = Promise.resolve(), serial = 0;
+  let html = '', board, panel, origin, selection = Promise.resolve(), serial = 0, productionEditor, materializeBoard;
+  const productionTrace = [];
+  const trace = (event, fields = {}) => productionTrace.push({ event, at: Date.now(), ...fields });
   const uri = file => ({ fsPath: file, toString: () => file });
   const disposable = () => ({ dispose() {} });
   const storage = readOnly ? { ...store,
@@ -102,11 +109,15 @@ async function start(options = {}) {
   // Observe the real provider without replacing its inputs or responses. Only
   // fictional quality cases expose these records; no private workspace capture.
   const providerCalls = [];
-  let releaseMixed, mixedHeld = false;
+  let releaseMixed, mixedHeld = false, localChallengeFailed = false;
   const mixedWait = options.mixedFixture && new Promise(resolve => { releaseMixed = resolve; });
   const mixedInvoke = options.mixedFixture || options.routeFixture ? async (input, settings) => {
     const record = { input: structuredClone(input), fixture: options.routeFixture ? 'controlled-route-preparation' : 'controlled-mixed-preparation' }; providerCalls.push(record);
     if (input.finding.id === 'I-2' && input.phase === 'challenge') {
+      if (options.localRetryFixture && !localChallengeFailed) {
+        localChallengeFailed = true;
+        throw new Error('Controlled challenge interruption; generation is retained.');
+      }
       mixedHeld = true;
       await Promise.race([mixedWait, new Promise((_, reject) => {
         if (settings?.signal?.aborted) reject(new Error('Controlled challenge cancelled.'));
@@ -152,9 +163,9 @@ async function start(options = {}) {
   // Observing the real adapter must not bypass its shared capacity/health
   // boundary. Controlled and recorded responses are deliberately unmarked.
   if (invoke && !options.invoke && !replay && !mixedInvoke) invoke.isProviderTransport = true;
-  const TriageBoard = boardClass(storage, invoke);
+  const TriageBoard = boardClass(storage, invoke, options.productionSelection ? trace : null);
   let reportPreparation, coordinatorOptions;
-  if (options.reportPreparation) {
+  if (options.reportPreparation && !options.productionSelection) {
     if (readOnly) throw new Error('Persistent report preparation requires a fresh fictional harness project. Use prepare-report.js for an explicitly requested real report run.');
     let cached;
     const Coordinator = require(path.join(productionExtension, 'report-preparation')).ReportPreparation;
@@ -224,6 +235,16 @@ async function start(options = {}) {
     }
   };
   function createBoard() {
+    if (options.productionSelection) {
+      const available = new Promise(resolve => { materializeBoard = resolve; });
+      productionEditor ||= require('./production-editor-io').activateProduct({ extension: productionExtension, upstream, root, api,
+        Board: TriageBoard, invoke, onBoard: value => { board = value; materializeBoard?.(); }, onCoordinator: value => { reportPreparation = value; },
+        onSelection: value => { selection = value.catch(record); }, trace });
+      // Serve the actual panel once created; the product command still awaits
+      // its real webview ready event. Waiting for that before serving HTML
+      // deadlocks simulated IO, unlike a real editor which serves it immediately.
+      return Promise.race([available, productionEditor.open().catch(record)]);
+    }
     board = new TriageBoard(api, { extensionPath: extension, extensionUri: uri(extension) },
       { extensionPath: upstream, extensionUri: uri(upstream) }, root, {
         ...(reportPreparation ? { reportPreparation: () => reportPreparation } : {}),
@@ -252,7 +273,7 @@ async function start(options = {}) {
     if (request.method === 'GET' && address.pathname === '/state') {
       const snapshots = {};
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
-      return json({ readOnly, productionExtension, productionVersion, reportPreparation: reportPreparation?.status(), ...(options.mixedFixture ? { mixedHeld } : {}), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
+      return json({ readOnly, productionExtension, productionVersion, selectionRoute: options.productionSelection ? 'extension.activate/openFinding/sourceCatalog/board.open' : 'controller-harness', productionTrace, reportPreparation: reportPreparation?.status(), ...(options.mixedFixture ? { mixedHeld } : {}), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
         investigation: board.models.get(board.activeId)?.investigationDraft || null,
         privatePreparationDraft: reportPreparation && board.activeId ? require(path.join(productionExtension, 'investigation-engine')).read(root, board.activeId) : null,
         debug: { nativeToken: board.native.triageToken, nativeFinding: board.native.triageFindingId, callbacks: panel.callbacks.length, disposed: board.disposed, trusted: api.workspace.isTrusted },
@@ -272,7 +293,7 @@ async function start(options = {}) {
         // for a later webview render acknowledgement.
         for (const callback of panel.callbacks) Promise.resolve(callback(message)).catch(record);
       } else if (message.name === 'reopen') {
-        await selection; panel.dispose(); pending.length = 0; createBoard();
+        await selection; panel.dispose(); pending.length = 0; await createBoard();
       } else if (message.name === 'release-mixed' && options.mixedFixture) {
         releaseMixed();
       } else if (message.name === 'restart-mixed-coordinator' && options.mixedFixture) {
@@ -298,10 +319,11 @@ async function start(options = {}) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
-  createBoard();
+  await createBoard();
   return { origin, secret, root, readOnly, productionExtension, productionVersion, close: async () => {
     releaseMixed?.();
     reportPreparation?.dispose(); if (reportPreparation?.loop) await reportPreparation.loop;
+    productionEditor?.dispose();
     panel.dispose(); await new Promise(resolve => server.close(resolve));
     // root is either a validated fresh mkdtemp directory or a read-only input.
     // Remove only the exact generated fixture, never a supplied workspace.
@@ -320,7 +342,9 @@ if (require.main === module) {
     requestLimit: process.argv.includes('--request-limit') ? Number(process.argv[process.argv.indexOf('--request-limit') + 1]) : 12,
     qualityBatch: process.argv.includes('--quality-batch'),
     mixedFixture: process.argv.includes('--mixed-fixture'),
+    localRetryFixture: process.argv.includes('--local-retry-fixture'),
     routeFixture: process.argv.includes('--route-fixture'),
+    productionSelection: process.argv.includes('--production-selection'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,
     qualityCase: qualityIndex < 0 ? null : process.argv[qualityIndex + 1],

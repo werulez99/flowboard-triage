@@ -50,6 +50,16 @@ class ReportPreparation {
     this.root = root; this.options = options; this.owner = crypto.randomUUID(); this.epoch = 0; this.disposed = false;
     this.state = null; this.active = null; this.tasks = new Map(); this.loop = null; this.pendingRestart = false; this.pendingRetry = false;
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
+    this.pendingFindings = new Set(); this.localEligible = new Set();
+  }
+  continueFinding(id) {
+    p.identifier(id, 'finding continuation ID');
+    if (this.disposed) throw new Error('This report owner is closed. Reopen the report.');
+    if (!store.readReport(this.root).issues.some(item => item.id === id)) throw new Error('The selected finding is no longer in this report.');
+    this.pendingFindings.add(id);
+    // Existing workers admit this at a durable stage boundary. No report-wide
+    // resume, allowance increase or cancellation of a sibling is implied.
+    return this.ensure();
   }
   prioritize(id) {
     // Selection can reorder eligible work, but never starts a request, resumes
@@ -150,7 +160,7 @@ class ReportPreparation {
       if (this.disposed || runEpoch !== this.epoch) return;
       if (this.state && this.locked) { this.state.mode = 'paused'; this.state.reason = error.message; this.save(); }
       this.options.log?.(`Report preparation stopped: ${error.message}`);
-    }).finally(() => { this.unlock(); this.loop = null; if (this.pendingRestart && !this.disposed) {
+    }).finally(() => { this.unlock(); this.loop = null; this.localEligible.clear(); if ((this.pendingRestart || this.pendingFindings.size) && !this.disposed) {
       const again = this.pendingRetry; this.pendingRestart = false; this.pendingRetry = false; return this.ensure({ retry: again });
     } });
     return this.loop;
@@ -159,7 +169,7 @@ class ReportPreparation {
     this.lock();
     const { report, entries, reconciliation } = reconcile(this.root);
     const project = hash(fs.realpathSync(this.root)), identity = hash([VERSION, policy.POLICY, project, report.reportHash, entries.map(item => [item.id, item.title, item.body])]);
-    if (!retry && this.state?.publication && this.state.mode === 'completed' && this.state.identity === identity && !this.options.dirty?.()) {
+    if (!retry && !this.pendingFindings.size && this.state?.publication && this.state.mode === 'completed' && this.state.identity === identity && !this.options.dirty?.()) {
       this.indexAbort = new AbortController(); const reuseEpoch = this.epoch;
       const catalog = await this.validatedCatalog(this.indexAbort.signal);
       const generation = require('./workspace-snapshot').validate(catalog);
@@ -236,14 +246,39 @@ class ReportPreparation {
     }
     this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
     this.save();
-    if (['paused', 'cancelled'].includes(this.state.mode) && !retry) return;
+    const admitPending = async () => {
+      const admitted = [];
+      for (const id of [...this.pendingFindings]) {
+        this.pendingFindings.delete(id);
+        const entry = entries.find(item => item.id === id), job = this.state.jobs[id];
+        if (!entry || !job) { this.options.log?.('Selected continuation was discarded because its finding left the report.'); continue; }
+        if (job.publishable || this.tasks.has(id)) continue;
+        const remaining = this.state.resources.limit - this.state.resources.requests;
+        if (remaining <= 0) {
+          job.reason = `Shared report allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). This finding was not resumed; no allowance was added.`;
+          this.save(); continue;
+        }
+        if (['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
+          await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable });
+        // Only an exhausted selected-finding allowance can be renewed, bounded
+        // by already authorized shared capacity. Sibling limits never change.
+        if (job.requests >= job.requestLimit) job.requestLimit = job.requests + Math.min(remaining, config.findingRequestLimit || 6);
+        job.state = 'queued'; job.reason = ''; job.providerFailures = 0;
+        this.localEligible.add(id); admitted.push(entry); this.save();
+      }
+      return admitted;
+    };
+    await admitPending();
+    if (['paused', 'cancelled'].includes(this.state.mode) && !retry && !this.localEligible.size) return;
     if (!['codex', 'claude'].includes(config.provider)) {
       this.state.mode = 'paused'; this.state.reason = 'Choose an authenticated provider to prepare unfinished findings. Checked walkthroughs and original code remain available.'; this.save(); return;
     }
-    this.state.mode = 'running'; this.save();
+    if (!['paused', 'cancelled'].includes(this.state.mode)) this.state.mode = 'running';
+    this.save();
     const priority = (this.options.firstFinding || '').split(',').filter(Boolean);
     const ordered = priority.length ? [...priority.flatMap(id => entries.filter(entry => entry.id === id)), ...entries.filter(entry => !priority.includes(entry.id))] : entries;
-    const queue = ordered.filter(entry => ['queued', 'retry-scheduled'].includes(this.state.jobs[entry.id].state));
+    const allowed = id => this.state.mode === 'running' || this.localEligible.has(id);
+    const queue = ordered.filter(entry => allowed(entry.id) && ['queued', 'retry-scheduled'].includes(this.state.jobs[entry.id].state));
     const estimatedRequests = queue.reduce((n, entry) => n + (this.state.jobs[entry.id].checkpoint?.stage === 'challenge' ? 1 : 2), 0);
     this.state.plan = { eligible: queue.length, estimatedRequests, remainingAllowance: this.state.resources.limit - this.state.resources.requests,
       basis: 'One generation and one challenge for each cold finding, one challenge for a reusable draft; repairs may need more. This is an estimate, not a completion guarantee.' };
@@ -270,10 +305,16 @@ class ReportPreparation {
       return entry;
     };
     const worker = async () => {
-      while ((freshQueue.length || continuedQueue.length || retryQueue.length) && !this.disposed && epoch === this.epoch && this.state.mode === 'running') {
-        if (this.state.resources.requests >= this.state.resources.limit) { this.pauseForBudget(); break; }
+      while ((freshQueue.length || continuedQueue.length || retryQueue.length || this.pendingFindings.size) && !this.disposed && epoch === this.epoch) {
+        for (const entry of await admitPending()) if (![...freshQueue, ...continuedQueue, ...retryQueue].some(item => item.id === entry.id)) continuedQueue.push(entry);
+        if (this.state.resources.requests >= this.state.resources.limit) {
+          if (this.state.mode === 'running') this.pauseForBudget();
+          else for (const id of this.localEligible) { const job = this.state.jobs[id]; if (job.state === 'queued') { job.state = 'paused'; job.reason = 'Shared report allowance exhausted; accepted stages are saved.'; } }
+          break;
+        }
+        if (!freshQueue.length && !continuedQueue.length && !retryQueue.length) break;
         const entry = next(), job = this.state.jobs[entry.id];
-        if (!['queued', 'retry-scheduled'].includes(job.state)) continue;
+        if (!allowed(entry.id) || !['queued', 'retry-scheduled'].includes(job.state)) continue;
         try { await this.work(entry, catalog, report, job, epoch, config); }
         catch (error) {
           if (epoch === this.epoch) { Object.assign(job, { state: 'failed', publishable: false, reason: error.message, finishedAt: now() }); this.save(); }
@@ -300,6 +341,7 @@ class ReportPreparation {
       this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
     }
     if (this.state.mode === 'running') this.state.mode = this.state.publication ? 'completed' : 'incomplete';
+    this.localEligible.clear();
     this.save();
   }
   issue(entry) { return { ...entry, reportText: entry.body }; }
@@ -354,10 +396,16 @@ class ReportPreparation {
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
         providerResources: this.options.providerResources, yieldAfterStage: true, localOnly,
         beforeRequest: async data => {
-          if (this.state.mode !== 'running') throw Object.assign(new Error('Paused after the current request. Resume will reuse the accepted stage.'), { code: 'REPORT_PAUSED' });
+          if (this.state.mode !== 'running' && !this.localEligible.has(entry.id)) throw Object.assign(new Error('Paused after the current request. Resume will reuse the accepted stage.'), { code: 'REPORT_PAUSED' });
           if (!current()) throw Object.assign(new Error('Preparation inputs changed before dispatch.'), { code: 'INVESTIGATION_SUPERSEDED' });
           if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error(`Report request allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). Accepted stages are saved.`), { code: 'REPORT_BUDGET' });
           if (job.requests >= job.requestLimit) throw Object.assign(new Error(`Finding ${job.id} request allowance exhausted (${job.requests}/${job.requestLimit}). Other findings may continue.`), { code: 'FINDING_BUDGET' });
+          await this.options.authorizeRequest?.({ ...data, findingId: entry.id });
+          if (!current()) throw Object.assign(new Error('Preparation superseded during request authorization.'), { code: 'INVESTIGATION_SUPERSEDED' });
+          if (this.state.mode !== 'running' && !this.localEligible.has(entry.id)) throw Object.assign(new Error('Paused during request authorization; no request was reserved.'), { code: 'REPORT_PAUSED' });
+          // Another worker may reserve while an explicit authorization hook
+          // awaits. Recheck shared accounting immediately before incrementing.
+          if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error('Shared report allowance exhausted before reservation.'), { code: 'REPORT_BUDGET' });
           this.state.resources.requests++; job.requests++; job.stage = data.phase; job.inputBytes = data.inputBytes; job.state = 'running';
           job.lastReservation = { id: `${attemptId}:${job.requests}`, phase: data.phase, at: now(), inputBytes: data.inputBytes };
           this.state.resources.receipts[job.lastReservation.id] = { ...job.lastReservation, findingId: job.id, outcome: 'reserved', costUSD: null };
@@ -424,6 +472,7 @@ class ReportPreparation {
     if (action === 'resume' || action === 'retry') return this.ensure({ retry: true });
     if (!this.state) return;
     if (!['pause', 'cancel'].includes(action)) throw new Error('Unknown report preparation action.');
+    this.localEligible.clear(); this.pendingFindings.clear();
     this.state.mode = action === 'pause' ? 'paused' : 'cancelled';
     this.state.reason = action === 'pause' ? 'Paused. A request already running may finish; no new request will start. Accepted stages are saved.' : 'Cancelled. Accepted stages and researcher work are saved.';
     if (action === 'pause') for (const task of this.tasks.values()) if (this.state.jobs[task.id]?.state === 'waiting-for-provider-capacity') task.abort.abort();

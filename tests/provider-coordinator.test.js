@@ -50,7 +50,7 @@ async function fixture(t, count = 1, callback) {
   const options = { invoke, providerResources: { directory, pollMs: 5 }, configuration: () => ({ provider: 'codex', requestLimit: 20, workers: 2 }), catalog: async () => catalog };
   const runner = new ReportPreparation(root, options);
   t.after(async () => { runner.dispose(); await runner.loop; fs.rmSync(base, { recursive: true, force: true }); });
-  return { root, directory, runner, options, calls };
+  return { root, directory, runner, options, calls, catalog };
 }
 test('production coordinator waits for shared capacity without reserving, then generates/checks exactly once', { skip: !native }, async t => {
   const f = await fixture(t), first = await slots.acquire('codex', null, { directory: f.directory }), second = await slots.acquire('codex', null, { directory: f.directory });
@@ -91,6 +91,78 @@ test('explicit guarded pair changes only its generation deadline; challenge/defa
   fs.writeFileSync(path.join(f.root, 'report.md'), report(2)); await importReport(path.join(f.root, 'report.md'), f.root, native, { deferMapping: true });
   await f.runner.ensure(); assert.equal(dispatched, 2, 'An extra job cannot reserve or dispatch a third request.');
   assert.equal(f.runner.state.resources.requests, 2); assert.equal(f.runner.state.resources.limit, 2);
+});
+test('selected continuation in a paused mixed report reuses only its challenge and never grants shared allowance', { skip: !native }, async t => {
+  let recover = false;
+  const f = await fixture(t, 4, async (input, options) => {
+    if (input.finding.id === 'I-2' && input.phase === 'challenge' && !recover) throw Object.assign(new Error('Controlled challenge transport failure'), { audit: { requestId: options.requestId, phase: 'challenge', outcome: 'failed' } });
+    if (input.finding.id === 'I-3') throw Object.assign(new Error('Finding allowance paused'), { code: 'FINDING_BUDGET' });
+    const value = response(input);
+    if (input.finding.id === 'I-4') { value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The externally supplied runtime implementation is not established.']; value.causal.outcome = 'blocked'; }
+    return { value, audit: { requestId: options.requestId, phase: input.phase, outcome: 'completed' } };
+  });
+  await f.runner.ensure(); await f.runner.control('pause');
+  assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
+  assert.equal(f.runner.state.jobs['I-2'].state, 'failed');
+  assert.equal(f.runner.state.jobs['I-3'].state, 'paused'); assert.equal(f.runner.state.jobs['I-4'].state, 'blocked');
+  const jobs = structuredClone(f.runner.state.jobs), limit = f.runner.state.resources.limit, count = f.calls.length;
+  assert.throws(() => f.runner.continueFinding('removed-finding'), /no longer in this report/);
+  assert.deepEqual(f.runner.state.jobs, jobs); assert.equal(f.runner.state.mode, 'paused');
+  const a = engine.read(f.root, 'I-1').publication.digest;
+  const note = path.join(f.root, '.flowboard/human-note.txt'); fs.writeFileSync(note, 'Keep my research notes and verdict.'); const human = fs.readFileSync(note);
+  const before = engine.read(f.root, 'I-2'); assert.equal(before.checkpoint.stage, 'challenge');
+  const raw = fs.readFileSync(path.join(f.root, '.flowboard/investigations/I-2.json'));
+  const { report: manifest, entries } = require('../extension/report-preparation').reconcile(f.root), entry = entries.find(e => e.id === 'I-2');
+  const packet = await require('../scripts/saved-stage-packet').inspectSavedStage({ root: f.root, catalog: f.catalog,
+    request: f.runner.request(entry, f.catalog, manifest), issue: f.runner.issue(entry), findingId: 'I-2', saved: before });
+  assert.equal(packet.packet.phase, 'challenge'); assert.equal(f.calls.length, count);
+  assert.ok(raw.equals(fs.readFileSync(path.join(f.root, '.flowboard/investigations/I-2.json'))));
+  recover = true; await f.runner.continueFinding('I-2');
+  assert.deepEqual(f.calls.slice(count).map(c => [c.id, c.phase]), [['I-2', 'challenge']]);
+  assert.equal(f.runner.state.mode, 'paused'); assert.equal(f.runner.state.resources.limit, limit);
+  for (const id of ['I-3', 'I-4']) assert.deepEqual(f.runner.state.jobs[id], jobs[id]);
+  assert.equal(engine.read(f.root, 'I-1').publication.digest, a); assert.ok(human.equals(fs.readFileSync(note)));
+  assert.ok(f.runner.published(engine.read(f.root, 'I-2')));
+  await f.runner.ensure(); assert.equal(f.calls.length, count + 1);
+  f.runner.state.resources.limit = f.runner.state.resources.requests; f.runner.save();
+  await f.runner.continueFinding('I-3'); assert.equal(f.calls.length, count + 1);
+  assert.equal(f.runner.state.resources.limit, f.runner.state.resources.requests); assert.match(f.runner.state.jobs['I-3'].reason, /Shared report allowance exhausted/);
+});
+test('saved production challenge uses guarded 600s then specific 240s repair, with no generation or third reservation', { skip: !native }, async t => {
+  const { EventEmitter } = require('node:events'), { PassThrough } = require('node:stream');
+  const provider = require('../extension/semantic-provider'), { ChallengePilotGuard } = require('../scripts/challenge-pilot-guard');
+  const ledger = { limit: 2, used: 0, receipts: [] }, guard = new ChallengePilotGuard('I-1', ledger, () => {});
+  let pilot = false;
+  const f = await fixture(t, 1, async (input, options) => {
+    if (!pilot) {
+      if (input.phase === 'challenge') throw Object.assign(new Error('Controlled previous challenge failed'), { audit: { phase: 'challenge', outcome: 'failed' } });
+      return { value: response(input), audit: { phase: 'generate', outcome: 'completed' } };
+    }
+    const receipt = guard.reserve(input, options.requestId);
+    const value = ledger.used === 1 ? { result: 'kept', problems: [], explanationReviews: [], checks: [{ target: 'event:event',
+      reason: 'The source guard rejects false, but this response omitted the evidence-note review.', evidence: ['guard'], documentation: [] }] } : response(input);
+    const result = await provider.runProvider(input, { ...options, timeoutMs: receipt.timeoutMs, spawn: (_exe, args) => {
+      assert.ok(args.includes('--output-schema'));
+      const child = new EventEmitter(); child.pid = process.pid; child.stdin = new PassThrough(); child.stdin.resume(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+      child.stdin.on('finish', () => queueMicrotask(() => { child.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(value) } }) + '\n' + JSON.stringify({type:'turn.completed',usage:{output_tokens:1}}) + '\n'); child.emit('close', 0); }));
+      return child;
+    } });
+    guard.result(receipt, result.value, result.audit); return result;
+  });
+  await f.runner.ensure(); await f.runner.control('pause'); const count = f.calls.length, requests = f.runner.state.resources.requests;
+  pilot = true; f.options.authorizeRequest = ({ input }) => guard.check(input);
+  await f.runner.continueFinding('I-1');
+  assert.deepEqual(f.calls.slice(count).map(c => c.phase), ['challenge', 'challenge'], JSON.stringify({job:f.runner.state.jobs['I-1'],ledger}));
+  assert.deepEqual(ledger.receipts.map(r => r.audit.deadline.milliseconds), [600000, 240000]);
+  assert.equal(f.runner.state.resources.requests, requests + 2); assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
+  await f.runner.ensure(); assert.equal(f.calls.length, count + 2);
+});
+test('pause during explicit authorization prevents a late reservation and dispatch', { skip: !native }, async t => {
+  const f = await fixture(t);
+  f.options.authorizeRequest = async () => { await f.runner.control('pause'); };
+  await f.runner.ensure();
+  assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0);
+  assert.equal(f.runner.state.mode, 'paused'); assert.equal(f.runner.tasks.size, 0);
 });
 test('pause cancels a waiting sibling promptly without hiding ready work on reopen or reserving a request', { skip: !native }, async t => {
   const f = await fixture(t); await f.runner.ensure(); assert.ok(f.runner.published(engine.read(f.root, 'I-1')));

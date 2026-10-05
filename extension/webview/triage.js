@@ -31,6 +31,10 @@
   const preparationLabel = state => ({ completed: 'Ready', ready: 'Ready', queued: 'Queued', running: 'Checking', 'retry-scheduled': 'Queued for another check',
     'waiting-for-provider-capacity': 'Waiting for capacity', blocked: 'Blocked', failed: 'Failed', stale: 'Code changed', paused: 'Paused', cancelled: 'Cancelled' }[state] || 'Not prepared');
   const preparationJob = id => reportPreparation?.jobs?.find(job => job.id === id);
+  const canContinueFinding = () => {
+    const job = preparationJob(active);
+    return job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
+  };
   const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' : preparationLabel(job?.state);
   const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
   function updatePreparationRows() {
@@ -149,7 +153,10 @@
         element('small', 'triage-muted', `${progress.requests} of ${progress.requestLimit} model requests used${progress.ambiguities ? ` · ${progress.ambiguities} report sections need classification` : ''}`));
       for (const job of progress.active || []) parent.append(element('p', '', `${job.id} · ${job.stage || 'Locating code'}`));
       const controls = element('div', 'guide-preparation-actions');
-      controls.append(button(running ? 'Pause preparation' : 'Resume preparation', () => send('triage:reportControl', { action: running ? 'pause' : 'resume' })),
+      if (canContinueFinding()) {
+        parent.append(element('small', 'triage-muted', 'Continue uses remaining shared allowance and may renew only this finding’s limit. Paused siblings stay paused. It never adds report allowance.'));
+      }
+      controls.append(button(running ? 'Pause report preparation' : 'Resume entire report', () => send('triage:reportControl', { action: running ? 'pause' : 'resume' })),
         button('Cancel', () => send('triage:reportControl', { action: 'cancel' })), button('Keep exploring', () => { guideIntent = 'explore'; renderPreparation(); }));
       parent.append(controls);
       const details = element('details'); details.append(element('summary', '', 'Progress and stopped checks'));
@@ -189,7 +196,9 @@
       const title = preparing ? 'Opening finding' : guideAvailability?.ready === false ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
       const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
-      row.append(heading, expand, button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
+      row.append(heading, expand);
+      if (!preparing && canContinueFinding()) row.append(button('Continue this finding', () => send('triage:investigationRetry')));
+      row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
       const selected = issueIdentifier() || preparing || 'No finding selected';
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');

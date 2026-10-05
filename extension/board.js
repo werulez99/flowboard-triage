@@ -471,7 +471,9 @@ class TriageBoard {
   async startInvestigation(model, retry = false) {
     if (this.callbacks.reportPreparation) {
       const report = this.callbacks.reportPreparation();
-      report?.ensure({ retry }); // backend-owned; never await the entire report in a view
+      if (!this.investigationCurrent(model)) return;
+      const work = retry ? report?.continueFinding(model.id) : report?.ensure();
+      work?.catch(error => this.vscode.window.showErrorMessage(error.message)); // backend-owned, not view-owned
       return this.reportProgress();
     }
     if (!model.investigationDraft || model.investigationBlocked || !this.investigationCurrent(model)) return;

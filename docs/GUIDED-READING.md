@@ -508,4 +508,94 @@ The next quality matrix remains deliberately unspent: a supported local issue wi
 
 Fresh read-only activation-log inspection still found **0.15.0** as the latest observed actual Cursor activation, from `/home/merulz/.cursor-server/extensions/local.flowboard-triage-0.15.0`. No 0.19.3 activation or actual Cursor playback was observed. Installed files, this benchmark and the runtime-Doctor command test do not establish that the user's window loaded the new build.
 
-User handoff: save editor work; run **Developer: Reload Window**; run **Flowboard Triage: Doctor** and check **Output -> Flowboard Triage** for active **0.19.3** and the matching `local.flowboard-triage-0.19.3` path. Do **not** Resume/Retry the exhausted original report to inspect activation. The guarded private pilot remains paused and has no remaining allowance. Reload does not complete the failed substantive challenge. A checked real tutorial is still pending, not hidden behind an unrelated sibling or an editor reload.
+User handoff: save editor work; run **Developer: Reload Window**; run **Flowboard Triage: Diagnose Setup** (`flowboardTriage.doctor`) and check **Output -> Flowboard Triage** for active **0.19.3** and the matching `local.flowboard-triage-0.19.3` path. Do **not** Resume/Retry the exhausted original report to inspect activation. The guarded private pilot remains paused and has no remaining allowance. Reload does not complete the failed substantive challenge. A checked real tutorial is still pending, not hidden behind an unrelated sibling or an editor reload.
+
+### Local v0.19.4 saved-challenge continuation (2026-10-06)
+
+Baseline: `7f24d27e2f3e84ac2a09cc27af2f2314b6e7ac3a`, branch `improve/checked-reading-path`, policy v9, original native Flowboard 1.2.0. No interpreter or semantic-policy changes were made. The saved real generation was reused; **zero generation requests** were issued. This iteration obtained two substantive live challenge responses, but **did not produce an accepted real walkthrough**.
+
+#### Selected continuation and diagnostics
+
+The compact preparation strip now exposes **Continue this finding**. `board.startInvestigation` validates the current finding/view and calls `ReportPreparation.continueFinding(id)`, not report-wide `ensure({retry:true})`. The selected compatible stage resumes while a globally paused report stays paused. Only an exhausted selected job limit may be renewed within already authorized remaining shared capacity; no shared allowance is added, and sibling limits/states are untouched. A removed finding is rejected without pausing siblings. A pause arriving during an optional authorization hook prevents late reservation. **Resume entire report** remains separately labeled in Details with its existing report-wide semantics.
+
+`runtime-diagnostics.js` now starts its fixed `--version` probe in an owned process group, escalates TERM to KILL and returns bounded cleanup status. The non-daemonizing TERM-ignoring subprocess control verifies that the owned child is gone. The first implementation using `execFile` failed that control: detached ownership was not forwarded; an actual detached `spawn` fixes it. Active version/path and native identity are logged before this optional query. Null/malformed receipt observations no longer suppress diagnostics; actual Claude `observedModels[]` and Codex `observedModel` retain historical request/date attribution. The command's real display name is **Flowboard Triage: Diagnose Setup**, ID `flowboardTriage.doctor`. This is local diagnostics, not a model request or a remedy for remote latency.
+
+#### Pure saved-stage preflight and guarded live requests
+
+`inspect-review-packet.js --saved-challenge` uses `saved-stage-packet.js`: clone the saved investigation, check compatibility/current source without mutating `revalidate`, restore source reading state, and intercept `advance(...persist:false)` before dispatch. It refuses generation. Before/after hashes of the pilot's saved `.flowboard` records matched. The existing private project stayed at its original absolute path. No report, researcher premise, saved generation, source ID/code/span/hash/reading cursor, schema or instruction changed in the C1 reconstruction. Only serialized action UUIDs/timestamps and source-preparation/resume metadata differed. The 33-unit packet was not reduced.
+
+The guarded developer-only `challenge-pilot-guard.js` permits exactly this finding's challenge phases. C1 has 600000 ms; C2 has 240000 ms and requires substantive structured C1 plus concrete normal-engine repair feedback or newly acquired material source. Timeout, prose-only output, a nonresponsive object, generation, siblings and a third invocation are refused. Controlled coordinator/strict-adapter tests cover those limits. Ordinary production defaults remain unchanged.
+
+Both live calls used the ordinary isolated strict production adapter and `--output-schema`, Codex CLI 0.160.0, requested CLI-default model selection, medium reasoning and disabled tools. Actual model identity and USD cost were unavailable. No hidden reasoning was captured. Exact raw answers, receipts, complete requests, independent reference assessment and private source remain outside public commits/packages.
+
+| Phase | C1 saved targeted-patch challenge | C2 targeted repair |
+| --- | ---: | ---: |
+| Configured deadline | 600 s | 240 s |
+| Capacity wait | 16 ms | 10 ms |
+| Process start after adapter entry | 33 ms | 42 ms |
+| First provider event | 3.989 s | 0.374 s |
+| First substantive content | 295.523 s | 182.906 s |
+| Complete structured content | 295.524 s | 182.907 s |
+| Adapter wall time | 295.944 s | 183.396 s |
+| Actual stdin plus schema | 161,279 bytes | 201,368 bytes |
+| Reported input/output tokens | 52,196 / 13,556 | 62,268 / 8,110 |
+| Owned process group ended | confirmed | confirmed |
+
+C1 completed beyond 240 seconds: the earlier bound would have interrupted **this** completion. This does not establish why every historical attempt timed out, guarantee an identical CLI-default model, or demonstrate a speedup. No agent test/browser/index suite ran during the live calls, but unrelated CPU-heavy processes were observed on the four-logical-CPU WSL2 host; machine load was not fully controlled. The standalone preflight indexed in 31.325 s and reconstructed/acquired locally in 20.006 s under that load. These are individual local samples, not p95 or a cold-to-readable measurement.
+
+C1 was ingested and retained as a substantive, still-incomplete review: two claims, 16 causal events and 24 evidence notes. Current checks identified specific unresolved conditions and local evidence gaps. Normal bounded acquisition added eight units for C2 (41 packet units), covering additional read-side context, authorization and state declarations. This is a changed-evidence repair, not an unchanged transport retry. The independent reference was not supplied to either request.
+
+C2 returned structured review but repurposed an existing evidence ID from one claim to another. `checkExplanations` correctly rejected that change with **"A repaired note cannot silently change its report statement. Remove it and add a separately scoped note."** No model answer was edited and no gate was weakened. The accepted C1 checkpoint, rejected exact C2 and its feedback remain durable at `stage=challenge`; the new allowance is **2/2 consumed**, the cumulative private pilot ledger is **5/5**, and all 261 pilot jobs are paused. The original **68/68** workspace ledger, original report and human records have matching before/after hashes. The older generation and receipts were retained.
+
+The remaining boundary is a substantive repair with explicit evidence identity/scope, not silent transport or a proven host false rejection. Material caller/receiver/state premises also remain unresolved; correcting one ID is not proof that the entire finding would pass. Actual integrator reliance and external delivery/state cannot be invented. No third request is authorized or running. Real accepted-to-visible, compatible real-guide reopen and actual Cursor playback are **not reached**. A source-level partial review is not published as a completed tutorial.
+
+#### Native controls and measurement scope
+
+The new `mixed_preparation_browser.py --local-retry` drives the actual compact Continue button in a four-finding fictional report. B resumes its saved challenge while the report stays paused; A is readable; C is blocked and D failed. B's eventual acceptance preserves A's exact function/highlight/camera/scroll, manual text and caret. A stale B/view action cannot acquire navigation/dispatch authority. Controller reopen and a new coordinator reading persisted files retain A/B and the draft with zero further requests. Four functional groups passed, nine fixed-response calls including the intentional failed challenge, zero external calls. This is controlled native rendering, not live-model quality or an OS editor-host restart. An early browser attempt exposed that the first button implementation was hidden in collapsed Details; the compact-strip correction is included.
+
+`native_route_browser.py --production-selection` and the same flag on `paired_native_route.py` now activate the actual `extension.js` command/selection/sourceCatalog/board.open path with minimal editor IO. There is no second test cache. Warm selections still run real freshness, configuration, source membership and saved-artifact checks; the harness asserts that unchanged warm selections do not reindex. Traces correlate actual row click, host selection, snapshot/index boundaries, saved-guide validation, load send/receive and exact readable source/annotation acknowledgement. Automation actionability delay and 25 ms delivery polling are recorded separately. The original controller-harness mode and historical samples above remain available; this harness correction is not a product speedup.
+
+An initial production-shim smoke waited for webview readiness before serving its HTML and failed with a readiness timeout. The shim now serves the actual created panel while the real command awaits the real ready event, matching editor IO ordering. The corrected smoke passed four functional groups; it is not counted as actual Cursor activation. No renderer/cache optimization was shipped on the basis of the old controller-only timings.
+
+The single completed production-route pair used the same current driver and workload against exported baseline `7f24d27` and working 0.19.4, three navigation rounds and twenty reopens each. Four functional groups passed per arm, zero page/host errors, two fixed responses per arm and zero external requests. Source freshness and zero warm reindex assertions passed. Original function cards, five traversed functions, 15 events, actual highlighted relationships, repeated invocations, long-source tail, argument detour/Return and responsive boundaries remained in the workload. Screenshots of the actual rendered fixture were inspected; these are not private protocol screenshots or the user's Cursor window.
+
+| Production-route driver boundary | Baseline median / p95 | Current median / p95 | Samples per arm |
+| --- | ---: | ---: | ---: |
+| All material step transitions | 32.05 / 79.60 ms | 34.85 / 81.50 ms | 84 |
+| Within-function transitions | 18.65 / 37.20 ms | 24.10 / 48.10 ms | 24 |
+| Cross-function transitions | 38.60 / 82.20 ms | 38.25 / 81.50 ms | 60 |
+| Full close/reload/select/readable endpoint | 1335.54 / 3522.61 ms | 1080.95 / 1934.88 ms | 20 |
+| Actual finding click to verified readable content | 712.95 / 1490.10 ms | 655.55 / 1317.30 ms | 20 |
+| Playwright actionability before actual click | 88.30 / 303.10 ms | 80.35 / 108.90 ms | 20 |
+
+Functional status: passed. Step p95 <100 ms: passed; reopen p95 <500 ms: **missed in both arms**, including the actual-click sub-boundary. There was no production renderer/selection optimization, so neither the lower reopen sample nor the slightly higher step sample is claimed as a causal speedup/regression. External CPU contention remained observed. These new production-route numbers must not be compared as a speed factor to the older controller-only pair above.
+
+The raw outliers and correlated traces are retained, not replaced by a convenient rerun. Current maximum total reopen was 3291.09 ms; its actual-click-to-verified interval was 2874.60 ms, with 80.90 ms of preceding actionability. In that sample, host selection to load send took 935 ms, load send to browser receipt 224 ms, and receipt to rendered-send 348 ms. Current-source snapshot checks and saved-guide validation individually took about 1 ms; the measured stalls are not evidence that whole-source indexing or the semantic provider consumed those intervals. Remaining board materialization/browser scheduling and acknowledgement delay are not isolated enough to justify removing correctness checks or rewriting the renderer. Phase percentiles are not added to produce a total percentile.
+
+Reproduce with the pinned native extension and Playwright environment:
+
+```sh
+FLOWBOARD_EXTENSION_PATH=/path/to/anchabadze.solidity-flowboard-1.2.0 \
+  python scripts/mixed_preparation_browser.py --local-retry --output /private/new-mixed-output
+FLOWBOARD_EXTENSION_PATH=/path/to/anchabadze.solidity-flowboard-1.2.0 \
+  python scripts/paired_native_route.py --baseline 7f24d27e2f3e84ac2a09cc27af2f2314b6e7ac3a \
+  --production-selection --samples 3 --reopens 20 --output /private/new-paired-output
+```
+
+The comparison records exact extension/native/workload hashes, raw samples and event timestamps. No new production cache was added to the harness. Removing the flag retains the separately labeled controller-only route.
+
+#### Verification and editor handoff
+
+On this WSL2 host, Node v20.20.1 with `FLOWBOARD_EXTENSION_PATH` pointing to the installed original 1.2.0 dependency:
+
+- Focused coordinator/guard/runtime tests passed 14/14 before the final pause-race test was added. Early focused failures found a fixture-note path mistake, a missing controlled CLI terminal event and the real `execFile` process-group mismatch described above; they were corrected, not reported as successful runs.
+- The final supported `FLOWBOARD_EXTENSION_PATH=... npm test` ran **once**, using `scripts/test.js` and `--test-concurrency=1`: **398 passed, 0 failed, 0 skipped**, 71.511 s. It includes the final pause-during-authorization and removed-finding controls. No parallel-suite pass is claimed.
+- The final local-retry native browser passed four functional groups; the production-route paired run passed four per arm. These fixed-response/browser scopes are distinct from the two live reviews and from actual Cursor activation. Earlier readiness/button failures are recorded above, not silently omitted.
+- `python scripts/quality_harness_test.py`: **3 passed**. No offline Solidity execution controls were rerun for this non-semantic change; existing semantic native-parser regressions remain in the canonical Node suite.
+- Public release allowlist/content inspection covered 188 files. Private report/source, raw answers, receipts, reference assessment and screenshots are outside that tree and the package inputs. No main merge or GitHub release is part of delivery.
+
+`npm run package` produced the coherent **0.19.4** VSIX/source/install archives. The normal remote Cursor installer installed it at `/home/merulz/.cursor-server/extensions/local.flowboard-triage-0.19.4`; all **55 packaged extension files** matched, allowing only installer-added package metadata. Archive-path checks excluded private workspace/response/image material. A fresh read-only log inspection still observed **0.15.0** as the latest actual Cursor activation, at `/home/merulz/.cursor-server/extensions/local.flowboard-triage-0.15.0`. That is the last available observation, not proof of the user's current screen. Neither installed-file comparison nor this simulated editor establishes a new activation.
+
+After installation, save editor work, run **Developer: Reload Window**, then **Flowboard Triage: Diagnose Setup**. In **Output -> Flowboard Triage**, verify active **0.19.4**, its matching extension path and native **1.2.0**. Do not resume the original exhausted report just to inspect activation. The private pilot's two new calls are exhausted and it stays paused; opening source/status is not permission for another review.
+
+The first accepted real native walkthrough remains **NOT VERIFIED / not achieved**. Both new requests delivered substantive JSON, so this is no longer another silent-deadline result. Complete evidence-scope repair and material-premise review are still required. A private next-quality reference matrix was prepared from the unchanged real pilot and existing fictional d6/h2/h3 source/report: supported bookkeeping-state consequence, two-branch refutation, and an unavailable external recorder. No reference was supplied to the model or represented as new model output, and no further case was dispatched. The fictional references do not replace a diverse real-case acceptance matrix. This iteration does not establish generic live-model quality from its controlled native routes.

@@ -449,8 +449,11 @@ function activate(context) {
     let receipts = [];
     try { receipts = Object.values(p.readWorkspaceJson(folder.uri.fsPath, '.flowboard/report-preparation.json', 8 * 1024 * 1024).resources?.receipts || {}); }
     catch (error) { if (error.code !== 'ENOENT') report.reportWarnings.push('Saved provider observations are unavailable.'); }
-    report.provider = await require('./runtime-diagnostics').providerIdentity(provider,
-      config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined, vscode.workspace.isTrusted, receipts);
+    // Print runtime identity first: optional CLI diagnostics must never hide it.
+    log.appendLine(JSON.stringify({ activeTriage: report.activeTriage, dependency: report.dependency, dependencyPath: report.dependencyPath }, null, 2)); log.show();
+    try { report.provider = await require('./runtime-diagnostics').providerIdentity(provider,
+      config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined, vscode.workspace.isTrusted, receipts); }
+    catch { report.provider = { provider, versionStatus: 'Optional provider diagnostics failed; active extension identity is available above.' }; }
     log.appendLine(JSON.stringify(report, null, 2)); log.show();
   }));
 }

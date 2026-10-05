@@ -20,6 +20,7 @@ from playwright.sync_api import sync_playwright
 parser=argparse.ArgumentParser()
 parser.add_argument('--output',required=True)
 parser.add_argument('--product-extension')
+parser.add_argument('--production-selection',action='store_true',help='Activate the actual extension selection/sourceCatalog route with minimal editor IO; no test cache.')
 parser.add_argument('--samples',type=int,default=3,choices=range(1,11))
 parser.add_argument('--reopens',type=int,default=20,choices=range(1,51))
 parser.add_argument('--baseline',action='store_true',help='Record the known stale rollback-watch defect instead of asserting its fix; all other checks still run.')
@@ -29,7 +30,7 @@ output=Path(args.output);output.mkdir(parents=True,exist_ok=True)
 env=os.environ.copy()
 if args.product_extension:env['FLOWBOARD_TRIAGE_EXTENSION_PATH']=str(Path(args.product_extension).resolve())
 started=time.monotonic()
-process=subprocess.Popen(['node',str(repository/'scripts/workflow-host.js'),'--route-fixture','--defer-mapping'],cwd=repository,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+process=subprocess.Popen(['node',str(repository/'scripts/workflow-host.js'),'--route-fixture','--defer-mapping']+(['--production-selection'] if args.production_selection else []),cwd=repository,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
 result={'boundary':'Actual importer, parser, coordinator, gate, storage and native renderer; fixed fictional answers and simulated editor transport. No real model, protocol execution or Cursor activation.',
     'checks':[],'samples':args.samples,'reopenSamples':args.reopens,'machine':{'platform':platform.platform(),'cpuCount':os.cpu_count()},
     'fixtureHashes':{str(file.relative_to(repository)):hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted((repository/'scripts/fixtures/route-preparation').rglob('*')) if file.is_file()}}
@@ -50,8 +51,10 @@ try:
         errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
         page.expose_function('__routeSend',lambda message:request('/message',message))
         page.expose_function('__routePoll',lambda cursor:request('/events?after='+str(cursor)))
-        page.add_init_script('''window.sent=[];window.hostMessages=[];window.acquireVsCodeApi=()=>({postMessage(m){if(window.routeClosing)return;window.sent.push(m);return window.__routeSend(m)}});
-            let cursor=0,polling=false;window.routeTimer=setInterval(async()=>{if(polling||window.routeClosing)return;polling=true;try{const b=await window.__routePoll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);window.dispatchEvent(new MessageEvent('message',{data:m}))}}finally{polling=false}},25);''')
+        page.add_init_script('''window.sent=[];window.hostMessages=[];window.routeEvents=[];
+            document.addEventListener('click',e=>{const row=e.target.closest('[data-finding-id]');if(row)window.routeEvents.push({event:'actual-finding-click',findingId:row.dataset.findingId,at:Date.now(),perf:performance.now()})},true);
+            window.acquireVsCodeApi=()=>({postMessage(m){if(window.routeClosing)return;window.sent.push(m);if(m.type==='triage:rendered')window.routeEvents.push({event:'rendered-send',at:Date.now(),perf:performance.now(),token:m.token});return window.__routeSend(m)}});
+            let cursor=0,polling=false;window.routeTimer=setInterval(async()=>{if(polling||window.routeClosing)return;polling=true;try{const b=await window.__routePoll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);if(m.type==='triage:load')window.routeEvents.push({event:'load-received',at:Date.now(),perf:performance.now(),token:m.token});window.dispatchEvent(new MessageEvent('message',{data:m}))}}finally{polling=false}},25);''')
         def wait_state(predicate):
             until=time.monotonic()+15
             while time.monotonic()<until:
@@ -66,6 +69,7 @@ try:
         result['harnessStartToObservedAcceptedMs']=(time.monotonic()-started)*1000
         result['preparationTimingScope']='Includes process/browser startup and observation delay; fixed responses, not real provider or cold semantic latency.'
         result['controlledRequests']=len(state['providerCalls']);assert result['controlledRequests']==2,state['providerCalls']
+        result['selectionRoute']=state.get('selectionRoute','controller-harness')
         page.locator('[data-finding-id="I-1"]').click();page.wait_for_selector('.guide-annotation')
         state=request('/state');draft=state['investigation']
         assert draft['publication']['ready'] and draft['phase']=='ready'
@@ -170,6 +174,8 @@ try:
         # Persist the unchanged prepared artifact and navigation, then measure
         # ordinary reopen in this same host (not reload-only DOM mutation).
         result['reopenPhases']=[]
+        trace_cursor=len(state.get('productionTrace',[]))
+        warm_index_count=sum(t['event']=='index-start' for t in state.get('productionTrace',[]))
         for run in range(args.reopens):
             wait_state(lambda s:(s.get('snapshots',{}).get('I-1',{}).get('state',{}).get('view',{}).get('walkthrough') or {}).get('index')==order.index('first-write'))
             page.evaluate('()=>{window.routeClosing=true;clearInterval(window.routeTimer)}');page.wait_for_timeout(60)
@@ -177,13 +183,20 @@ try:
             page.reload();reload_done=time.monotonic()
             page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:library")')
             library_done=time.monotonic()
+            click_command=page.evaluate('performance.now()')
             page.locator('[data-finding-id="I-1"]').click();page.wait_for_selector('.guide-annotation')
             annotation_done=time.monotonic()
             verify('first-write');verified=time.monotonic();opening.append((verified-started)*1000)
+            browser_trace=page.evaluate('({events:window.routeEvents,verified:performance.now()})')
+            actual_click=next(e for e in browser_trace['events'] if e['event']=='actual-finding-click')
             result['reopenPhases'].append({'hostMs':(host_done-started)*1000,'reloadMs':(reload_done-host_done)*1000,
                 'libraryMs':(library_done-reload_done)*1000,'selectionMs':(annotation_done-library_done)*1000,
-                'verificationMs':(verified-annotation_done)*1000})
+                'verificationMs':(verified-annotation_done)*1000,'automationBeforeClickMs':actual_click['perf']-click_command,
+                'actualClickToVerifiedMs':browser_trace['verified']-actual_click['perf'],'browserTrace':browser_trace['events']})
             state=request('/state');assert state['investigation']['publication']['digest']==artifact and len(state['providerCalls'])==2
+            traces=state.get('productionTrace',[]);result['reopenPhases'][-1]['hostTrace']=traces[trace_cursor:];trace_cursor=len(traces)
+            if args.production_selection:
+                assert sum(t['event']=='index-start' for t in traces)==warm_index_count,'Warm production selection unexpectedly reindexed unchanged source.'
         result['checks'].append('Compatible saved reopen retains the same accepted artifact and repeated-invocation position with no new controlled requests.')
         # The problematic responsive boundaries, including a short pane, use
         # the same checked route; no replacement mockup or CSS-only viewport.
