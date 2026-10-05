@@ -1,8 +1,10 @@
-# Source investigation runtime — 0.19
+# Source investigation runtime — 0.19.2
 
 This is a bounded defensive review of a selected report, not an autonomous vulnerability scanner. Quotes and source identity are checked mechanically; their interpretations are not automatically proven. Generated work never changes the researcher's manual finding verdict.
 
-Current additions: caller-path and bounded internal-helper effects, exact failed-navigation retry, and pre-generation acquisition of named local premises. Earlier failure reachability, call-time parameter writes, typed catches, exhausted-allowance local recovery and no-guide navigation cancellation remain. Current policy is `checked-explanation-v8`. A sealed v7 artifact can be migrated only after current source, construction metadata and path checks succeed locally; old unchecked guidance does not become Ready by migration. The provider and editor verification record is in [Guided reading](GUIDED-READING.md); the historical quality matrix below is not a current-model certification.
+Current additions: caller-path and bounded internal-helper effects, exact failed-navigation retry, pre-generation acquisition of named local premises, and shared direct/helper failure-payload classification. Earlier failure reachability, call-time parameter writes, typed catches, exhausted-allowance local recovery and no-guide navigation cancellation remain. Current policy is `checked-explanation-v9`. A sealed v7/v8 artifact can be migrated only after current source, construction metadata, path and failure-class checks succeed locally; old unchecked guidance does not become Ready by migration. Version 0.19.2 does not change this policy or invalidate compatible guides for a diagnostic-only transport change. The provider and editor verification record is in [Guided reading](GUIDED-READING.md); the historical quality matrix below is not a current-model certification.
+
+The explicit developer-only full-response-contract diagnostic supplies the identical generation schema as text instead of a provider-side schema flag. It retains all generation data and cannot be selected through ordinary preparation or UI settings. Its raw result and shape validation are diagnostic evidence, not a provider-result DTO, a completed substantive review or a publishable guide. Production generation and challenge remain unchanged unless a separately tested, evidence-supported correction is implemented. A timeout is provider preparation failure, not evidence that the finding is false.
 
 ## Current publication contract
 
