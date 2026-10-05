@@ -169,6 +169,30 @@ test('model source packets remove only redundant call aliases and keep exact occ
   for (const field of ['arguments', 'sourceExpression', 'receiver', 'line']) assert.equal(packet[field], undefined);
   assert.equal(JSON.stringify(unit), before, 'Canonical call/source records still retain every original field.');
 });
+test('imported report constants and named local helpers are read before the first model request', { skip: !native }, async t => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'flowboard-prime-report-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  fs.mkdirSync(path.join(root,'src'));
+  fs.writeFileSync(path.join(root,'src/DelayPolicy.sol'),`pragma solidity ^0.8.20;
+contract DelayPolicy {
+ uint256 public constant WAIT = 12;
+ function ready(uint256 start) external pure returns (bool) {
+  return end(start) > WAIT;
+ }
+ function end(uint256 start) internal pure returns (uint256) { return start + WAIT; }
+}`);
+  fs.writeFileSync(path.join(root,'report.md'),'# Findings\n\n## I-1: DelayPolicy.ready and the WAIT boundary\n\nThe report claims ready always returns false. Inspect end(start) and the WAIT constant.\n');
+  await require('../extension/report').importReport(path.join(root,'report.md'),root,native);
+  const store=require('../extension/store'),report=store.readReport(root),issue=report.issues[0],request=store.readDraft(root,issue.id);
+  const prepared=await analyze(native,root,{mode:'source'}),catalog=new SourceCatalog(root,prepared.runner,prepared.result);
+  const draft=engine.create({findingId:issue.id,request,issue,catalog});let input;
+  await engine.advance({root,findingId:issue.id,request,issue,catalog,draft,provider:'codex',current:()=>true,publish:async()=>{},invoke:async value=>{
+    input=value;throw Object.assign(new Error('Offline first-packet observation; no model process.'),{code:'LOCAL_READING_LIMIT'});
+  }});
+  assert.ok(input.sources.some(unit=>unit.contextKind==='state'&&unit.code.includes('WAIT = 12')));
+  assert.ok(input.sources.some(unit=>unit.name==='DelayPolicy::end'&&unit.complete));
+  assert.ok(draft.actions.some(action=>action.id.startsWith('prime-')&&action.sourceIds.length));
+  assert.equal(draft.publication?.ready || false,false,'Reading the constant is not semantic acceptance.');
+});
 test('researcher correction invalidates only its dependent scope and predictions without validating itself', { skip: !native }, async t => {
   const context = await fixture(t), units = engine.makeContext(context.catalog, context.request).units;
   Object.assign(context.draft, engine.accept(response({ sources: units, phase: 'challenge' }), context.draft, units));

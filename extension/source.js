@@ -480,6 +480,11 @@ class SourceCatalog {
           for (const owner of this.runner.flowboardContracts(clean)) if (owner.name === site.name &&
             /^\s*(?:abstract\s+)?contract\b/.test(clean.slice(owner.start))) creationTargets.push({
               file: this.relative(file), contract: owner.name, line: clean.slice(0, owner.start).split('\n').length,
+              // An implicit constructor with no bases or initializers has no
+              // user-code effects. Rebuilt with call metadata at validation.
+              emptyInitialization: !(this.result.contractBases.get(owner.name) || []).length &&
+                !/\bconstructor\s*\(/.test(clean.slice(owner.start, owner.end)) &&
+                !require('./solidity-text').stateStatements(clean, owner).some(text => /=/.test(text)),
               sourceHash: crypto.createHash('sha256').update(doc.text).digest('hex') });
         }
       }

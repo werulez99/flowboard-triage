@@ -126,6 +126,17 @@ try:
         page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
         page.locator('.guide-annotation').get_by_role('button',name='src/Demo.sol:8 · Open in editor',exact=True).click()
         inspection=page.evaluate('window.sent.findLast(m=>m.type==="triage:inspectEvidence")')
+        if not args.baseline:
+            before_retry=capture()
+            emit({'type':'triage:navigationFailed','issueId':'I-01','token':base['token'],'navigationId':inspection['navigationId'],'reason':'Controlled local navigation failure.'})
+            page.locator('.guide-annotation').get_by_role('button',name='Retry opening code',exact=True).click()
+            retried=page.evaluate('window.sent.findLast(m=>m.type==="triage:inspectEvidence")')
+            assert retried['navigationId']!=inspection['navigationId'] and retried['evidence']==inspection['evidence']
+            assert capture()==before_retry, 'Retry must keep the detour and its original return point.'
+            emit({'type':'triage:evidenceInspected','issueId':'I-01','token':base['token'],'navigationId':retried['navigationId'],
+                  'evidence':base['finding']['triage']['evidence'][0],'excerpt':'Original checked declaration.'})
+            assert 'Could not open' not in page.locator('.guide-annotation').inner_text()
+            result['checks'].append('Retry resends the failed manual evidence operation with a fresh navigation ID; it does not return to the numbered step or spend a provider request.')
         controls.get_by_role('button',name='Return to step',exact=True).click()
         controls.get_by_role('button',name='Next step',exact=True).click()
         before_late=capture()

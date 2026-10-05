@@ -18,7 +18,7 @@
   let preparing = null;
   let checkedLocation = null;
   let guide = null, guideIndex = 0, guideMode = 'closed', guideReturn = null, guideNavigation = null, guidePending = false, guideOpinion = window.innerWidth > 800;
-  let guideDetour = null, guideError = null;
+  let guideDetour = null, guideError = null, guideRequest = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true;
   let reportPreparation = null;
   let guideAvailability = null;
@@ -292,7 +292,7 @@
   }
   function guideRestore() {
     if (!guide || sourceStale) return;
-    const saved = guideReturn; guideReturn = null; guideMode = 'guided'; guideNavigation = null; guidePending = false; guideDetour = null; guideError = null;
+    const saved = guideReturn; guideReturn = null; guideMode = 'guided'; guideNavigation = null; guidePending = false; guideDetour = null; guideError = null; guideRequest = null;
     if (!saved) { guideGo(guideIndex); return; }
     const expected = guide.steps[saved.guideIndex];
     if (!expected?.unit || saved.selectedCard !== guideCard(expected.unit) || JSON.stringify(saved.checkedLocation) !== JSON.stringify(expected.evidence?.source)) {
@@ -313,6 +313,7 @@
     if (cards.has(selectedCard)) cards.get(selectedCard).codeEl.parentElement.scrollTop = saved.codeScroll || 0;
   }
   function guidePause() {
+    guideRequest = null;
     guideNavigation = null; guidePending = false;
     guideIntent = 'explore'; renderPreparation();
     if (!guide || guideMode === 'closed') return;
@@ -322,7 +323,7 @@
   function beginGuideDetour(identity) {
     // Manual source ownership exists before a guide is ready too. A newer
     // gutter/editor selection invalidates every older async inspection.
-    guideNavigation = null; guidePending = false;
+    guideNavigation = null; guidePending = false; guideRequest = null;
     if (!guide || sourceStale || guideMode === 'closed') return false;
     if (!guideReturn) guideReturn = guideCapture();
     guideMode = 'detour'; guideIntent = 'explore'; guideNavigation = null; guidePending = false; guideError = null;
@@ -405,7 +406,7 @@
     const oldCard = selectedCard;
     if (guideMode === 'guided') guidePositions.set(guideIndex, guideCapture());
     guideIndex = Math.max(0, Math.min(guide.steps.length - 1, index)); guideMode = 'guided'; guideIntent = 'guided'; guideReturn = null;
-    guideDetour = null; guideError = null;
+    guideDetour = null; guideError = null; guideRequest = null;
     const step = guide.steps[guideIndex];
     activeInvestigationClaim = step.claimId || activeInvestigationClaim; activeClaim = null; claimFocus = false; spotlight = false;
     visibleInvestigation = guide.draft;
@@ -545,7 +546,7 @@
     const note = element('section', 'guide-annotation'); note.dataset.stepId = step.id;
     note.append(element('h2', '', step.title));
     if (guideError) note.append(element('p', 'triage-warning', `Could not open this step's code. ${guideError}`),
-      button('Retry opening code', () => guideStart()), button('Explore freely', guidePause));
+      button('Retry opening code', retryGuideNavigation), button('Explore freely', guidePause));
     if (guideMode === 'guided' && step.role && !guide.steps.slice(0, guideIndex).some(prior => prior.unit?.id === step.unit?.id)) note.append(element('p', 'guide-function-role', step.role));
     if (guidePending) { const loading = element('p', 'triage-muted', 'Opening the checked code…'); loading.setAttribute('role', 'status'); note.append(loading); }
     let statement;
@@ -750,12 +751,31 @@
     for (const claim of claims) { const item = button(claim.text || 'Untitled statement', () => focusClaim(claim.id), 'triage-claim-select'); item.append(element('small', '', claim.state)); group.append(item); }
     parent.append(group);
   }
+  function retryGuideNavigation() {
+    const request = guideRequest;
+    if (!request || sourceStale || request.issueId !== active || request.token !== token || request.guideKey !== (guide?.key || null)) {
+      guidePending = false; guideError = 'This source target is no longer current. Select the evidence again or return to the step.'; renderGuide(); return;
+    }
+    const payload = { ...request.payload };
+    if (request.type === 'triage:inspectEvidence') {
+      const current = profile().evidence.find(item => item.id === payload.evidence.id);
+      if (!current || current.needsReview || JSON.stringify(current.source) !== JSON.stringify(payload.evidence.source) || current.quote !== payload.evidence.quote) {
+        guidePending = false; guideError = 'This note was removed or its source changed. Select its current source again.'; renderGuide(); return;
+      }
+      payload.evidence = current;
+    }
+    guideNavigation = crypto.randomUUID(); guidePending = true; guideError = null;
+    send(request.type, { ...payload, navigationId: guideNavigation }); renderGuide();
+  }
   function send(type, payload = {}) {
     if (type === 'triage:investigationFocus' && guide && guideMode !== 'closed' && !payload.navigationId) {
       beginGuideDetour(payload.evidenceId); guideNavigation = crypto.randomUUID();
       payload = { ...payload, navigationId: guideNavigation }; renderGuide();
     }
     if (type === 'triage:investigationFocus' && payload.navigationId && guide) payload = { ...payload, investigationRevision: guide.draft.revision };
+    if (['triage:investigationFocus', 'triage:inspectEvidence'].includes(type) && payload.navigationId) {
+      guideRequest = { type, payload: structuredClone(payload), issueId: active, token, guideKey: guide?.key || null };
+    }
     vscode.postMessage({ type, issueId: active, token, ...payload });
   }
   function show(tab) {
@@ -1834,7 +1854,7 @@
       const card = cards.get(message.cardId); if (!card) return;
       if (message.guideAvailability) guideAvailability = message.guideAvailability;
       if (message.navigationId && guide) {
-        guidePending = false;
+        guidePending = false; guideRequest = null; guideError = null;
         if (guideMode === 'detour' && !guideDetour?.startsWith('input:')) guideDetour = message.evidenceId;
         const sameFunction = selectedCard === card.id;
         selectedCard = card.id;
@@ -1876,7 +1896,7 @@
       editProfile(value => { if (!value.evidence.some(item => item.id === message.evidence.id)) value.evidence.push(message.evidence); }, true);
     }
     else if (message?.type === 'triage:evidenceInspected' && message.issueId === active && message.token === token && !sourceStale && message.navigationId && message.navigationId === guideNavigation && profile().evidence.some(item => item.id === message.evidence.id)) {
-      guideNavigation = null;
+      guideNavigation = null; guidePending = false; guideRequest = null; guideError = null;
       const current = profile().evidence.find(item => item.id === message.evidence.id);
       if (current.needsReview || JSON.stringify(current.source) !== JSON.stringify(message.evidence.source) || current.quote !== message.evidence.quote) return;
       evidencePreview = { ...message, evidence:current };

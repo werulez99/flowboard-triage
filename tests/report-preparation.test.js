@@ -820,3 +820,15 @@ test('a compatible privately checked v4 artifact without execution handoffs migr
   assert.equal(current.migration.from, 'checked-explanation-v4'); assert.equal(current.publication.policy, policy.POLICY);
   assert.ok(restarted.published(current)); assert.equal(f.calls.length, 2, 'Local policy migration makes no provider request.');
 });
+test('a sealed v7 artifact is rechecked under current path policy without buying another review', { skip: !native }, async t => {
+  const f = await fixture(t, 1); await f.runner.ensure();
+  const saved = engine.read(f.root, 'I-1'), original = structuredClone(saved.causal);
+  saved.snapshot.policy = 'checked-explanation-v7'; saved.publication.policy = 'checked-explanation-v7';
+  saved.publication.digest = policy.digest(saved); saved.revision++; engine.write(f.root, saved);
+  await f.runner.control('pause'); f.runner.dispose();
+  const restarted = new ReportPreparation(f.root, { ...f.options, invoke:async()=>assert.fail('Migration cannot dispatch a paid request.') });
+  t.after(()=>restarted.dispose()); await restarted.ensure();
+  const current = engine.read(f.root, 'I-1');
+  assert.equal(current.migration.from,'checked-explanation-v7'); assert.equal(current.publication.policy,policy.POLICY);
+  assert.deepEqual(current.causal,original); assert.ok(restarted.published(current)); assert.equal(f.calls.length,2);
+});

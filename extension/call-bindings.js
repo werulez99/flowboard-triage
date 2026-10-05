@@ -275,6 +275,10 @@ function callerConstraints(event, unit) {
   for (const input of invocationInputs(event, body)) if (parameterNames(body.header).includes(input.name) && /^(true|false)$/.test(expression(input.expression))) {
     values.set(input.name, expression(input.expression));
   }
+  for (const condition of event.conditions || []) {
+    const range = /^(\w+) is an integer from (\d+) through (\d+)$/.exec(condition);
+    if (range && parameterNames(body.header).includes(range[1]) && BigInt(range[2]) <= BigInt(range[3])) values.set(range[1], { range: [range[2], range[3]] });
+  }
   return values;
 }
 function callTimeConstraints(event, unit, evidence) {
@@ -380,7 +384,55 @@ function validateInvocations({ events, links, units, evidence, fail }) {
 function booleanValue(value, values) {
   return execution.boolean(value, values);
 }
-function failedClass(unit, event, evidence, site, callerValues = new Map(), unresolved = () => {}) {
+// Source effects are evaluated independently of which statements the tutorial
+// chooses to display. Only exact, unique non-virtual internal helpers in the
+// bounded statement subset can be summarized. Unknown effects never fall through.
+function sourcePath(unit, offset, values, units, options = {}, stack = []) {
+  if (stack.includes(unit.id) || stack.length >= 12) return { reachable: null, reason: 'A recursive or over-budget helper path needs a separate checked effect.' };
+  const body = functionParts(unit.code, unit.name.split('::').at(-1));
+  if (!body) return { reachable: null, reason: 'The complete function body is unavailable.' };
+  const suffix = body.header.slice(body.parametersEnd - body.start + 1)
+    .replace(/\breturns\s*\([^)]*\)|\boverride\s*(?:\([^)]*\))?/g, '')
+    .replace(/\b(?:public|external|internal|private|pure|view|payable|virtual)\b/g, '').trim();
+  if (suffix) return { reachable: null, reason: `The function modifier path (${suffix}) needs a checked effect before entering this body.` };
+  if (offset >= body.start && offset < body.bodyStart) return { reachable: true, values: new Map(values), guards: [] };
+  return execution.pathTo(unit, offset, values, { ...options, operation(node, current) {
+    const provided = options.operation?.(node, current); if (provided) return provided;
+    const sites = unitSites(unit).filter(site => site.span.start >= node.start && site.span.end <= node.end);
+    const creation = sites.filter(site => site.isNew);
+    if (creation.length === 1 && !creation[0].options.length && !creation[0].argumentSpans.length) {
+      const exact = exactSite(unit, creation[0].id), targets = exact?.creationTargets || [];
+      const text = unit.code.slice(node.start, node.end), rhs = text.slice(text.indexOf('=') + 1).replace(/;\s*$/, '').trim();
+      // Only genuine type/address wrappers around this construction, not a
+      // function choose(new X()). Known type names come from native metadata.
+      const types = (unit.relatedCalls || []).flatMap(site => site.receiverTypes || []);
+      if (targets.length === 1 && targets[0].emptyInitialization && newType(rhs, types) === creation[0].name)
+        return { outcome: 'continue' };
+    }
+    // Nested argument evaluation is a separate effect, not the outer call's
+    // argument text. Keep it unresolved until every invocation is accounted.
+    if (sites.length !== 1 || node.kind === 'try') return { outcome: 'unknown', reason: 'A preceding compound or try invocation needs a checked effect and branch.' };
+    const site = exactSite(unit, sites[0].id), targets = site?.targets || [];
+    if (!site || site.receiverExpression || site.isNew || site.relationship !== 'call' || targets.length !== 1)
+      return { outcome: 'unknown', reason: `The preceding ${sites[0].name} invocation has no unique supported local effect.` };
+    const target = targets[0], matches = [...units.values()].filter(candidate => candidate.complete && !candidate.contextKind &&
+      candidate.source.file === target.file && candidate.source.line === target.line && owner(candidate) === target.contract &&
+      require('./report-content').functionSignature(candidate.code, candidate.name.split('::').at(-1)) === target.signature);
+    if (matches.length !== 1) return { outcome: 'unknown', reason: `Read the complete local ${site.name} implementation before continuing past this invocation.` };
+    const helper = matches[0], parsed = functionParts(helper.code, helper.name.split('::').at(-1));
+    if (!parsed || !/\b(internal|private)\b/.test(parsed.header) || /\bvirtual\b/.test(parsed.header))
+      return { outcome: 'unknown', reason: `The preceding ${helper.name} needs a checked dispatch effect; it is not a non-virtual internal helper.` };
+    const bound = new Map(parameterNames(parsed.header).map(name => {
+      const argument = boundArgument(site, name, parsed.header);
+      return [name, current.get(argument)?.range ? current.get(argument) : booleanValue(argument, current)];
+    }));
+    const result = sourcePath(helper, parsed.bodyStart + parsed.body.length, bound, units, { complete: true, localWritesOnly: true, noOverflow: options.noOverflow }, [...stack, unit.id]);
+    if (result.outcome === 'return' || result.reachable === true) return { outcome: 'continue' };
+    return { outcome: result.outcome || 'unknown', failure: result.failure,
+      reason: `${helper.name}: ${result.reason || 'The helper effect remains unresolved.'}` };
+  } });
+}
+function failedClass(unit, event, evidence, site, callerValues = new Map(), unresolved = () => {}, units = new Map()) {
   const anchor = evidence.get(event.evidenceId); if (!unit || anchor?.sourceId !== unit.id) return null;
   const code = anchor.quote, clean = lexicalCode(code), body = functionParts(unit.code, unit.name.split('::').at(-1));
   const values = new Map();
@@ -391,7 +443,7 @@ function failedClass(unit, event, evidence, site, callerValues = new Map(), unre
   const failures = [];
   for (const match of clean.matchAll(/\b(require|assert|revert)(?:\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?))?\s*\(/g)) {
     const absolute = lineOffset(unit, anchor.source.line) + match.index;
-    const path = execution.pathTo(unit, absolute, values);
+    const path = sourcePath(unit, absolute, values, units);
     if (path.reachable !== true) { unresolved(path.reason); continue; }
     const open = clean.indexOf('(', match.index), close = matching(clean, open); if (close < 0) continue;
     const args = parts(code.slice(open + 1, close));
@@ -409,6 +461,17 @@ function failedClass(unit, event, evidence, site, callerValues = new Map(), unre
       failures.push(payload === undefined ? 'empty' : /^(?:unicode)?["']/.test(payload.trim()) || stringType ? 'Error' : 'unknown');
     }
   }
+  if (!failures.length) {
+    const calls = unitSites(unit).filter(call => call.span.line >= anchor.source.line && call.span.endLine <= anchor.source.endLine);
+    if (calls.length === 1 && !calls[0].receiverExpression && !calls[0].isNew) {
+      const reached = sourcePath(unit, calls[0].span.start, values, units);
+      if (reached.reachable === true) {
+        const effect = sourcePath(unit, Infinity, values, units, { complete: true, through: calls[0].span.end });
+        if (effect.outcome === 'failure' && effect.failure) failures.push(effect.failure);
+        else unresolved(effect.reason || 'The highlighted helper has no established failure.');
+      } else unresolved(reached.reason);
+    }
+  }
   const known = [...new Set(failures)]; return known.length === 1 && known[0] !== 'unknown' ? known[0] : null;
 }
 function catchContinuation(source, clause) {
@@ -420,7 +483,7 @@ function catchContinuation(source, clause) {
   if (clean.split(';').filter(value => value.trim()).every(value => /^\s*[A-Za-z_$][\w$]*\s*=\s*(?:true|false|0|0x0)\s*$/.test(value))) return 'continues';
   return 'unknown';
 }
-function scenarioFailure({ site, source, destination, to, events, evidence, link, fail }) {
+function scenarioFailure({ site, source, destination, to, events, evidence, link, fail, units }) {
   if (!site.tryContext) return site.failure;
   const context = site.tryContext;
   if (!source || !destination || !to) { fail('The failed invocation has no matching caller and callee source frame.'); return 'unknown'; }
@@ -429,7 +492,7 @@ function scenarioFailure({ site, source, destination, to, events, evidence, link
   if (!failed.length) return 'not-applicable'; // A successful route does not establish how an unchosen failure is handled.
   const callerValues = callTimeConstraints(events.find(event => event.id === link.from), source, evidence);
   const unresolved = [];
-  const classes = [...new Set(failed.map(event => failedClass(destination, event, evidence, site, callerValues, reason => unresolved.push(reason))).filter(Boolean))];
+  const classes = [...new Set(failed.map(event => failedClass(destination, event, evidence, site, callerValues, reason => unresolved.push(reason), units)).filter(Boolean))];
   if (classes.length !== 1) { fail(`${to.title}: the callee failure class is not established. ${unresolved[0] || 'Caller argument evaluation and return decoding failures are not caught callee errors.'}`, 'material-evidence'); return 'unknown'; }
   const error = classes[0], clause = context.clauses.find(item => item.kind === error) || context.clauses.find(item => item.kind === 'any');
   if (!clause) return 'propagates';
@@ -450,12 +513,24 @@ function validateTransition({ draft, link, from, to, source, destination, units,
     if (!site || !link.evidence.some(id => covers(evidence.get(id), destination, site.span))) fail(`${from.title}: the return location is not linked to its exact original call.`);
     if (JSON.stringify(link.dispatch) !== JSON.stringify(incoming[0].dispatch)) fail(`${from.title}: return dispatch differs from the invocation that entered this function.`);
     const entering = events.find(event => event.id === incoming[0].to);
-    const handling = site && scenarioFailure({ site, source: destination, destination: source, to: entering, events, evidence, link: incoming[0], fail });
+    const handling = site && scenarioFailure({ site, source: destination, destination: source, to: entering, events, evidence, link: incoming[0], fail, units });
     if (from.effect === 'rolled-back' && handling === 'propagates') fail(`${from.title}: an uncaught failed call propagates reversion; it cannot return normally to the caller.`);
     if (from.effect === 'rolled-back' && handling === 'caught' && site.tryContext && evidence.get(to.evidenceId)?.source.line <= site.tryContext.span.endLine) fail(`${to.title}: a handled failure continues after its matching catch, not in the try success body.`);
+    if (site?.tryContext && handling === 'caught') {
+      const caller = events.find(event => event.id === incoming[0].from), anchor = evidence.get(to.evidenceId);
+      const values = callTimeConstraints(caller, destination, evidence);
+      const error = failedClass(source, from, evidence, site, values, () => {}, units);
+      const clause = site.tryContext.clauses.find(item => item.kind === error) || site.tryContext.clauses.find(item => item.kind === 'any');
+      // catchContinuation accepts only straight literal writes here. Apply
+      // them before evaluating a later branch/return, not the entry premise.
+      for (const match of (clause ? lexicalCode(destination.code.slice(clause.body.start, clause.body.end)) : '').matchAll(/\b(\w+)\s*=\s*(true|false|0|0x0)\s*;/g)) values.set(match[1], match[2]);
+      const start = lineOffset(destination, anchor?.source.line);
+      const path = sourcePath(destination, start + destination.code.slice(start).search(/\S/), values, units, { after: site.tryContext.span.end });
+      if (path.reachable !== true) fail(`${to.title}: cannot establish the caller continuation after the handled failure. ${path.reason}`, 'material-evidence');
+    }
     if (from.effect === 'rolled-back' && handling === 'caught-return') {
       const caller = events.find(event => event.id === incoming[0].from);
-      const error = failedClass(source, from, evidence, site, callTimeConstraints(caller, destination, evidence));
+      const error = failedClass(source, from, evidence, site, callTimeConstraints(caller, destination, evidence), () => {}, units);
       const clause = site.tryContext.clauses.find(item => item.kind === error) || site.tryContext.clauses.find(item => item.kind === 'any');
       const anchor = evidence.get(to.evidenceId), statement = clause && destination.code.slice(clause.body.start, clause.body.end).trim();
       if (!clause || to.effect !== 'return' || anchor?.sourceId !== destination.id ||
@@ -467,6 +542,9 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   const site = exactSite(source, link.callSiteId), destinationParts = destination && functionParts(destination.code, destination.name.split('::').at(-1));
   if (!site || from.callSiteId !== link.callSiteId) { fail(`${from.title}: anchor this handoff and event to one exact current call-site ID. Name or line matches cannot identify an invocation.`); return; }
   const anchor = evidence.get(from.evidenceId);
+  const path = sourcePath(source, site.span.start, callerConstraints(from, source), units,
+    { noOverflow: (from.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
+  if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`, 'material-evidence');
   if (anchor?.sourceId !== source.id || anchor.source.line !== site.span.line || anchor.source.endLine !== site.span.endLine) fail(`${from.title}: its checked code must cover exactly this call's lines, not another call or a whole function.`);
   if (from.invocationId === to.invocationId) fail(`${from.title}: entering another function needs a distinct invocation, even when internal msg.sender is unchanged.`);
   const dispatch = link.dispatch;
@@ -476,7 +554,14 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   if (dispatch.evidence.some(id => !link.evidence.includes(id))) fail(`${from.title}: fresh handoff checks must include every receiver/implementation premise, not only the call quotation.`);
   const expectedReceiver = site.receiverExpression || (site.isNew ? `new ${site.name}` : 'internal');
   if (dispatch.receiver !== expectedReceiver) fail(`${from.title}: dispatch receiver does not match this exact call expression.`);
-  const handling = scenarioFailure({ site, source, destination, to, events, evidence, link, fail });
+  const handling = scenarioFailure({ site, source, destination, to, events, evidence, link, fail, units });
+  if (destinationParts) {
+    const actual = callTimeConstraints(from, source, evidence);
+    const entryValues = new Map(parameterNames(destinationParts.header).map(name => [name, booleanValue(boundArgument(site, name, destinationParts.header), actual)]));
+    const anchor = evidence.get(to.evidenceId), start = lineOffset(destination, anchor?.source.line);
+    const first = sourcePath(destination, start + destination.code.slice(start).search(/\S/), entryValues, units);
+    if (first.reachable !== true) fail(`${to.title}: cannot establish the path to the displayed callee operation. ${first.reason}`, 'material-evidence');
+  }
   if (dispatch.failure !== handling) fail(`${from.title}: the call's failure handling is ${handling}, not ${dispatch.failure}.`);
   const destinationSignature = destinationParts && require('./report-content').functionSignature(destinationParts.header, destination.name.split('::').at(-1));
   const candidates = site.targets || [], matchesCandidate = candidates.some(target => target.file === destination?.source.file && target.line === destination?.source.line &&

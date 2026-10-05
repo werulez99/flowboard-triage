@@ -22,11 +22,23 @@ contract BooleanGuard {
     function assertAccepted(bool accepted) external pure { assert(accepted); }
     function unchanged(bool accepted) external pure returns (bool) { return accepted; }
     function reassigned(bool accepted) external pure returns (bool) { accepted = false; return accepted; }
+    function helperFirst(bool accepted) external pure { reject(); require(accepted, "rejected"); }
+    function reject() internal pure { assert(false); }
 }
 
 contract CatchControl {
     BooleanGuard immutable guard = new BooleanGuard();
     bool public completed;
+    function earlyReturn(bool flag) external returns (bool) {
+        if (!flag) return false;
+        try guard.requireAccepted(false) {} catch Error(string memory) {}
+        completed = true;
+        return true;
+    }
+    function helperFirst() external {
+        try guard.helperFirst(false) {} catch Error(string memory) {}
+        completed = true;
+    }
     function changedEntry(bool flag) external returns (bool) {
         flag = true;
         try guard.requireAccepted(flag) {} catch Error(string memory) { return false; }
@@ -64,6 +76,17 @@ contract CatchControl {
 }
 
 contract CallSemanticsTest {
+    function testEarlierReturnSkipsCallAndWrite() external {
+        CatchControl control = new CatchControl();
+        require(!control.earlyReturn(false) && !control.completed(), "false returns before the call");
+        require(control.earlyReturn(true) && control.completed(), "true reaches the handled Error and write");
+    }
+    function testEarlierHelperPanicIsNotALaterError() external {
+        CatchControl control = new CatchControl();
+        try control.helperFirst() { revert("must reject"); }
+        catch Panic(uint256 code) { require(code == 1, "assertion Panic propagates"); }
+        require(!control.completed(), "the nonmatching Error catch cannot commit");
+    }
     function testFalseCustomBranchDoesNotRevert() external {
         BooleanGuard guard = new BooleanGuard();
         guard.conditionalCustom(false);

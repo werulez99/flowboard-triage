@@ -26,5 +26,5 @@ function normalizeChecks(model) {
 function assertLength(value, maximum, field) {
   if (!Array.isArray(value) || value.length > maximum) throw new Error(`${field} exceeds the supported review capacity (${maximum}); no items were discarded.`);
 }
-return { POLICY: 'checked-explanation-v7', kinds, limits, target, targets, normalizeChecks, assertLength };
+return { POLICY: 'checked-explanation-v8', kinds, limits, target, targets, normalizeChecks, assertLength };
 });

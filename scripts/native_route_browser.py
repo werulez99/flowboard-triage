@@ -86,14 +86,18 @@ try:
                 if(!note||!card)return {error:'No active native card/annotation'};
                 const row=card.querySelector(`[data-source-line="${e.line}"]`),end=card.querySelector(`[data-source-line="${e.end}"]`),header=card.querySelector('.card-header');
                 const board=document.getElementById('flowboard').getBoundingClientRect(),r=row?.getBoundingClientRect(),h=header.getBoundingClientRect();
+                const explanation=note.querySelector('.guide-explanation'),n=explanation?.getBoundingClientRect(),dock=note.parentElement.getBoundingClientRect();
                 const exact=[...document.querySelectorAll('.triage-claim-line')].map(n=>Number(n.dataset.sourceLine));
-                return {event:note.dataset.stepId,header:header.innerText,text:card.querySelector('.card-code').innerText,fullTail:!!end,
+                return {event:note.dataset.stepId,annotation:explanation?.innerText,header:header.innerText,text:card.querySelector('.card-code').innerText,fullTail:!!end,
+                    annotationVisible:!!n&&n.width>0&&n.height>0&&n.top>=Math.max(0,dock.top)-1&&n.bottom<=Math.min(innerHeight,dock.bottom)+1&&n.left>=0&&n.right<=innerWidth,
                     lines:exact,visible:!!r&&r.top>=board.top-1&&r.bottom<=board.bottom+1&&r.right>board.left&&r.left<board.right,
                     headerVisible:h.top>=board.top-1&&h.bottom<=board.bottom+1,
                     occurrence:CSS.highlights.has('flowboard-call-occurrence')?[...CSS.highlights.get('flowboard-call-occurrence')].map(r=>r.toString()):[],
                     camera:{scale,panX,panY},codeScroll:card.querySelector('.card-code').parentElement.scrollTop,domElements:document.querySelectorAll('*').length};
             }''',expected)
             assert observed.get('event')==identity,observed
+            assert ' '.join(observed.get('annotation','').split())==' '.join(expected['what'].split()),observed
+            assert observed['annotationVisible'],observed
             assert observed['lines']==list(range(expected['line'],expected['endLine']+1)),observed
             assert expected['name'] in observed['header'] and expected['file'] in observed['header'],observed
             assert observed['fullTail'] and observed['visible'] and observed['headerVisible'],{'expected':expected,'observed':observed}
@@ -112,12 +116,14 @@ try:
                     const a=e.anchor,note=document.querySelector('.guide-annotation'),card=document.querySelector('.guide-active-card');
                     const header=card?.querySelector('.card-header'),line=card?.querySelector(`[data-source-line="${a.line}"]`);
                     const board=document.querySelector('#flowboard').getBoundingClientRect(),h=header?.getBoundingClientRect(),r=line?.getBoundingClientRect();
+                    const n=note?.querySelector('.guide-explanation')?.getBoundingClientRect(),dock=note?.parentElement.getBoundingClientRect();
+                    const noteOK=n&&n.width>0&&n.height>0&&n.top>=Math.max(0,dock.top)-1&&n.bottom<=Math.min(innerHeight,dock.bottom)+1&&n.left>=0&&n.right<=innerWidth;
                     const lines=[...document.querySelectorAll('.triage-claim-line')].map(n=>Number(n.dataset.sourceLine));
                     const exact=Array.from({length:a.endLine-a.line+1},(_,i)=>a.line+i);
                     const occurrence=CSS.highlights.has('flowboard-call-occurrence')?[...CSS.highlights.get('flowboard-call-occurrence')].map(r=>r.toString()):[];
                     const callOK=!a.callSite || JSON.stringify(occurrence)===JSON.stringify([a.code.slice(a.callSite.span.start,a.callSite.span.end)]);
                     const normalize=text=>text.replace(/\s+/g,' ').trim();
-                    if(note?.dataset.stepId===a.event && normalize(note.innerText).includes(normalize(a.what)) && header?.innerText.includes(a.name) && header.innerText.includes(a.file) &&
+                    if(noteOK && note?.dataset.stepId===a.event && normalize(note.innerText).includes(normalize(a.what)) && header?.innerText.includes(a.name) && header.innerText.includes(a.file) &&
                         JSON.stringify(lines)===JSON.stringify(exact) && card.querySelector(`[data-source-line="${a.end}"]`) && callOK &&
                         h.top>=board.top-1 && h.bottom<=board.bottom+1 && r?.top>=board.top-1 && r.bottom<=board.bottom+1 && r.right>board.left && r.left<board.right)
                         return performance.now()-start;

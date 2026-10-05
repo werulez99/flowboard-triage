@@ -66,12 +66,13 @@ function revalidate(draft, catalog, request, issue) {
 }
 function migrateChecked(draft, catalog, request, issue) {
   // A policy version is not a new semantic review. Only old complete, sealed
-  // artifacts with no execution handoff can be revalidated locally. Legacy
-  // call/return interpretations lack the new occurrence/dispatch review and
-  // must not acquire that attestation merely by changing a version string.
-  if (!['checked-explanation-v4', 'checked-explanation-v5'].includes(draft?.snapshot?.policy) || guidePolicy.POLICY === draft.snapshot.policy ||
+  // v4/v5 artifacts with no execution handoff can be revalidated locally.
+  // v7 already has occurrence/dispatch review, but still must pass the new
+  // source-path checks. No version-only promotion is permitted.
+  const currentEvidence = draft?.snapshot?.policy === 'checked-explanation-v7';
+  if (!['checked-explanation-v4', 'checked-explanation-v5', 'checked-explanation-v7'].includes(draft?.snapshot?.policy) || guidePolicy.POLICY === draft.snapshot.policy ||
     draft.phase !== 'ready' || draft.publication?.policy !== draft.snapshot.policy || draft.publication.digest !== guidePolicy.digest(draft) ||
-    !draft.causal || draft.causal.relationships.some(link => ['call', 'callback', 'return'].includes(link.kind))) return false;
+    !draft.causal || !currentEvidence && draft.causal.relationships.some(link => ['call', 'callback', 'return'].includes(link.kind))) return false;
   const next = snapshot(catalog, request, issue), inputs = semanticInput.input(request, issue);
   if (!draft.semanticInput && inputs.premises.length) return false; // Earlier responses did not review these saved inputs.
   const legacyReportHash = hash([request.finding.title, request.finding.summary, request.finding.expectedBehavior, request.finding.preconditions, issue?.reportText || '']);
@@ -80,6 +81,15 @@ function migrateChecked(draft, catalog, request, issue) {
   if (!sameSnapshot(prior, next) && !(prior.project === next.project && prior.reportHash === next.reportHash && workspaceSnapshot.compatible(catalog, draft))) return false;
   validateCurrent(catalog, draft);
   const candidate = structuredClone(draft); candidate.snapshot = next; candidate.semanticInput = inputs; candidate.inputReviews ||= [];
+  if (currentEvidence) for (const unit of candidate.sources) {
+    const canonical = catalog.callLinks(catalog.resolveUnit(unit));
+    for (const call of unit.relatedCalls || []) {
+      const actual = canonical.find(item => item.id === call.id);
+      const priorTargets = values => (values || []).map(({ emptyInitialization, ...rest }) => rest);
+      if (!actual || JSON.stringify(priorTargets(actual.creationTargets)) !== JSON.stringify(priorTargets(call.creationTargets))) return false;
+      call.creationTargets = structuredClone(actual.creationTargets || []);
+    }
+  }
   for (const event of candidate.causal.events) event.callSiteId ||= '';
   for (const link of candidate.causal.relationships) {
     link.callSiteId ||= '';
@@ -90,7 +100,7 @@ function migrateChecked(draft, catalog, request, issue) {
   candidate.dependencies = workspaceSnapshot.dependencies(catalog, candidate);
   candidate.publication.digest = guidePolicy.digest(candidate);
   candidate.migration = { from: draft.snapshot.policy, to: next.policy, at: now(),
-    reason: 'Revalidated unchanged source and the complete current gate. No call, callback or return interpretation was migrated.' };
+    reason: currentEvidence ? 'Revalidated unchanged source, native creation facts and every current path/effect check locally; no new model request.' : 'Revalidated unchanged source and the complete current gate. No call, callback or return interpretation was migrated.' };
   candidate.revision++; write(catalog.root, candidate); Object.assign(draft, candidate); return true;
 }
 function write(root, draft) {
@@ -174,6 +184,12 @@ function validateCurrent(catalog, draft) {
     // attestations that editable cache metadata can supply. Rebuild them from
     // the current parser/source identity before reusing an immutable binding.
     if (unit.initialization && JSON.stringify(unit.initialization) !== JSON.stringify(catalog.initialization(catalog.resolveUnit(unit)))) throw new Error('Saved receiver initialization metadata does not match the current constructor scope. Re-read that local code before reusing the guide.');
+    if ((unit.relatedCalls || []).some(call => call.creationTargets?.some(target => target.emptyInitialization !== undefined))) {
+      const current = catalog.callLinks(catalog.resolveUnit(unit));
+      for (const call of unit.relatedCalls) if (call.creationTargets?.some(target => target.emptyInitialization !== undefined) &&
+        JSON.stringify(call.creationTargets) !== JSON.stringify(current.find(item => item.id === call.id)?.creationTargets))
+        throw new Error('Saved construction effects do not match the current source. Re-read that initialization before reusing the guide.');
+    }
   }
 }
 function text(value, max = 2000) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
@@ -318,6 +334,27 @@ function makeContext(catalog, request, issue) {
     };
     read(fn.contract, fn.file);
     return declarations.filter(item => wanted ? item.symbol === wanted : new RegExp(`\\b${escaped(item.symbol)}\\b`).test(code));
+  };
+  const prime = () => {
+    // Before buying a first draft, resolve the small deterministic premises
+    // already named by this report. Do not recursively expand unrelated
+    // libraries, or use proposed mitigation as current-code evidence.
+    const before = new Set(units.map(unit => unit.id)), initial = [...functions.values()];
+    let allowance = 8;
+    const acquire = (fn, reason) => {
+      if (functions.has(`s-${hash(catalog.key(fn)).slice(0, 12)}`)) return;
+      if (allowance <= 0 || !add(fn, reason)) { gaps.push(`Initial local context remains unread: ${fn.contract}::${fn.name}. Follow up before judging the statement.`); return; }
+      allowance--;
+    };
+    for (const fn of initial) {
+      if (fn.kind === 'context') continue;
+      for (const declaration of declarationsFor(fn)) if (/\bconstant\b/.test(lexicalCode(catalog.code(declaration))) || new RegExp('[`.:]\\s*' + escaped(declaration.symbol) + '\\b').test(queryText))
+        acquire(declaration, `Read the exact declaration used by ${fn.contract}::${fn.name} before its first explanation; the value is source context, not a verdict.`);
+      for (const site of catalog.callLinks(fn)) if (!site.receiverExpression && site.candidates.length === 1 && site.candidates[0].contract === fn.contract && new RegExp(`\\b${escaped(site.candidates[0].name)}\\s*\\(`).test(queryText))
+        acquire(site.candidates[0], `The report names this local helper used by ${fn.contract}::${fn.name}. Read its complete current implementation before the first explanation.`);
+    }
+    return { id:`prime-${crypto.randomUUID()}`, kind:'source-preparation', outcome:units.length > before.size ? 'source-returned' : 'context-already-available', performedAt:now(),
+      sourceIds:units.filter(unit => !before.has(unit.id)).map(unit => unit.id), result:'Read report-named local declarations, used constants and unambiguous named internal helpers before generation. Other material dependencies still require follow-up.' };
   };
   const complete = draft => {
     const before = new Set(units.map(unit => unit.id)), visited = new Set();
@@ -481,7 +518,7 @@ function makeContext(catalog, request, issue) {
     }
     return deferred;
   };
-  return { compiler, units, add, act, complete, restore, prioritize, gaps, unread,
+  return { compiler, units, add, act, complete, prime, restore, prioritize, gaps, unread,
     documentation: workspaceSnapshot.docs(catalog, [semantic.title, queryText].join('\n')) };
 }
 function accept(output, draft, units) {
@@ -628,6 +665,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         resumeQuestions ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate');
     if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft); }
+    else draft.actions.push(context.prime());
     if (resumeChallenge) context.gaps.push(...(draft.codeGaps || []));
     draft.codeGaps = [...new Set(context.gaps)];
     for (const unit of context.units) if (!unit.complete) draft.codeGaps.push(`${unit.name} is only available through ${unit.source.file}:${unit.source.endLine} in this review. Its remaining code has not been checked.`);

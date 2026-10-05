@@ -3,6 +3,26 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { TriageBoard } = require('../extension/board');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
+test('Retry opening code replays the failed detour operation, not Start or Return', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
+  const body = source.slice(source.indexOf('  function retryGuideNavigation('), source.indexOf('  function show(tab)'));
+  assert.ok(source.includes("button('Retry opening code', retryGuideNavigation)"));
+  for (const type of ['triage:inspectEvidence', 'triage:investigationFocus']) {
+    const sent = [], evidence = { id:'A', source:{file:'A.sol',line:10}, quote:'return;' };
+    const context = { guideRequest:{type,payload:type==='triage:inspectEvidence'?{evidence,navigationId:'old'}:{evidenceId:'A',navigationId:'old'},issueId:'I',token:'T',guideKey:'G'},
+      sourceStale:false,active:'I',token:'T',guide:{key:'G',draft:{revision:3}},guideMode:'detour',guideReturn:{step:'B',scroll:73},
+      guideNavigation:null,guidePending:false,guideError:'local failure',evidenceInput:{note:'Keep my draft'},
+      profile:()=>({evidence:[evidence]}),renderGuide:()=>{},crypto:{randomUUID:()=> 'new'},structuredClone,
+      vscode:{postMessage:message=>sent.push(message)} };
+    require('node:vm').runInNewContext(`${body}\nretryGuideNavigation();`, context);
+    assert.equal(sent.length,1); assert.equal(sent[0].type,type); assert.equal(sent[0].navigationId,'new');
+    assert.equal(sent[0].evidence?.id || sent[0].evidenceId,'A'); assert.equal(context.guideMode,'detour');
+    assert.deepEqual(context.guideReturn,{step:'B',scroll:73}); assert.equal(context.evidenceInput.note,'Keep my draft');
+    context.sourceStale=true; require('node:vm').runInNewContext('retryGuideNavigation();',context);
+    assert.equal(sent.length,1); assert.match(context.guideError,/no longer current/);
+  }
+});
+
 test('manual navigation generation is revoked by a newer note selection even without a guide', () => {
   const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
   const body = source.slice(source.indexOf('  function beginGuideDetour('), source.indexOf('  function detourStep('));

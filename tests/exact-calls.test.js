@@ -373,7 +373,7 @@ function checkedPipeline(draft) {
       conditions: ['Only the explicitly described source invocation.'], reason: 'Check exact source semantics.',
       evidence: draft.evidence.map(item => item.id), requiredFacts: [], supportsIf: '', contradictsIf: '', nextQuestion: '' })),
     evidence: draft.evidence.map(item => ({ ...item, line: item.source.line, endLine: item.source.endLine, explanation: item.note })),
-    transitions: [], questions: [], conclusion: { status: 'contradicted-in-scope', text: 'Controlled source interpretation.', limitations: [] },
+    transitions: [], questions: [], conclusion: { status: draft.causal.outcome === 'supported' ? 'supported-in-scope' : 'contradicted-in-scope', text: 'Controlled source interpretation.', limitations: [] },
     walkthrough: draft.walkthrough, causal: draft.causal, inputReviews: draft.inputReviews || [],
     explanationReviews: draft.evidence.map(item => ({ evidenceId: item.id, result: 'kept',
       reason: 'Controlled response covers the cited function; host semantic checks must still reject a false explanation.',
@@ -393,9 +393,11 @@ interface IGuard { function finish(bool accepted) external; }
 contract Other { function finish(bool accepted) external {} }
 contract Guard {
  error Rejected();
+ ${options.state || ''}
  function finish(bool accepted) external {
   ${options.reassign ? (typeof options.reassign === 'string' ? options.reassign : 'accepted = false;') + '\n  ' : ''}${options.guard || 'require(accepted, "rejected");'}
  }
+ ${options.helper || ''}
 }
 contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' is MissingBase' : ''} {
  IGuard immutable guard${options.shadow ? ' = IGuard(address(new Other()))' : ''};
@@ -407,6 +409,7 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
  function enter(${options.entryParameter || (options.unknown ? 'bool unknown' : '')}) external ${options.returns ? 'returns (bool)' : ''}{
   ${options.entrySetup ? options.entrySetup + '\n  ' : ''}${local ? 'IGuard guard = IGuard(address(new Guard()));\n  ' + options.local + '\n  ' : ''}${options.catches !== undefined ? `try guard.finish(${options.argument || (options.unknown ? 'unknown' : 'false')}) {} ` + options.catches : `guard.finish(${options.drift ? 'true' : 'false'});`}
   ${options.drift ? 'guard.finish(false);' : ''}
+  ${options.continuationSetup || ''}
   completed = true;
   ${options.returns ? 'return true;' : ''}
  }
@@ -419,6 +422,7 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   const call = caller.relatedCalls.find(site => site.name.endsWith('::finish'));
   const draft = callDraft('    finish(false);');
   draft.sources = [caller, callee, constructor, declaration];
+  if (options.helper) draft.sources.push(unit(catalog, catalog.named('reject')[0], 'helper'));
   const lineOf = (unit, text) => unit.source.line + unit.code.split('\n').findIndex(line => line.includes(text));
   draft.evidence = [note(caller, 'call', call.line), note(callee, 'guard', lineOf(callee, options.failureNeedle || options.guard || 'require('), 'contradicts'),
     note(constructor, 'construction', lineOf(constructor, 'guard =')), note(declaration, 'immutable', declaration.source.line),
@@ -426,6 +430,7 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   if (local) draft.evidence.push(note(caller, 'local-binding', lineOf(caller, 'IGuard guard =')));
   if (options.reassign) draft.evidence.push(note(callee, 'assignment', lineOf(callee, typeof options.reassign === 'string' ? options.reassign : 'accepted = false')));
   if (options.entrySetup) draft.evidence.push(note(caller, 'entry-assignment', lineOf(caller, options.entrySetup)));
+  if (options.helper) draft.evidence.push(note(draft.sources.at(-1), 'helper-effect', draft.sources.at(-1).source.line));
   const ids = draft.evidence.map(item => item.id), [entry, finish] = draft.causal.events;
   entry.callSiteId = call.id; entry.receiver = 'Caller';
   finish.receiver = 'guard'; finish.caller = 'Caller';
@@ -567,6 +572,60 @@ test('the first displayed root call uses preceding assignments instead of its en
   const success = await semanticFixture(t, { entryParameter: 'bool flag', entrySetup: 'flag = true;', argument: 'flag',
     entryValue: 'true', success: true, catches: 'catch Error(string memory) {}', returns: true });
   assert.equal(success.result.gate.ready, true, success.result.gate.problems.join('\n'));
+});
+test('a displayed call must be reachable past the earlier caller return', { skip: !native }, async t => {
+  for (const flag of ['false', 'true']) {
+    const { result } = await semanticFixture(t, { entryParameter: 'bool flag', entryValue: flag,
+      entrySetup: 'if (!flag) return false;', catches: 'catch Error(string memory) {}', returns: true });
+    assert.equal(result.gate.ready, flag === 'true', result.gate.problems.join('\n') || 'A false flag returns before the call.');
+    assert.equal(!!result.exposed.causal, flag === 'true');
+  }
+});
+test('earlier internal helper effects cannot be skipped to select a later failure', { skip: !native }, async t => {
+  for (const [body, ready] of [['assert(false);', false], ['assert(true);', true], ['return;', true]]) {
+    const { result } = await semanticFixture(t, { guard: 'reject();\n  require(accepted, "rejected");', failureNeedle: 'require(',
+      helper: `function reject() internal pure { ${body} }`, catches: 'catch Error(string memory) {}' });
+    assert.equal(result.gate.ready, ready, result.gate.problems.join('\n') || `The preceding helper executes ${body}`);
+    assert.equal(!!result.exposed.causal, ready);
+  }
+  for (const [catches, ready] of [['catch Panic(uint256) {}', true], ['catch Error(string memory) {}', false]]) {
+    const { result } = await semanticFixture(t, { guard: 'reject();\n  require(accepted, "rejected");', failureNeedle: 'reject();',
+      helper: 'function reject() internal pure { assert(false); }', catches });
+    assert.equal(result.gate.ready, ready, result.gate.problems.join('\n'));
+  }
+});
+test('local helper arguments, unavailable effects, and caller continuation are checked independently of display order', { skip: !native }, async t => {
+  for (const [argument, ready] of [['false', false], ['true', true]]) {
+    const { result } = await semanticFixture(t, { guard: `reject(${argument});\n  require(accepted, "rejected");`, failureNeedle: 'require(',
+      helper: 'function reject(bool ok) internal pure { assert(ok); }', catches: 'catch Error(string memory) {}' });
+    assert.equal(result.gate.ready, ready, result.gate.problems.join('\n'));
+  }
+  const missing = await semanticFixture(t, { guard: 'reject();\n  require(accepted, "rejected");', failureNeedle: 'require(',
+    helper: 'function reject() internal pure { assert(true); }', catches: 'catch Error(string memory) {}' });
+  missing.draft.sources = missing.draft.sources.filter(unit => unit.id !== 'helper');
+  missing.draft.evidence = missing.draft.evidence.filter(item => item.id !== 'helper-effect');
+  assert.equal(policy.gate(missing.draft).ready, false, 'An unread helper is not affirmative fallthrough.');
+  for (const flag of ['false', 'true']) {
+    const { result } = await semanticFixture(t, { entryParameter: 'bool flag', entryValue: flag, entrySetup: 'if (false) return false;',
+      continuationSetup: 'if (!flag) return false;', catches: 'catch Error(string memory) {}', returns: true });
+    assert.equal(result.gate.ready, flag === 'true', result.gate.problems.join('\n'));
+  }
+});
+test('a supported bookkeeping report keeps the caller, false parameter and committed write in its checked explanation', { skip: !native }, async t => {
+  const { draft } = await semanticFixture(t, { state:'bool public recorded;', guard:'recorded = true;', success:true,
+    catches:'catch Error(string memory) {}', returns:true });
+  draft.documentation = { excerpts:[{ id:'rule', text:'Record a request only when its accepted input is true.', file:'docs/recording.md', line:1, endLine:1 }] };
+  draft.property = { text:'Only an accepted request may be recorded.', basis:'local-documentation', evidence:[], documentation:['rule'] };
+  draft.claims[0].status='supported'; draft.causal.outcome='supported';
+  draft.walkthrough.assessment={result:'valid',why:'The local recording rule requires true. The function records the supplied false request instead.',supportingEvidence:'guard',opposingEvidence:''};
+  const write=draft.evidence.find(item=>item.id==='guard');write.stance='supports';write.note='recorded becomes true without testing accepted. This violates the supplied local recording rule for this false request.';
+  const event=draft.causal.events.find(item=>item.id==='finish');
+  Object.assign(event,{title:'Record despite the false input',what:write.note,why:'The caller supplies false, but the function writes true.',effect:'committed',
+    changes:[{name:'recorded',before:'false in this scenario',operation:'assign true',after:'true on this successful path',units:'boolean',evidence:['guard']}]});
+  const result=checkedPipeline(draft);
+  assert.equal(result.gate.ready,true,result.gate.problems.join('\n'));assert.ok(result.exposed.causal);
+  assert.equal(result.exposed.causal.events[1].inputs[0].expression,'false');
+  assert.equal(result.exposed.causal.events[1].changes[0].after,'true on this successful path');
 });
 test('root input literals survive entry checks without being replaced by their parameter name', { skip: !native }, async t => {
   const { draft } = await semanticFixture(t);
