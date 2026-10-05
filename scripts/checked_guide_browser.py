@@ -81,8 +81,9 @@ try:
           let cursor=0;window.polling=false;window.timer=setInterval(async()=>{if(window.polling||window.closing)return;window.polling=true;
           try{const b=await window.__poll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);window.dispatchEvent(new MessageEvent('message',{data:m}));}}finally{window.polling=false;}},75);''')
         page.goto(host['origin'])
-        page.wait_for_selector('.triage-list button', timeout=30000)
-        page.locator('.triage-list button').filter(has_text=args.finding + ' ·').first.click()
+        finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
+        page.wait_for_selector(finding_row, timeout=30000)
+        page.locator(finding_row).click()
         page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)', arg=args.finding, timeout=120000)
         page.screenshot(path=str(out / 'preparing.png'))
         deadline = time.monotonic() + 900
@@ -216,8 +217,8 @@ try:
             page.evaluate('window.closing=true;clearInterval(window.timer)')
             request('/action', {'name':'reopen'})
             page.reload()
-            page.wait_for_selector('.triage-list button')
-            page.locator('.triage-list button').filter(has_text=args.finding + ' ·').first.click()
+            page.wait_for_selector(finding_row)
+            page.locator(finding_row).click()
             page.wait_for_selector('.guide-annotation', timeout=30000)
             assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
             assert page.evaluate('()=>({scale,panX,panY})') == position['camera']
@@ -263,9 +264,9 @@ try:
             page.evaluate('persistNow()'); page.wait_for_timeout(250)
             page.evaluate('window.closing=true;clearInterval(window.timer)')
             request('/action', {'name':'reopen'}); page.reload()
-            page.wait_for_selector('.triage-list button')
+            page.wait_for_selector(finding_row)
             opened_at = time.monotonic()
-            page.locator('.triage-list button').filter(has_text=args.finding + ' ·').first.click()
+            page.locator(finding_row).click()
             page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)', arg=args.finding)
             first_load = request('/state')['lastLoad']
             first_event = next(e for e in draft['causal']['events'] if e['id'] == steps[0])
@@ -279,7 +280,7 @@ try:
             result['checks'].append('Reopening a saved board missing its required first function includes the complete checked native card in the initial load before guided focus.')
             if args.batch:
                 page.get_by_role('button', name='Findings', exact=True).click()
-                page.locator('.triage-list button').filter(has_text='I-02 ·').first.click()
+                page.locator('[data-finding-id="I-02"]').click()
                 page.wait_for_function('()=>document.querySelector("#triage-title")?.textContent.startsWith("I-02:")')
                 page.wait_for_selector('.guide-annotation:visible')
                 assert len(request('/state')['providerCalls']) == before_calls

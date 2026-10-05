@@ -581,6 +581,8 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-values { margin:12px 0; border:1px solid var(--border); border-radius:4px; padding:8px; font-size:13px; }
 .guide-values table { border-collapse:collapse; width:100%; font-size:12px; }
 .guide-values td,.guide-values th { border-bottom:1px solid var(--border); padding:8px 4px; text-align:left; vertical-align:top; }
+.guide-values th { overflow-wrap:normal; word-break:normal; }
+.guide-values table { min-width:340px; }
 .guide-values { overflow-x:auto; }
 .guide-values td button { font-size:12px; padding:4px; min-width:80px; }
 .guide-input-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin:8px 0 12px; }

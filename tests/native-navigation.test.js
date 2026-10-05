@@ -3,6 +3,19 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { TriageBoard } = require('../extension/board');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
+test('manual navigation generation is revoked by a newer note selection even without a guide', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
+  const body = source.slice(source.indexOf('  function beginGuideDetour('), source.indexOf('  function detourStep('));
+  for (const mode of ['absent', 'preparing', 'blocked']) {
+    const context = { guide: null, sourceStale: false, guideMode: 'closed', guideNavigation: 'old-A-request', guidePending: false,
+      selectedCard: 'B', checkedLocation: { file: 'src/B.sol', line: 30 }, evidenceInput: { cardId: 'B', line: 30, note: 'Unfinished manual text.' }, mode };
+    require('node:vm').runInNewContext(`${body}\nbeginGuideDetour('new-note');`, context);
+    assert.equal(context.guideNavigation, null, `${mode}: the old source request has no authority to move the new note.`);
+    assert.equal(context.selectedCard, 'B'); assert.equal(context.evidenceInput.note, 'Unfinished manual text.');
+    assert.equal(context.checkedLocation.line, 30);
+  }
+});
+
 test('guide capacity reports the complete missing-card deficit, not just whether one slot is free', () => {
   const units = [1,2,3].map(id => ({ id:`s${id}`, source:{file:`src/F${id}.sol`,line:10} }));
   const model = { investigationDraft:{sources:units,evidence:units.map(unit => ({id:`e${unit.id}`,sourceId:unit.id})),

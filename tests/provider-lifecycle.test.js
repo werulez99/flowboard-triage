@@ -104,6 +104,38 @@ test('ordinary actual adapter completion confirms normal group exit and saves pr
   assert.equal(sent, true); assert.equal(attached.pid, result.audit.pid); assert.equal(result.audit.teardown.confirmed, true);
   assert.equal(result.audit.teardown.normalCompletion, true); assert.equal(result.audit.outcome, 'completed');
 });
+test('a daemonizing wrapper with closed pipes is explicitly outside the certified process-group contract', { skip: !linux, timeout: 5000 }, async t => {
+  const run = descendantTransport(t, 'escaped-closed');
+  await assert.rejects(run.promise, error => {
+    assert.equal(error.code, 'PROVIDER_TIMEOUT');
+    assert.equal(error.audit.teardown.confirmed, true, 'Only the owned group is confirmed.');
+    assert.equal(error.audit.teardown.scope, 'owned-process-group');
+    assert.equal(error.audit.teardown.treeVerified, false);
+    assert.match(error.audit.teardown.descendantContract, /escaping this group are not certified/);
+    return true;
+  });
+  assert.equal(running(run.child().pid), false);
+  assert.equal(running(run.descendant().pid), true, 'This benign unsupported worker is killed only by the test-owned identity cleanup.');
+  assert.equal(run.terminal(), 1);
+});
+test('a live PID missing from the mounted proc view fails finitely instead of deleting its queue owner', { skip: !linux }, async t => {
+  const root = directory(t), file = path.join(root, 'codex-0.json'), metadata = ownership.ownerMetadata();
+  ownership.publish(file, metadata);
+  const read = fs.readFileSync;
+  fs.readFileSync = function(file, ...args) {
+    if (file === `/proc/${process.pid}/stat`) throw Object.assign(new Error('Controlled namespace mismatch.'), { code: 'ENOENT' });
+    return read.call(this, file, ...args);
+  };
+  try {
+    assert.equal(ownership.inspect(file).state, 'unknown');
+    assert.throws(() => ownership.reap(file), { code: 'PROVIDER_RESOURCE_UNAVAILABLE' });
+    const start = Date.now();
+    await assert.rejects(slots.acquire('codex', null, { directory: root }), error => error.code === 'PROVIDER_RESOURCE_UNAVAILABLE' && /inconsistent process IDs/.test(error.message));
+    assert.ok(Date.now() - start < 1000);
+    assert.equal(ownership.snapshot(file).entry.owner, metadata.owner);
+    assert.deepEqual(fs.readdirSync(root), ['codex-0.json']);
+  } finally { fs.readFileSync = read; }
+});
 test('failed process-ownership persistence stops the actual child before any review input is sent', { skip: !linux }, async () => {
   let sent = false;
   await assert.rejects(provider.runCodex(input, {

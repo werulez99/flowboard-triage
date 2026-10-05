@@ -1,6 +1,7 @@
 'use strict';
 const { lexicalCode, matching, functionParts, escaped } = require('./solidity-text');
 const { occurrences, commaSpans, span } = require('./call-occurrences');
+const execution = require('./execution-slice');
 function parts(value) {
   const clean = lexicalCode(value), result = []; let start = 0, depth = 0;
   for (let i = 0; i < clean.length; i++) {
@@ -271,7 +272,20 @@ function invocationInputs(event, body) {
 function callerConstraints(event, unit) {
   const body = unit && functionParts(unit.code, unit.name.split('::').at(-1)), values = new Map();
   if (!body || !event) return values;
-  for (const input of invocationInputs(event, body)) if (parameterNames(body.header).includes(input.name) && /^(true|false)$/.test(expression(input.expression))) values.set(input.name, expression(input.expression));
+  for (const input of invocationInputs(event, body)) if (parameterNames(body.header).includes(input.name) && /^(true|false)$/.test(expression(input.expression))) {
+    values.set(input.name, expression(input.expression));
+  }
+  return values;
+}
+function callTimeConstraints(event, unit, evidence) {
+  const values = callerConstraints(event, unit);
+  for (const [name, initial] of values) {
+    const state = parameterValue(unit, name, initial, event, evidence);
+    // A root input describes entry. The first displayed event may occur only
+    // after a write. Never treat that entry premise as the call-time value.
+    const actual = state.known ? booleanValue(state.value, new Map()) : null;
+    values.set(name, actual == null ? null : String(actual));
+  }
   return values;
 }
 function checkBooleanPremise(draft, condition, review) {
@@ -304,7 +318,7 @@ function checkBooleanPremise(draft, condition, review) {
     if (parameter && entering.length === 1) {
       const link = entering[0], from = events.find(event => event.id === link.from), source = units.get(evidence.get(from?.evidenceId)?.sourceId);
       const site = exactSite(source, link.callSiteId), actual = site && boundArgument(site, name, body.header);
-      const initial = actual == null ? null : booleanValue(actual, callerConstraints(from, source));
+      const initial = actual == null ? null : booleanValue(actual, callTimeConstraints(from, source, evidence));
       if (initial != null && String(initial) !== condition.value) errors.push(`Invocation ${invocationId} contradicts the applied saved condition ${name} is ${condition.value} at its own entering call.`);
     }
     for (const event of events.filter(event => allowed.has(event.claimId) && event.invocationId === invocationId && evidence.get(event.evidenceId)?.sourceId === unit.id)) {
@@ -342,7 +356,7 @@ function validateInvocations({ events, links, units, evidence, fail }) {
       if (!parameterNames(body.header).includes(input.name) && input.name !== 'msg.value') continue;
       const initial = boundArgument(site, input.name, body.header), first = (to.inputs || []).find(item => item.name === input.name);
       const state = input.name === 'msg.value' ? { known: true, value: initial } : parameterValue(unit, input.name, initial, event, evidence);
-      if (!state.writes?.length) state.literal = booleanValue(state.value || '', callerConstraints(from, source));
+      if (!state.writes?.length) state.literal = booleanValue(state.value || '', callTimeConstraints(from, source, evidence));
       if (initial == null || !coherent(event, input, state)) fail(`${event.title}: invocation ${to.invocationId} changes input ${input.name} without an ordered, exact source derivation from its own entering call. ${state.reason || 'Another invocation, context link or repeated call cannot supply this value.'}`);
       if (!input.condition && !state.writes?.length && !(input.evidence || []).some(id => covers(evidence.get(id), source, site.span))) fail(`${event.title}: input ${input.name} must retain the exact origin from this invocation's own entering call.`);
       if (first && !input.condition && (input.type !== first.type || input.units !== first.units)) fail(`${event.title}: invocation ${to.invocationId} changes the type or units of ${input.name}; a source assignment does not change its declaration.`);
@@ -357,44 +371,44 @@ function validateInvocations({ events, links, units, evidence, fail }) {
     for (const input of invocationInputs(event, body)) {
       if (!parameterNames(body.header).includes(input.name)) continue;
       const key = `${event.invocationId}:${input.name}`, first = initial.get(key);
-      if (!first && !input.condition) { initial.set(key, input); continue; }
-      if (!first) { initial.set(key, { expression: input.name, condition: true }); }
+      if (!first) initial.set(key, input.condition ? { expression: input.name, condition: true } : input);
       const baseline = initial.get(key), state = parameterValue(unit, input.name, baseline.expression, event, evidence);
       if (!coherent(event, input, state) || !input.condition && !baseline.condition && (input.type !== baseline.type || input.units !== baseline.units)) fail(`${event.title}: root invocation ${event.invocationId} changes its parameter premise ${input.name} without a checked source assignment.`);
     }
   }
 }
 function booleanValue(value, values) {
-  const compact = expression(value); if (compact === 'true') return true; if (compact === 'false') return false;
-  if (values.has(compact)) return booleanValue(values.get(compact), new Map());
-  if (compact.startsWith('!')) { const inner = booleanValue(compact.slice(1), values); return inner == null ? null : !inner; }
-  return null;
+  return execution.boolean(value, values);
 }
-function failedClass(unit, event, evidence, site, callerValues = new Map()) {
+function failedClass(unit, event, evidence, site, callerValues = new Map(), unresolved = () => {}) {
   const anchor = evidence.get(event.evidenceId); if (!unit || anchor?.sourceId !== unit.id) return null;
   const code = anchor.quote, clean = lexicalCode(code), body = functionParts(unit.code, unit.name.split('::').at(-1));
   const values = new Map();
   for (const name of parameterNames(body?.header || '')) {
-    const actual = boundArgument(site, name, body.header), state = parameterValue(unit, name, actual, event, evidence);
-    const bound = booleanValue(state.value || '', callerValues);
-    if (actual != null && state.known) values.set(name, !state.writes?.length && bound != null ? String(bound) : state.value);
+    const actual = boundArgument(site, name, body.header), bound = booleanValue(actual, callerValues);
+    if (actual != null) values.set(name, bound == null ? null : String(bound));
   }
   const failures = [];
-  for (const match of clean.matchAll(/\b(require|assert|revert)\s*\(/g)) {
-    // Conditional failure reachability requires a separate checked branch;
-    // do not invent it from a keyword in a broad evidence quotation.
+  for (const match of clean.matchAll(/\b(require|assert|revert)(?:\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?))?\s*\(/g)) {
     const absolute = lineOffset(unit, anchor.source.line) + match.index;
-    const prefix = body?.clean.slice(body.bodyStart, absolute) || '';
-    const depth = [...prefix].reduce((n, char) => n + (char === '{' ? 1 : char === '}' ? -1 : 0), 0);
-    const boundary = Math.max(prefix.lastIndexOf(';'), prefix.lastIndexOf('}'));
-    if (depth || prefix.slice(boundary + 1).trim()) continue;
+    const path = execution.pathTo(unit, absolute, values);
+    if (path.reachable !== true) { unresolved(path.reason); continue; }
     const open = clean.indexOf('(', match.index), close = matching(clean, open); if (close < 0) continue;
     const args = parts(code.slice(open + 1, close));
-    if (match[1] !== 'revert' && booleanValue(args[0] || '', values) !== false) continue;
+    if (match[1] !== 'revert' && booleanValue(args[0] || '', path.values) !== false) {
+      unresolved('The cited guard is not established false with the checked call-time values.'); continue;
+    }
+    if (match[1] === 'revert' && match[2]) { failures.push('custom'); continue; }
     if (match[1] === 'assert') failures.push('Panic');
-    else { const payload = args[match[1] === 'require' ? 1 : 0]; failures.push(payload === undefined ? 'empty' : /^(?:unicode)?["']/.test(payload.trim()) ? 'Error' : 'unknown'); }
+    else {
+      const payload = args[match[1] === 'require' ? 1 : 0];
+      const named = payload && /^[A-Za-z_$][\w$]*$/.test(payload.trim()) ? payload.trim() : null;
+      const declaration = named && body && bindingWrites(body, named, absolute).active;
+      const parameter = named && parameterSpans(unit.code, unit.name.split('::').at(-1)).find(item => item.name === named);
+      const stringType = declaration?.type === 'string' || declaration?.id === `parameter:${named}` && /^string\b/.test(parameter?.declaration.trim() || '');
+      failures.push(payload === undefined ? 'empty' : /^(?:unicode)?["']/.test(payload.trim()) || stringType ? 'Error' : 'unknown');
+    }
   }
-  if (/^\s*revert\s+[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\s*\(/.test(clean)) failures.push('custom');
   const known = [...new Set(failures)]; return known.length === 1 && known[0] !== 'unknown' ? known[0] : null;
 }
 function catchContinuation(source, clause) {
@@ -413,15 +427,17 @@ function scenarioFailure({ site, source, destination, to, events, evidence, link
   if (context.unsupported) { fail(`${to.title}: the exact try/catch structure could not be read.`, 'material-evidence'); return 'unknown'; }
   const failed = events.filter(event => event.invocationId === to.invocationId && event.effect === 'rolled-back');
   if (!failed.length) return 'not-applicable'; // A successful route does not establish how an unchosen failure is handled.
-  const callerValues = callerConstraints(events.find(event => event.id === link.from), source);
-  const classes = [...new Set(failed.map(event => failedClass(destination, event, evidence, site, callerValues)).filter(Boolean))];
-  if (classes.length !== 1) { fail(`${to.title}: the callee failure class is not established. Caller argument evaluation and return decoding failures are not caught callee errors.`, 'material-evidence'); return 'unknown'; }
+  const callerValues = callTimeConstraints(events.find(event => event.id === link.from), source, evidence);
+  const unresolved = [];
+  const classes = [...new Set(failed.map(event => failedClass(destination, event, evidence, site, callerValues, reason => unresolved.push(reason))).filter(Boolean))];
+  if (classes.length !== 1) { fail(`${to.title}: the callee failure class is not established. ${unresolved[0] || 'Caller argument evaluation and return decoding failures are not caught callee errors.'}`, 'material-evidence'); return 'unknown'; }
   const error = classes[0], clause = context.clauses.find(item => item.kind === error) || context.clauses.find(item => item.kind === 'any');
   if (!clause) return 'propagates';
   if (!(link.evidence || []).some(id => covers(evidence.get(id), source, clause.span))) fail(`${to.title}: the matching ${clause.kind} catch and its body need an exact checked source reference.`);
   const continuation = catchContinuation(source, clause);
   if (continuation === 'rethrows') return 'propagates';
-  if (continuation !== 'continues') { fail(`${to.title}: the matching ${clause.kind} catch ${continuation === 'returns' ? 'returns from the caller instead of reaching the statement after try' : 'has no established continuing path'}.`, 'material-evidence'); return 'unknown'; }
+  if (continuation === 'returns') return 'caught-return';
+  if (continuation !== 'continues') { fail(`${to.title}: the matching ${clause.kind} catch has no established continuing path.`, 'material-evidence'); return 'unknown'; }
   return 'caught';
 }
 function validateTransition({ draft, link, from, to, source, destination, units, evidence, refs, events, links, fail }) {
@@ -437,6 +453,15 @@ function validateTransition({ draft, link, from, to, source, destination, units,
     const handling = site && scenarioFailure({ site, source: destination, destination: source, to: entering, events, evidence, link: incoming[0], fail });
     if (from.effect === 'rolled-back' && handling === 'propagates') fail(`${from.title}: an uncaught failed call propagates reversion; it cannot return normally to the caller.`);
     if (from.effect === 'rolled-back' && handling === 'caught' && site.tryContext && evidence.get(to.evidenceId)?.source.line <= site.tryContext.span.endLine) fail(`${to.title}: a handled failure continues after its matching catch, not in the try success body.`);
+    if (from.effect === 'rolled-back' && handling === 'caught-return') {
+      const caller = events.find(event => event.id === incoming[0].from);
+      const error = failedClass(source, from, evidence, site, callTimeConstraints(caller, destination, evidence));
+      const clause = site.tryContext.clauses.find(item => item.kind === error) || site.tryContext.clauses.find(item => item.kind === 'any');
+      const anchor = evidence.get(to.evidenceId), statement = clause && destination.code.slice(clause.body.start, clause.body.end).trim();
+      if (!clause || to.effect !== 'return' || anchor?.sourceId !== destination.id ||
+          !covers(anchor, destination, clause.span) || !/^return\s+[^;]+;\s*$/.test(statement))
+        fail(`${to.title}: this handled failure must follow the exact matching catch's caller return, not the statement after try.`, 'material-evidence');
+    }
     return;
   }
   const site = exactSite(source, link.callSiteId), destinationParts = destination && functionParts(destination.code, destination.name.split('::').at(-1));
@@ -505,5 +530,8 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   if (!(to.inputs || []).length && destinationParts && parameterNames(destinationParts.header).length && !/^No material parameters:/i.test(link.binding || '')) fail(`${to.title}: name the material input bindings, or justify why no parameter affects this statement.`);
   const failed = events.some(event => event.invocationId === to.invocationId && event.effect === 'rolled-back');
   if (failed && handling === 'propagates' && events.some(event => event.invocationId === from.invocationId && event.effect === 'committed')) fail(`${from.title}: an uncaught callee failure rolls back this caller; the same scenario cannot display a committed caller effect.`);
+  if (failed && handling === 'caught-return' && events.some(event => event.invocationId === from.invocationId &&
+      evidence.get(event.evidenceId)?.source.line > site.tryContext.span.endLine && ['committed', 'intermediate', 'return'].includes(event.effect)))
+    fail(`${from.title}: the matching catch returns from this invocation; operations after try cannot execute on that path.`);
 }
 module.exports = { parts, expression, parameterNames, parameterSpans, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise };

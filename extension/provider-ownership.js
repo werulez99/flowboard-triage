@@ -12,7 +12,14 @@ function processIdentity(pid = process.pid) {
       const raw = fs.readFileSync(`/proc/${pid}/stat`, 'utf8'), tail = raw.slice(raw.lastIndexOf(')') + 2).split(' ');
       boot ||= fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
       return { pid, birth: `${boot}:${tail[19]}`, state: tail[0], parent: Number(tail[1]), group: Number(tail[2]) };
-    } catch (error) { if (error.code === 'ENOENT' || error.code === 'ESRCH') return null; throw error; }
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error;
+      // A PID namespace with a different mounted /proc view cannot prove
+      // death from an absent stat file. Fail finitely, retaining all owners.
+      try { process.kill(pid, 0); }
+      catch (probe) { if (probe.code === 'ESRCH') return null; if (probe.code !== 'EPERM') throw probe; }
+      throw resourceError('This host exposes inconsistent process IDs and /proc identity. Provider ownership cannot be verified. Run preparation in a matching Linux/WSL process namespace; no owner was removed or request dispatched.');
+    }
   }
   try { process.kill(pid, 0); return { pid, birth: null }; }
   catch (error) { if (error.code === 'ESRCH') return null; throw error; }

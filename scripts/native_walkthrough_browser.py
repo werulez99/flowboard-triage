@@ -155,6 +155,25 @@ try:
         if not args.baseline:
             assert result['observed']['noteEditLayout'] and not result['observed']['functionsAfterNoteLayout'] and not result['observed']['functionsAfterGutterLayout']
             result['checks'].append('Every drawer route recomputes the note-editor layout after its tab and visibility change.')
+            for phase in ['absent','preparing','blocked']:
+                data=copy.deepcopy(base);data['draftFingerprint']='unready-note-'+phase
+                data['investigationDraft']=None if phase=='absent' else {'findingId':'I-01','phase':phase,'publication':{'ready':False},'error':'A fixture dependency is unavailable.' if phase=='blocked' else ''}
+                emit({'type':'restore','state':None});emit(data)
+                page.locator('#triage-bar').get_by_text('More',exact=True).click()
+                page.locator('.triage-more-menu').get_by_role('button',name='Edit review',exact=True).click()
+                page.locator('.triage-evidence-reference').first.click()
+                old=page.evaluate('window.sent.findLast(m=>m.type==="triage:inspectEvidence")')
+                target=page.locator('.card').filter(has=page.get_by_text('Demo::_add(uint256)',exact=True))
+                target.locator('.triage-line-number').first.click(force=True)
+                field=page.locator('#triage-evidence-note');field.fill('Keep the new function note '+phase)
+                field.evaluate('node=>node.setSelectionRange(5,12)');before=capture()
+                emit({'type':'triage:evidenceInspected','issueId':'I-01','token':base['token'],'navigationId':old['navigationId'],
+                    'evidence':base['finding']['triage']['evidence'][0],'excerpt':'Late note A while editing B.'})
+                assert capture()==before, phase+' must not navigate to the old saved note'
+                assert field.input_value()=='Keep the new function note '+phase
+                assert field.evaluate('node=>document.activeElement===node && node.selectionStart===5 && node.selectionEnd===12')
+            result['checks'].append('Without a guide (absent, preparing or blocked), a new function note revokes older async evidence navigation and retains exact source, text, focus and caret.')
+            load();before=capture()
             crowded=copy.deepcopy(base); crowded['draftFingerprint']='crowded-two-missing'
             crowded['state']['cards']=[];crowded['state']['edges']=[];crowded['hints']={};crowded['connections']=[]
             for index in range(199):

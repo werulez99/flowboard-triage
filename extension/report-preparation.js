@@ -91,7 +91,7 @@ class ReportPreparation {
     const digest = policy.digest(draft), at = job.accepted?.digest === digest ? job.accepted.at : now();
     const accepted = { digest, at, policy: policy.POLICY, project: this.state.project, findingHash: entryHash(entry),
       generation: draft.revision, sourceSnapshot: draft.snapshot, dependencies: draft.dependencies || null };
-    Object.assign(job, { state: 'completed', publishable: true, digest, snapshot: draft.snapshot, outcome: draft.causal.outcome,
+    Object.assign(job, { state: 'completed', stage: 'ready', publishable: true, digest, snapshot: draft.snapshot, outcome: draft.causal.outcome,
       findingHash: entryHash(entry), accepted, publishedAt: at, reason: '' });
     this.accepted.set(entry.id, accepted);
   }
@@ -225,6 +225,11 @@ class ReportPreparation {
         job.state = 'queued'; job.publishable = false; job.accepted = null; this.accepted.delete(entry.id);
       } else if (checked(saved)) {
         this.accept(entry, saved, job);
+      } else if (saved.pendingResponse) {
+        // A completed transport receipt is already paid. Revalidate/replay it
+        // before provider, pause and allowance checks, without authorizing a
+        // new request or resuming any sibling's paid work.
+        await this.work(entry, catalog, report, job, epoch, config, true);
       }
       } catch (error) { this.recordFailure(job, error); }
       await new Promise(resolve => setImmediate(resolve));
@@ -324,7 +329,7 @@ class ReportPreparation {
     for (const job of Object.values(this.state.jobs)) if (job.state === 'queued') { job.state = 'paused'; job.reason = 'Waiting for report request budget.'; }
     this.save();
   }
-  async work(entry, catalog, report, job, epoch, config) {
+  async work(entry, catalog, report, job, epoch, config, localOnly = false) {
     if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); this.save(); return; }
     const issue = this.issue(entry), request = this.request(entry, catalog, report);
     const fresh = engine.create({ findingId: entry.id, request, issue, catalog });
@@ -347,7 +352,7 @@ class ReportPreparation {
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
-        providerResources: this.options.providerResources, yieldAfterStage: true,
+        providerResources: this.options.providerResources, yieldAfterStage: true, localOnly,
         beforeRequest: async data => {
           if (this.state.mode !== 'running') throw Object.assign(new Error('Paused after the current request. Resume will reuse the accepted stage.'), { code: 'REPORT_PAUSED' });
           if (!current()) throw Object.assign(new Error('Preparation inputs changed before dispatch.'), { code: 'INVESTIGATION_SUPERSEDED' });

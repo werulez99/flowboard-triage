@@ -31,6 +31,14 @@ function fakeProcess({ stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), code 
 }
 function directory(t) { const result = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-provider-test-')); t.after(() => fs.rmSync(result, { recursive: true, force: true })); return result; }
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+test('the whole request includes metadata, instructions and schema and is bounded before spawning', async () => {
+  const measured = provider.requestMetrics(input);
+  assert.equal(measured.requestBytes, measured.inputBytes + measured.inputSections.instructions + measured.inputSections.schema + 128);
+  assert.match(measured.instructionHash, /^[a-f0-9]{64}$/); assert.match(measured.schemaHash, /^[a-f0-9]{64}$/);
+  let spawned = false;
+  assert.throws(() => provider.runCodex({ ...input, metadata: 'x'.repeat(provider.MAX_REQUEST_BYTES) }, { spawn: () => { spawned = true; } }), { code: 'LOCAL_PACKET_LIMIT' });
+  assert.equal(spawned, false);
+});
 test('both production CLI adapters preserve every UTF-8 byte boundary and exact JSON content', async () => {
   for (const mode of ['codex', 'claude']) {
     const response = wire({ text }, mode), run = mode === 'codex' ? provider.runCodex : provider.runClaude;

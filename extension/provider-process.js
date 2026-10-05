@@ -2,6 +2,11 @@
 const fs = require('node:fs');
 const { processIdentity } = require('./provider-ownership');
 function processGroup(record) {
+  return { scope: 'owned-process-group', treeVerified: false,
+    descendantContract: 'Only non-daemonizing CLI processes are supported. Descendants escaping this group are not certified stopped.',
+    ...inspectGroup(record) };
+}
+function inspectGroup(record) {
   const pid = record?.pid, group = record?.processGroup;
   if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(group) || pid <= 1 || group !== pid || group === process.pid || record.platform !== process.platform)
     return { confirmed: false, reason: 'The provider process group identity is unavailable.' };

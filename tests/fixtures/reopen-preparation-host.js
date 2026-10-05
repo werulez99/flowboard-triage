@@ -11,7 +11,7 @@ const calls = [];
 let indexes = 0, catalog, coordinator;
 async function main() {
   coordinator = new ReportPreparation(root, {
-    configuration: () => ({ provider: mode === 'restore' ? 'none' : 'codex', requestLimit: 4, workers: 1 }),
+    configuration: () => ({ provider: mode === 'restore' ? 'none' : 'codex', requestLimit: mode === 'crash-after-challenge' ? 2 : 4, workers: 1 }),
     catalog: async () => { if (!catalog) { indexes++; const prepared = await analyze(process.env.FLOWBOARD_EXTENSION_PATH, root, { mode: 'source' }); catalog = new SourceCatalog(root, prepared.runner, prepared.result); } return catalog; },
     invoke: async input => {
       calls.push(input.phase);
@@ -19,9 +19,9 @@ async function main() {
       return { value, audit: { provider: 'controlled-fresh-process-fixture', phase: input.phase, outcome: 'completed' } };
     },
     changed: () => {
-      if (mode !== 'crash-after-response') return;
+      if (!['crash-after-response', 'crash-after-challenge'].includes(mode)) return;
       const draft = engine.read(root, 'I-1');
-      if (draft?.pendingResponse) process.exit(73); // Receipt/result durable; acceptance has not run.
+      if (draft?.pendingResponse && (mode === 'crash-after-response' || draft.pendingResponse.phase === 'challenge')) process.exit(73); // Receipt/result durable; acceptance has not run.
     }
   });
   await coordinator.ensure();

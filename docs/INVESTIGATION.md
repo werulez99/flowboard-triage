@@ -1,6 +1,8 @@
-# Source investigation runtime — 0.15
+# Source investigation runtime — 0.18
 
 This is a bounded defensive review of a selected report, not an autonomous vulnerability scanner. Quotes and source identity are checked mechanically; their interpretations are not automatically proven. Generated work never changes the researcher's manual finding verdict.
+
+Current additions: source-scoped failure reachability, call-time parameter writes, handled catch returns, string-typed revert reasons, local final-response recovery at exhausted allowance, and manual-navigation cancellation even without a ready guide. Current policy is `checked-explanation-v7`. Complete current-policy challenge data is revalidated locally; old unchecked guidance does not become Ready by migration. The provider and editor verification record is in [Guided reading](GUIDED-READING.md); the historical quality matrix below is not a current-model certification.
 
 ## Current publication contract
 

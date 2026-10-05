@@ -14,6 +14,10 @@ contract ShadowedInitializer {
 }
 
 contract BooleanGuard {
+    error Rejected();
+    function conditionalCustom(bool accepted) external pure { if (accepted) { revert Rejected(); } }
+    function unconditionalCustom(bool) external pure { revert Rejected(); }
+    function stringReason(bool accepted) external pure { string memory reason = "rejected"; require(accepted, reason); }
     function requireAccepted(bool accepted) external pure { require(accepted, "rejected"); }
     function assertAccepted(bool accepted) external pure { assert(accepted); }
     function unchanged(bool accepted) external pure returns (bool) { return accepted; }
@@ -23,6 +27,20 @@ contract BooleanGuard {
 contract CatchControl {
     BooleanGuard immutable guard = new BooleanGuard();
     bool public completed;
+    function changedEntry(bool flag) external returns (bool) {
+        flag = true;
+        try guard.requireAccepted(flag) {} catch Error(string memory) { return false; }
+        completed = true;
+        return true;
+    }
+    function returningCatch() external returns (bool) {
+        try guard.requireAccepted(false) {} catch Error(string memory) { return false; }
+        completed = true;
+        return true;
+    }
+    function namedReason() external {
+        try guard.stringReason(false) {} catch Error(string memory) { completed = true; }
+    }
     function panicOnly() external {
         try guard.requireAccepted(false) {} catch Panic(uint256) {}
         completed = true;
@@ -46,6 +64,32 @@ contract CatchControl {
 }
 
 contract CallSemanticsTest {
+    function testFalseCustomBranchDoesNotRevert() external {
+        BooleanGuard guard = new BooleanGuard();
+        guard.conditionalCustom(false);
+    }
+    function testTrueCustomBranchAndUnconditionalCustomRevert() external {
+        BooleanGuard guard = new BooleanGuard();
+        bool rejected;
+        try guard.conditionalCustom(true) {} catch { rejected = true; }
+        require(rejected, "chosen custom branch fails");
+        rejected = false;
+        try guard.unconditionalCustom(false) {} catch { rejected = true; }
+        require(rejected, "unconditional custom failure");
+    }
+    function testEarlierAssignmentOverridesEntryAtCall() external {
+        CatchControl control = new CatchControl();
+        require(control.changedEntry(false) && control.completed(), "call receives reassigned true");
+    }
+    function testHandledReturnSkipsLaterWrite() external {
+        CatchControl control = new CatchControl();
+        require(!control.returningCatch() && !control.completed(), "catch returns without later write");
+    }
+    function testNamedStringReasonMatchesErrorCatch() external {
+        CatchControl control = new CatchControl();
+        control.namedReason();
+        require(control.completed(), "string-typed reason uses Error(string)");
+    }
     function testTupleAssignmentChangesReceiver() external {
         IIdentity target = IIdentity(address(new IdentityOne()));
         (target,) = (IIdentity(address(new IdentityTwo())), 1);

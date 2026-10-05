@@ -18,8 +18,7 @@ async function main() {
   const inputs = require('../extension/semantic-input').input(request, issue);
   fs.mkdirSync(output, { recursive: true, mode: 0o700 });
   const input = { phase: 'challenge', ...(process.argv.includes('--compact') ? { checkOnly: true } : {}), semanticInput: require('../extension/semantic-input').packet(inputs), finding: { id, title: request.finding.title,
-    reportParagraphs: require('../extension/webview/walkthrough-model').paragraphs(issue.reportText), savedSummary: inputs.saved.summary,
-    preconditions: inputs.saved.preconditions, expectedBehavior: inputs.saved.expectedBehavior },
+    reportParagraphs: require('../extension/webview/walkthrough-model').paragraphs(issue.reportText) },
     snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })),
     sources: engine.modelSources(draft.sources), compiler: draft.compiler, experiments: draft.experiments, codeGaps: draft.codeGaps || [], documentation: draft.documentation,
     earlierDraft: challenge.earlier(draft, provider.schema), actions: draft.actions.slice(-5) };

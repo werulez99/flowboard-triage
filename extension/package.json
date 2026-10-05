@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
@@ -31,11 +31,11 @@
         },
         "flowboardTriage.codexPath": {
           "type": "string", "default": "", "scope": "machine",
-          "description": "Absolute Codex CLI path without arguments. Empty uses codex on PATH. Requires authenticated CLI supporting ignore-user-config, ephemeral and structured output."
+          "description": "Absolute Codex CLI path without arguments. Empty uses codex on PATH. Requires authenticated CLI supporting ignore-user-config, ephemeral and structured output. Only direct, non-daemonizing CLIs are supported; wrappers that detach workers from the owned process group are unsupported."
         },
         "flowboardTriage.claudePath": {
           "type": "string", "default": "", "scope": "machine",
-          "description": "Absolute Claude CLI executable path, without arguments. Empty uses claude on PATH. Requires an authenticated CLI with safe-mode support."
+          "description": "Absolute Claude CLI executable path, without arguments. Empty uses claude on PATH. Requires an authenticated non-daemonizing CLI with safe-mode support. Wrappers detaching workers from the owned process group are unsupported."
         },
         "flowboardTriage.semanticBudgetUSD": {
           "type": "number", "default": 1, "minimum": 0.25, "maximum": 5, "scope": "resource",

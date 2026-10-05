@@ -16,7 +16,7 @@ const object = properties => ({ type: 'object', additionalProperties: false, pro
 const dispatchSchema = object({ kind: { enum: ['internal', 'internal-library', 'self', 'constructor', 'local-instance', 'observed-external', 'unresolved', 'not-applicable'] },
   receiver: str, implementation: str, evidence: strings,
   context: { enum: ['same', 'call', 'delegatecall', 'staticcall', 'creation', 'none'] },
-  failure: { enum: ['propagates', 'caught', 'returns-status', 'not-applicable'] } });
+  failure: { enum: ['propagates', 'caught', 'caught-return', 'returns-status', 'not-applicable'] } });
 const schema = object({
   scope: str, summary: str, outcome: { enum: ['supported', 'refuted', 'blocked'] },
   obligations: { type: 'array', maxItems: limits.obligations, items: object({ id: str, claimId: str,

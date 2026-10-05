@@ -76,7 +76,7 @@ try:
         checked={'id':None}
         def anchor(identity):
             event=events[identity];proof=evidence[event['evidenceId']];unit=units[proof['sourceId']]
-            return {'event':identity,'line':proof['source']['line'],'endLine':proof['source']['endLine'],'file':unit['source']['file'],
+            return {'event':identity,'what':event['what'],'line':proof['source']['line'],'endLine':proof['source']['endLine'],'file':unit['source']['file'],
                     'name':unit['name'].split('::')[-1],'start':unit['source']['line'],'end':unit['source']['endLine'],'code':unit['code'],
                     'callSite':next((call for call in unit.get('relatedCalls',[]) if call['id']==event.get('callSiteId')),None)}
         def verify(identity):
@@ -103,17 +103,35 @@ try:
             return observed
         def click_step(label,identity):
             expected=anchor(identity)
-            measured=page.evaluate('''async e=>{
+            measured=page.evaluate(r'''async e=>{
                 const button=[...document.querySelectorAll('.guide-controls button')].find(b=>b.textContent===e.label);
                 if(!button||button.disabled)throw new Error('Prepared navigation action unavailable: '+e.label);
-                const start=performance.now();button.click();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-                return performance.now()-start;
-            }''',{'label':label})
+                const start=performance.now();button.click();
+                while(performance.now()-start<3000){
+                    await new Promise(resolve=>requestAnimationFrame(resolve));
+                    const a=e.anchor,note=document.querySelector('.guide-annotation'),card=document.querySelector('.guide-active-card');
+                    const header=card?.querySelector('.card-header'),line=card?.querySelector(`[data-source-line="${a.line}"]`);
+                    const board=document.querySelector('#flowboard').getBoundingClientRect(),h=header?.getBoundingClientRect(),r=line?.getBoundingClientRect();
+                    const lines=[...document.querySelectorAll('.triage-claim-line')].map(n=>Number(n.dataset.sourceLine));
+                    const exact=Array.from({length:a.endLine-a.line+1},(_,i)=>a.line+i);
+                    const occurrence=CSS.highlights.has('flowboard-call-occurrence')?[...CSS.highlights.get('flowboard-call-occurrence')].map(r=>r.toString()):[];
+                    const callOK=!a.callSite || JSON.stringify(occurrence)===JSON.stringify([a.code.slice(a.callSite.span.start,a.callSite.span.end)]);
+                    const normalize=text=>text.replace(/\s+/g,' ').trim();
+                    if(note?.dataset.stepId===a.event && normalize(note.innerText).includes(normalize(a.what)) && header?.innerText.includes(a.name) && header.innerText.includes(a.file) &&
+                        JSON.stringify(lines)===JSON.stringify(exact) && card.querySelector(`[data-source-line="${a.end}"]`) && callOK &&
+                        h.top>=board.top-1 && h.bottom<=board.bottom+1 && r?.top>=board.top-1 && r.bottom<=board.bottom+1 && r.right>board.left && r.left<board.right)
+                        return performance.now()-start;
+                }
+                throw new Error('Correct readable source/annotation/highlight did not settle: '+e.anchor.event);
+            }''',{'label':label,'anchor':expected})
+            previous=checked['id']
+            if timed_navigation:
+                (within if previous and evidence[events[previous]['evidenceId']]['sourceId']==evidence[events[identity]['evidenceId']]['sourceId'] else cross).append(measured)
             verify(identity);return measured
         def restart():
             options=page.locator('.guide-controls details');options.locator('summary').click();options.get_by_role('button',name='Restart',exact=True).click();verify(order[0])
         verify(order[0]);page.screenshot(path=str(output/'first-step.png'))
-        controls=page.locator('.guide-controls');latencies=[];opening=[]
+        controls=page.locator('.guide-controls');latencies=[];opening=[];within=[];cross=[];timed_navigation=True
         for run in range(args.samples):
             if run:restart()
             for identity in order[1:]:
@@ -130,6 +148,7 @@ try:
             # Backtracking is navigation, not reverse execution.
             for identity in reversed(order[:-1]):latencies.append(click_step('Previous step',identity))
         assert len(request('/state')['providerCalls'])==2
+        timed_navigation=False
         result['checks'].append('All 15 checked events traverse five actual native functions, exact call occurrences, repeated arguments, four returns and an uncaught rollback; complete long helper and late return stay readable.')
         # Cross-function evidence detour opens the exact caller argument and
         # returns to the same helper invocation, camera, scroll and highlight.
@@ -160,7 +179,7 @@ try:
             verify('first-write')
             if width in [761,801]:page.screenshot(path=str(output/f'width-{width}.png'))
         result['checks'].append('The checked route remains readable at all requested boundary widths, including an 801×600 pane.')
-        result.update(navigation=summary(latencies),cachedHostReopen=summary(opening),codeLines=sum(len(unit['code'].splitlines()) for unit in units.values()),events=len(order),functions=5,
+        result.update(navigation=summary(latencies),withinFunction=summary(within),crossFunction=summary(cross),cachedHostReopen=summary(opening),codeLines=sum(len(unit['code'].splitlines()) for unit in units.values()),events=len(order),functions=5,
             domElements=verify('first-write')['domElements'],pageErrors=errors,hostErrors=state['errors'],externalProviderRequests=0,
             targets={'cachedFirstReadableP95Under500ms':summary(opening)['p95Ms']<500 if summary(opening)['p95Ms'] is not None else None,'stepP95Under100ms':summary(latencies)['p95Ms']<100 if summary(latencies)['p95Ms'] is not None else None})
         assert not errors and not state['errors']

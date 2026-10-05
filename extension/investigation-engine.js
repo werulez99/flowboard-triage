@@ -47,6 +47,21 @@ function revalidate(draft, catalog, request, issue) {
     if (draft.publication?.ready) draft.publication.digest = guidePolicy.digest(draft);
     draft.revision++; write(catalog.root, draft);
   }
+  // A substantive challenge may already be durable when a host check or
+  // pause interrupted final publication. Re-run the current gate locally;
+  // never request the same paid challenge merely to finish host validation.
+  const last = draft.runs.at(-1);
+  if (draft.phase !== 'ready' && !draft.pendingResponse && draft.checkpoint?.stage === 'challenge' &&
+      last?.phase === 'challenge' && last.resultAccepted && last.outcome === 'completed') {
+    const publication = guidePolicy.gate(draft);
+    if (publication.ready) {
+      draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
+      draft.publication = publication; draft.publication.digest = guidePolicy.digest(draft);
+      draft.phase = 'ready'; delete draft.error; delete draft.failureKind;
+      draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), at: now(), recoveredLocally: true };
+      draft.revision++; write(catalog.root, draft);
+    }
+  }
   return true;
 }
 function migrateChecked(draft, catalog, request, issue) {
@@ -587,7 +602,7 @@ function checkExplanations(output, previous, next, units) {
   next.explanationReviews = accepted;
   return next;
 }
-async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false }) {
+async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false }) {
   delete draft.yielded;
   const ensure = () => { if (signal?.aborted || !current()) throw Object.assign(new Error('Investigation superseded; partial work is preserved.'), { code: 'INVESTIGATION_SUPERSEDED' }); catalog.assertFresh(); };
   const save = async () => {
@@ -631,7 +646,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     if (resumeChallenge) draft.actions.push({ id: `resume-${crypto.randomUUID()}`, kind: 'checkpoint-resume', outcome: 'source-returned',
       sourceIds: draft.sources.map(unit => unit.id), result: 'Resuming the saved explanation check. The accepted generation is reused after checking its report and code.', performedAt: now() });
     await save();
-    if (!['claude', 'codex'].includes(provider)) return draft;
+    if (!['claude', 'codex'].includes(provider) && !localOnly) return draft;
     draft.documentation = context.documentation;
     // Supply the original text once, with exact paragraph IDs. Previously the
     // same long report appeared as raw text, sections AND paragraphs in every
@@ -639,9 +654,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     draft.semanticInput ||= semanticInput.input(request, issue);
     const input = phase => ({ phase, semanticInput: semanticInput.packet(draft.semanticInput), finding: { id: findingId, title: request.finding.title,
       reportSections: content(issue?.reportText || request.finding.summary).sections.map(({ field, proposed }) => ({ field, proposed })),
-      reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary),
-      savedSummary: draft.semanticInput.saved.summary, preconditions: draft.semanticInput.saved.preconditions,
-      expectedBehavior: draft.semanticInput.saved.expectedBehavior },
+      reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary) },
       snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })), sources: modelSources(context.units),
       compiler: draft.compiler, experiments: draft.experiments, codeGaps: context.gaps, documentation: context.documentation,
       ...(phase === 'challenge' ? { earlierDraft: challengeFormat.earlier(draft, reviewSchema), actions: draft.actions.slice(-5) } : {}) });
@@ -688,6 +701,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           context.restore(recoveredUnits, draft); data = cached.input;
           return { ...cached.result, audit: { ...cached.result.audit, reusedResponse: true } };
         }
+        // Recovery is unpaid local validation, not authority to obtain a new
+        // answer. Never acquire a slot, reserve a request, or reset health here.
+        if (localOnly) throw Object.assign(new Error('Saved response recovery needs a new checked answer. The compatible stage is preserved; no request was dispatched.'), { code: 'LOCAL_RECOVERY_PENDING' });
+        // Include metadata, instructions and schema in the bounded transport
+        // preflight. Oversized local input must not spend a reservation.
+        if (transport) require('./semantic-provider').requestMetrics(input);
         if (transport) health.check(provider, healthOptions);
         const release = transport ? await require('./provider-slots').acquire(provider, signal, { ...providerResources, onProgress }) : () => {};
         let reservation, terminalAudit;
@@ -780,7 +799,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         // Never guess new line spans, silently fix meaning, or publish it.
         response = await call({ ...data, checkOnly: false, repairOnly: phase === 'challenge', hostReview: repairFeedback }); ensure(); workspaceSnapshot.validate(catalog, { force: true });
         draft.runs.push({ ...response.audit, resultAccepted: false, repair: true });
-        accepted = validate(response.value);
+        try { accepted = validate(response.value); }
+        catch (error) {
+          delete draft.pendingResponse;
+          draft.lastRejected = { phase, inputHash: response.audit?.inputHash, at: now(), error: error.message, output: response.value };
+          throw error;
+        }
       }
       recordReading(); draft.runs.at(-1).resultAccepted = true;
       delete draft.pendingResponse;
@@ -860,9 +884,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     await save(); return draft;
   } catch (error) {
     if (error.code === 'INVESTIGATION_SUPERSEDED' || signal?.aborted || !current()) return draft;
+    if (error.code === 'LOCAL_RECOVERY_PENDING') draft.yielded = true;
     draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' :
       ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE', 'PROVIDER_TEARDOWN_UNCONFIRMED', 'PROVIDER_RESOURCE_UNAVAILABLE', 'PROVIDER_OWNERSHIP_UNAVAILABLE'].includes(error.code) || error.audit?.teardown?.confirmed === false ? 'provider-health' :
-      error.code === 'REPORT_PAUSED' ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : error.code === 'LOCAL_READING_LIMIT' ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
+      ['REPORT_PAUSED', 'LOCAL_RECOVERY_PENDING'].includes(error.code) ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : ['LOCAL_READING_LIMIT', 'LOCAL_PACKET_LIMIT'].includes(error.code) ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
     if (error.audit) draft.runs.push(error.audit);
     // A failed provider/schema/challenge must not erase a usable earlier draft.
     try { await save(); } catch { /* never overwrite a changed source context */ }

@@ -64,6 +64,23 @@ test('selection promotes two durable stages without owning preparation or starvi
   f.runner.prioritize('I-2'); await f.runner.ensure();
   assert.equal(f.calls.length, before, 'Priority does not authorize resuming or spending.');
 });
+test('offline production packet inspection preserves workspace bytes and dispatches no provider', { skip: !native }, async t => {
+  const f = await fixture(t, 1), destination = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-packet-test-'));
+  t.after(() => fs.rmSync(destination, { recursive: true, force: true }));
+  const inventory = () => fs.readdirSync(path.join(f.root, '.flowboard'), { recursive: true }).filter(file => fs.statSync(path.join(f.root, '.flowboard', file)).isFile())
+    .sort().map(file => [file, fs.readFileSync(path.join(f.root, '.flowboard', file), 'utf8')]);
+  const before = inventory();
+  const child = require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, '../scripts/inspect-review-packet.js'), f.root, 'I-1', path.join(destination, 'packet')], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(child.status, 0, child.stderr);
+  const metrics = JSON.parse(child.stdout);
+  assert.equal(metrics.providerRequests, 0); assert.equal(metrics.reportCount, 1);
+  assert.match(metrics.schemaHash, /^[a-f0-9]{64}$/);
+  const packet = JSON.parse(fs.readFileSync(path.join(destination, 'packet/input.json')));
+  assert.ok(packet.finding.reportParagraphs.some(part => part.text.includes('Gate.finish(false) completes normally instead of reverting.')));
+  assert.ok(packet.sources.some(unit => unit.code.includes('require(accepted')));
+  assert.deepEqual(inventory(), before); assert.deepEqual(f.calls, []);
+});
 test('corrupt individual investigations cannot prevent intact siblings reopening with no provider', { skip: !native }, async t => {
   for (const brokenId of ['I-1', 'I-2']) {
     const f = await fixture(t, 2); await f.runner.ensure();
@@ -119,6 +136,67 @@ test('a crash after a durable provider response reuses generation in a fresh pro
   assert.equal(accepted.pendingResponse, undefined);
   const reopen = run('restore'); assert.equal(reopen.status, 0, reopen.stderr);
   assert.deepEqual(JSON.parse(reopen.stdout).calls, []); assert.deepEqual(JSON.parse(reopen.stdout).readable, ['I-1']);
+});
+test('a final paid response recovers in a fresh disabled-provider host at 2/2 without increasing allowance', { skip: !native }, async t => {
+  const f = await fixture(t, 2), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
+  const request = f.runner.request(entries[0], catalog, report), issue = f.runner.issue(entries[0]);
+  fs.writeFileSync(path.join(f.root, '.flowboard/controlled-answer.json'), JSON.stringify(response({ phase: 'challenge', sources: engine.makeContext(catalog, request, issue).units })));
+  const run = mode => require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'fixtures/reopen-preparation-host.js'), f.root, mode], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(run('crash-after-challenge').status, 73);
+  const pending = engine.read(f.root, 'I-1'); assert.equal(pending.pendingResponse.phase, 'challenge');
+  const before = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024);
+  assert.equal(before.resources.requests, 2); assert.equal(before.resources.limit, 2);
+  assert.ok(Object.values(before.resources.receipts).every(item => item.outcome === 'completed'));
+  const reopened = run('restore'); assert.equal(reopened.status, 0, reopened.stderr);
+  const state = JSON.parse(reopened.stdout);
+  assert.deepEqual(state.calls, []); assert.deepEqual(state.readable, ['I-1']);
+  assert.equal(state.status.requests, 2); assert.equal(state.status.requestLimit, 2);
+  assert.equal(state.jobs['I-2'].publishable, false, 'Unpaid sibling work must remain stopped.');
+  const accepted = engine.read(f.root, 'I-1');
+  assert.equal(accepted.causal.summary, pending.causal.summary);
+  assert.ok(accepted.runs.some(run => run.phase === 'challenge' && run.reusedResponse));
+  assert.equal(accepted.pendingResponse, undefined);
+  const again = JSON.parse(run('restore').stdout);
+  assert.deepEqual(again.calls, []); assert.deepEqual(again.readable, ['I-1']); assert.equal(again.status.requestLimit, 2);
+});
+test('local recovery cannot publish stale code, damaged responses or a generation missing its challenge', { skip: !native }, async t => {
+  for (const scenario of ['stale-code', 'damaged-response', 'missing-challenge']) await t.test(scenario, async t => {
+    const f = await fixture(t, 1), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
+    const request = f.runner.request(entries[0], catalog, report), issue = f.runner.issue(entries[0]);
+    fs.writeFileSync(path.join(f.root, '.flowboard/controlled-answer.json'), JSON.stringify(response({ phase: 'challenge', sources: engine.makeContext(catalog, request, issue).units })));
+    const run = mode => require('node:child_process').spawnSync(process.execPath,
+      [path.join(__dirname, 'fixtures/reopen-preparation-host.js'), f.root, mode], { encoding: 'utf8', timeout: 15000 });
+    assert.equal(run(scenario === 'missing-challenge' ? 'crash-after-response' : 'crash-after-challenge').status, 73);
+    const ledger = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024);
+    if (scenario === 'stale-code') fs.writeFileSync(path.join(f.root, 'src/Gate.sol'), code.replace('rejected', 'updated!'));
+    if (scenario === 'damaged-response') fs.writeFileSync(path.join(f.root, '.flowboard/provider-results/I-1.json'), '{ damaged response');
+    const reopened = run('restore'); assert.equal(reopened.status, 0, reopened.stderr);
+    const result = JSON.parse(reopened.stdout);
+    assert.deepEqual(result.calls, []); assert.deepEqual(result.readable, []);
+    assert.equal(result.status.requests, ledger.resources.requests); assert.equal(result.status.requestLimit, ledger.resources.limit);
+    assert.notEqual(result.jobs['I-1'].state, 'running');
+    if (scenario === 'missing-challenge') assert.equal(engine.read(f.root, 'I-1').checkpoint.stage, 'challenge');
+  });
+});
+test('a durable substantively checked model finishes host validation locally without resuming paid work', { skip: !native }, async t => {
+  const f = await fixture(t, 1); await f.runner.ensure(); f.runner.dispose();
+  const saved = engine.read(f.root, 'I-1'), summary = saved.causal.summary;
+  // Simulate interruption after assembled challenge checks, before sealing.
+  saved.phase = 'blocked'; saved.checkpoint.stage = 'challenge';
+  delete saved.publication; saved.error = 'Interrupted before final host validation'; saved.revision++;
+  engine.write(f.root, saved);
+  const ledger = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json');
+  ledger.mode = 'paused'; ledger.resources.limit = ledger.resources.requests;
+  p.atomicJson(f.root, '.flowboard/report-preparation.json', ledger);
+  const child = require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'fixtures/reopen-preparation-host.js'), f.root, 'restore'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout);
+  assert.deepEqual(result.calls, []); assert.deepEqual(result.readable, ['I-1']);
+  assert.equal(result.status.requests, 2); assert.equal(result.status.requestLimit, 2);
+  assert.equal(result.status.mode, 'paused');
+  assert.equal(engine.read(f.root, 'I-1').causal.summary, summary);
 });
 test('a live health lock cannot discard a completed generation, consume a phantom receipt, or require regeneration', { skip: !native }, async t => {
   const health = require('../extension/provider-health'), ownership = require('../extension/provider-ownership');
@@ -241,12 +319,12 @@ test('saved conditions and edited summary reach generation and challenge, and ca
   const failed = engine.read(f.root, 'I-1'); assert.match(failed.error, /saved preconditions|saved summary/);
   addressPremises = true; await f.runner.ensure({ retry: true });
   const draft = engine.read(f.root, 'I-1'); assert.ok(f.runner.published(draft), draft.error);
-  const changed = packets.filter(packet => packet.finding.preconditions?.length);
+  const changed = packets.filter(packet => packet.semanticInput.saved.preconditions?.length);
   assert.ok(changed.some(packet => packet.phase === 'generate')); assert.ok(changed.some(packet => packet.phase === 'challenge'));
   for (const packet of changed) {
     assert.deepEqual(packet.semanticInput.saved.preconditions, ['accepted must be true']);
     assert.equal(packet.semanticInput.saved.summary, saved.finding.summary);
-    assert.equal(packet.finding.savedSummary, saved.finding.summary);
+    assert.equal(packet.finding.savedSummary, undefined, 'Saved researcher fields appear in one canonical object, not duplicated in finding.');
     assert.ok(packet.finding.reportParagraphs.some(paragraph => paragraph.text.includes('false')), 'Original report quotation is retained unchanged.');
   }
   assert.deepEqual(draft.claims[0].conditions, ['accepted is true']);
@@ -617,7 +695,7 @@ test('a large cold manifest advances both new findings and checked continuations
   await f.runner.ensure();
   assert.equal(f.calls.length, 6); assert.ok(f.runner.status().ready >= 1);
   assert.ok(new Set(f.calls.map(call => call[0])).size >= 3, 'Continuations do not monopolize every worker.');
-  assert.equal(f.runner.status().published, false, 'Private progress does not weaken the manifest barrier.');
+  assert.equal(f.runner.status().published, false, 'Aggregate completion is still false; independently ready findings are already readable.');
   assert.equal(f.runner.tasks.size, 0);
 });
 test('same-source restart reuses the manifest without one full workspace scan per artifact', { skip: !native }, async t => {

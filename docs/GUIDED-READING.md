@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.17
+# Checked finding walkthroughs — 0.18
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -20,7 +20,7 @@ Exact named definitions precede lexical candidates. Missing mandatory definition
 
 ## Atomic readiness within each finding
 
-`guide-policy.js` maintains the `checked-explanation-v6` gate. Each material statement needs evidence-linked applicability, entry, conditions, behavior, settlement, expected-rule, impact and counterevidence obligations. An obligation must be established, refuted, or justified as nonapplicable; an open obligation blocks the guide. A supported violation requires an independent rule and consequence. A refutation requires decisive counterevidence for the reviewed scope. A function invocation cannot silently switch to another function's source card or another transaction. Modifier steps can stay within the enclosing invocation. Shared schema, acceptance, storage and UI limits admit 8 claims, 64 obligations, 18 events, 30 relationships and the resulting 112 distinct checks. Typed check IDs prevent an event and obligation sharing an ID from accidentally covering each other.
+`guide-policy.js` maintains the `checked-explanation-v7` gate. Each material statement needs evidence-linked applicability, entry, conditions, behavior, settlement, expected-rule, impact and counterevidence obligations. An obligation must be established, refuted, or justified as nonapplicable; an open obligation blocks the guide. A supported violation requires an independent rule and consequence. A refutation requires decisive counterevidence for the reviewed scope. A function invocation cannot silently switch to another function's source card or another transaction. Modifier steps can stay within the enclosing invocation. Shared schema, acceptance, storage and UI limits admit 8 claims, 64 obligations, 18 events, 30 relationships and the resulting 112 distinct checks. Typed check IDs prevent an event and obligation sharing an ID from accidentally covering each other.
 
 Call transitions bind the event and handoff to one `callSiteId`, derived from the current file identity and exact occurrence span. Receiver, argument positions, named arguments and value/gas/salt options belong to that same occurrence. Two calls on one line or two calls to the same helper cannot supply each other's evidence. The host checks material caller expressions against actual callee parameters and keeps the invocation and return location distinct. Typed dispatch evidence records implementation, receiver, execution context and failure handling. An internal helper preserves the EVM caller and execution address; a return does not change them into the return recipient. Valid locations remain necessary but do not prove the explanation.
 
@@ -30,7 +30,9 @@ An unchanged argument can use compact challenge checks. Newly acquired code, ope
 
 The summary, generated notes, assessment and walkthrough become available together for each accepted finding. The host strips these fields on every ordinary reading surface of an unfinished finding. `.flowboard/report-preparation.json` retains per-finding acceptance, compatible content identities and aggregate report progress. A queued, blocked, failed or paused sibling does not hide a ready guide. Pausing remaining work also leaves compatible ready guides readable. A digest seals each artifact; changed explanation text invalidates it even if its quotation matches. Source/report changes revoke affected work, not unrelated accepted findings. This is an evidence-handling gate, not a formal verifier or a truth oracle.
 
-Restart and re-import locally revalidate accepted artifacts before exposing them. An old private artifact does not need a provider request just because the earlier report-wide gate was closed. Migration is deliberately narrow: a sealed, complete v4/v5 artifact with unchanged relevant inputs, no unchecked researcher premise, and no call/callback/return handoff may pass the full v6 gate locally. Older handoffs need the new receiver-write, failure-path and invocation-input checks. Incomplete artifacts are never promoted by changing a version string. Human decisions and notes are not overwritten.
+Restart and re-import locally revalidate accepted artifacts before exposing them. An old private artifact does not need a provider request just because the earlier report-wide gate was closed. Migration is deliberately narrow: a sealed, complete v4/v5 artifact with unchanged relevant inputs, no unchecked researcher premise, and no call/callback/return handoff may pass the full current gate locally. Version 6 artifacts are not stamped with version 7: affected explanations need the new reachability and call-time value checks. Incomplete artifacts are never promoted by changing a version string. Human decisions and notes are not overwritten.
+
+Failure checks use a deliberately bounded source-preserving statement parser. Custom errors and built-in failures must lie on the established path; recognizing their encoding does not prove execution. Known boolean conditions and preceding simple parameter assignments can establish a selected path, including assignments before the first displayed step. Unknown control flow, complex mutation or nested shadowing cannot prove a material failure. This is not a general symbolic executor. An applicable `catch Error(string)` may either continue or return from the caller; `caught-return` follows the exact return in that catch, not a later write. A checked local string declaration or string parameter establishes the reason overload without requiring the message to be a literal.
 
 ## Durable preparation and limits
 
@@ -40,9 +42,15 @@ One local host owns the report through a PID/attempt lock. `flowboardTriage.prep
 
 Generation and newly read context are checkpointed before challenge. Host restart validates the workspace once before checking artifact dependencies. Closing the webview does not cancel jobs; stopping the extension host stops execution. Pause cancels capacity waits and lets already dispatched requests finish, but starts no new request. An accepted completion stays ready even when remaining preparation is paused. Cancel rejects affected late results and releases each source-index consumer; shared indexing stops only when no consumer remains. Every owned exit leaves a coherent job state and retains accepted work.
 
+A compatible final response is already paid work. Restart can replay it and finish current host checks even at an exhausted allowance, with the provider disabled or the report paused. It neither raises the allowance nor resumes unpaid sibling work. A durable, assembled substantive challenge can likewise finish local validation after an interruption. Missing challenge coverage, changed inputs/code and damaged responses still withhold publication. Source and semantic checks are not bypassed by recovery.
+
 `flowboardTriage.reportRequestLimit` defaults to 12 requests shared by the report, never per finding. Explicit Resume adds one configured allowance and retains cumulative counts. A separate per-finding allowance of six requests pauses only that finding. Before work starts, the status estimates remaining generation/challenge requests versus the authorized allowance; it does not silently increase either limit. Codex requests have a 240-second wall deadline; Claude has a 180-second deadline and configured per-request USD cap. Codex has no dollar cap. Reservations and completed receipts retain cumulative usage independently of the rolling debug history.
 
 The transport audit records the request/reservation identity, effective safe invocation configuration, capacity wait, process start, first activity, first provider event, substantive content, final structured content, process exit and host acceptance where reached. Input sizes distinguish report, source, metadata, prior draft, instructions and schema; output limits count actual stdout/stderr bytes. Usage is recorded only when supplied, and unknown cost stays unknown. UTF-8 decoding carries incomplete characters across chunks and flushes at EOF. Neither elapsed time nor a live process is reported as useful reasoning progress.
+
+The whole request has a 256 KiB pre-dispatch bound covering input, instructions, response schema and framing. The audit distinguishes that conservative bound from actual serialized bytes. Oversize packets stop before reserving a request; material content is not silently truncated. Saved researcher fields travel once in their canonical input object. `scripts/inspect-review-packet.js ABS_WORKSPACE FINDING ABS_PRIVATE_OUTPUT` captures the first production packet offline without a provider call, allowance reservation or target-workspace write; set `FLOWBOARD_EXTENSION_PATH` and use a new output directory outside both repositories.
+
+On Linux/WSL, termination confirmation covers the owned process group. Arbitrary wrappers that daemonize into an unrelated process group are **unsupported**; `treeVerified:false` explicitly avoids claiming that closed pipes establish whole-tree termination. Ordinary inherited-pipe, timeout, cancellation and normal-completion controls remain covered. If local PIDs cannot be reconciled with the mounted `/proc`, a live-but-unidentifiable owner stops finitely with a host-capability error; it is not reaped as dead. Other platforms and escaped daemon containment are not certified by Linux tests.
 
 Two transport/deadline failures in a ten-minute window open a shared local stop for that provider/executable configuration. Source-evidence gaps and rejected reasoning do not count as transport failures. Pending jobs and accepted checkpoints remain saved; check access and explicitly retry or resume after addressing the failure. Reopening a view or a late successful peer does not silently clear the stop. This limits repeated failed dispatch, not provider latency, request cost or explanation errors. Codex currently uses the CLI default model with medium reasoning and ignores user configuration; a configured model not passed by the adapter is not claimed as the effective model.
 
@@ -188,3 +196,79 @@ Therefore **zero new real findings became checked and visible in this iteration*
 #### Build and activation boundary
 
 Workspace, VSIX and installed WSL extension are **0.17.0**. The normal `cursor-server --install-extension ... --force` workflow completed; 52 installed extension files match the tested package (the installer's `package.json.__metadata` is excluded from that comparison). The final paired browser run loaded that installed directory, not the workspace renderer. The last explicit editor activation record still identifies **0.15.0** at `local.flowboard-triage-0.15.0`; no reload was forced. Save editor work and use **Developer: Reload Window**, then check **Output -> Flowboard Triage** for a new activation version/path. A live Cursor walkthrough remains unverified until that separate action and check.
+
+### Local v0.18 verification, 2026-10-05
+
+Baseline `ff2bb2fe0dbc3e3f6199a7d5691a18386d4d8633`, branch `improve/checked-reading-path`; initially clean. Build 0.18.0 retains native Flowboard 1.2.0 and the pinned archive hash above. Tests ran on the same WSL/Linux host, Node 20.20.1, four exposed i7-11800H CPUs and 8 GiB memory. Private protocol source, original report ledger and human records were not changed. No main merge or release is part of this work.
+
+#### Reproduced failures and bounded fixes
+
+| Old behavior | Production change and positive/negative control |
+| --- | --- |
+| An unchosen nested custom revert could certify a failed callee | `execution-slice.js` checks the selected source path before `call-bindings.js` classifies the error. False conditional failure is withheld; unconditional and established selected-branch failures pass. Unknown conditions remain blockers. |
+| Entry `false` survived an earlier `flag = true` at the first shown call | Ordered parameter writes also apply before the first displayed event. The invented rollback fails the gate; the successful true-input control passes. Repeated-invocation and supported reassignment checks remain. |
+| A matching catch return was rejected; a named string reason was unknown | `caught-return` follows the exact caller return and excludes subsequent writes. A scoped string declaration/parameter identifies Error(string). Matching returns/reasons pass; wrong catch types and post-return commits are withheld. |
+| A durable final answer at 2/2 could not finish without raising the allowance | `report-preparation.js` invokes unpaid local recovery before outer pause/budget checks. Fresh OS-process exit/reopen restores the final challenge at unchanged 2/2 with provider disabled and zero dispatch. Stale, damaged and generation-only controls remain unreadable. |
+| A no-guide manual selection did not revoke older navigation | `beginGuideDetour` invalidates navigation before its guide-availability check. Absent, preparing and blocked states preserve the newer note's function, line, text, focus and caret when an old reply arrives. |
+| A live process missing from mounted `/proc` could be reaped as dead | Ownership distinguishes a live unidentifiable PID from ESRCH. Capacity acquisition fails finitely with an explicit host-compatibility reason; the live owner's file remains. |
+| Group teardown was described too broadly for an escaping daemon | Actual subprocess controls retain inherited-pipe cleanup and demonstrate the unsupported detached-worker case. Receipts now explicitly certify only the owned group, with `treeVerified:false`; no whole-tree guarantee is inferred from closed pipes. |
+
+Both false-Ready cases were reproduced through native parsing, SourceCatalog, investigation acceptance, explanation checks, gate and exposure before repair. The supported semantics remain deliberately bounded, not universal Solidity execution verification. Current policy v7 does not blindly promote old v6 explanations. Original cards/source, note drafts, Undo, per-finding readiness and selected-finding scheduling are retained.
+
+A fresh provider response also exposed a regression in the new root-input check: an explicit input literal was overwritten by its parameter-name fallback. The regression was fixed with a native acceptance/exposure positive control and a later-value-drift negative control. The **unchanged** paid generation/challenge was then accepted by fresh-process local validation, without editing the model's explanation or spending another request. This is recorded as a repaired host false-block, not as first-attempt success.
+
+#### Offline and native checks
+
+- `FLOWBOARD_EXTENSION_PATH=/path/to/native/extension node --test --test-reporter=spec tests/*.test.js`: **373 passed, 0 failed, 0 skipped**. The current exact-call subset contains 44 of these tests. Controlled responses are labeled fixtures.
+- `FLOWBOARD_FORGE_PATH=... FLOWBOARD_SOLC_PATH=... node scripts/check-call-semantics.js`: **15 passed, 0 failed, 0 skipped**, Foundry 1.7.1/Solidity 0.8.13, offline fictional language controls, not protocol reproductions.
+- `scripts/native_walkthrough_browser.py`: **16 native-renderer groups passed**, including absent/preparing/blocked note races, capacity recovery, breakpoint boundaries, caret, exact highlights, Undo and sibling updates. `scripts/quality_harness_test.py`: **3 passed**. An obsolete selector in `checked_guide_browser.py` was corrected; its initial failed run is not counted as a pass.
+- The real-provider fictional artifact passed **9 groups** in `checked_guide_browser.py --workspace ... --finding I-1 --provider none`: exact original function/lines and report quotation, both steps, assessment, source detour/Return, keyboard, narrow/light/dark views, native deletion/Undo and controller reopen. **Zero additional provider calls**. Minimum sampled text contrast was 5.64:1 dark and 5.48:1 light. The four-finding manifest remains intact; only the checked artifact is readable.
+- The mixed-state harness separately exercises real production preparation with fixed answers: A ready, B held in challenge, C blocked, D failed; B publication preserves A's note/caret/position. Pause/reopen/recreated coordinator use no new calls. Fresh OS-process disk recovery is covered by the separate Node tests, not mislabeled as this browser test.
+
+All browser results use the original native renderer with simulated editor transport, **not a live Cursor window**. Screenshots and private provider packets remain outside public files. The actual tiny AI answer was read against the complete source: its false input hits the sole require; the invocation fails with no writes, but an unspecified outer caller may catch it. The answer and challenge preserve that distinction. This is a complete **fictional** source refutation, not the real-finding milestone.
+
+#### Sequential paired playback, not provider speed
+
+Reproduce with `scripts/paired_native_route.py --baseline ff2bb2fe0dbc3e3f6199a7d5691a18386d4d8633 --samples 3 --reopens 20 --output <new-directory>` and the pinned native path. The same five functions, 15 events, actual handoffs, repeated calls, long helper and rollback are prepared with two fixed responses per version. Workload and extension hashes are checked; no competing implementation benchmark ran during the final pair.
+
+Timing now ends only after the expected function/header, full-source tail, annotation, exact span/occurrence and readable viewport are verified. Within-function and cross-function samples are separated. This differs from the older two-animation-frame timing, so compare this pair internally rather than interpreting older absolute numbers as a speedup.
+
+| Local measurement | v0.17 baseline median / p95 | v0.18 median / p95 | Samples/version |
+| --- | ---: | ---: | ---: |
+| All steps | 12.0 / 21.1 ms | 11.1 / 19.8 ms | 84 |
+| Same function | 7.75 / 17.6 ms | 10.15 / 13.5 ms | 24 |
+| Cross-function | 12.6 / 25.5 ms | 11.2 / 20.5 ms | 60 |
+| Controller reopen | 284.90 / 329.93 ms | 284.51 / 340.95 ms | 20 |
+
+Both provisional p95 targets pass locally; differences are small and include run variation. Reopen p95 is slightly worse, not a claimed speedup. These measurements do not measure an OS extension-host restart, real model generation, cold source indexing or dropped frames. The separate 12-card presentation stress run remains a microbenchmark (only two traversed functions), not a 12-function causal route.
+
+#### Fresh provider allowance and remaining real-case gate
+
+Fresh authorization: at most four requests for a complete small fictional generation/challenge, then unchanged real-finding generation/challenge. **Three used; one unused.** No repeated live dispatch, repair or unapproved allowance increase occurred. The experiment used an isolated private copy, full 261-finding real manifest, siblings paused for the scoped diagnostic; the user's original exhausted 68/68 ledger was untouched.
+
+| Request | First provider event | First substantive/final | Terminal wall time | Outcome |
+| --- | ---: | ---: | ---: | --- |
+| Complete small fictional generation | 0.619 s | 105.178 s | 106.986 s | Complete structured draft |
+| Same case, substantive challenge | 0.284 s | 37.720 s | 42.603 s | Explanation retained; current host gate passed after the local input-check repair |
+| Unchanged full local real finding, generation | 0.646 s | None | 243.952 s | 240 s deadline plus bounded cleanup; no draft/challenge/guide |
+
+Same production schema/adapter, Codex CLI 0.160.0, isolated configuration, medium reasoning, tools disabled; actual model name unobserved. Capacity waits were 4/33/31 ms. The first two requests reported 30,320 input and 3,585 output tokens combined, including 453 reasoning tokens; failed real generation supplied no usage. All USD costs are unknown. No hidden reasoning was collected. The disabled-tool notice occurred in both successful and failed requests and does not establish a cause.
+
+Actual serialized bytes including instructions/schema: fictional generation 31,985; challenge 34,760; real generation 75,058. Real data was 45,984 bytes (report 6,910; source 29,247; metadata 9,677; envelope 150), plus 20,515 instruction bytes and 8,509 schema bytes. Only duplicate saved-input copies were removed; required source/claims were retained. The materially complete small case establishes that this response contract can finish; it does not establish why the larger case times out. No schema/deadline/model tradeoff is claimed from these unequal cases.
+
+| Preparation comparison | Prior v0.17 observation | Current observation |
+| --- | --- | --- |
+| Full unchanged real generation | No final answer; 243.459 s | No final answer; 243.952 s |
+| Real substantive challenge / checked-to-visible | Not reached | Not reached |
+| Complete small fictional generation + challenge | Not measured on this input | 149.589 s provider wall time, excluding local false-block repair/recovery and UI |
+| Cold local index | 11.813 s, one earlier sample | 11.254 s offline sample; 23.060 s during live-run setup with other local work |
+
+The cold index samples are not a paired performance benchmark. No preparation speedup, model-quality generality or completed **real** walkthrough is claimed. The exact remaining gate is a complete real generation followed by substantive challenge, acceptance, persistence and native playback; the unchanged local reference case is already prepared privately for that check. The last request was not spent repeating a generation that could not leave enough authorized calls for its challenge. A new paid experiment needs a separately bounded authorization; no background retry was left running. Arbitrary external dispatch/policy facts remain unsupported without independently checked evidence.
+
+The final mixed-state sample opened ready A in 186.28 ms. Releasing B's controlled challenge to observing host acceptance took 17.33 ms; this is **not** isolated accepted-to-visible latency, which remains unmeasured. A retained its exact function, highlight, note text and caret. Both A/B survived pause and re-created coordinator/controller with eight total fixed responses and zero external or extra playback requests.
+
+#### Build, privacy and activation
+
+Workspace, packaged and locally installed versions are **0.18.0**. Installation used the normal WSL `cursor-server --install-extension ... --force` command. All **53** extension files match the tested VSIX, excluding only installer-added `package.json.__metadata`. The installed directory is `local.flowboard-triage-0.18.0`; native dependency remains 1.2.0. The installed modules/assets were exercised by the same five-function native workflow with two controlled responses, not a live provider or Cursor window.
+
+The public source/package allowlist contains only tool files and fictional fixtures; no private report/source, model responses, provider receipts or screenshots are included. The latest explicit editor activation record still identifies **0.15.0** at `local.flowboard-triage-0.15.0`. No reload was forced. After saving editor work, **Developer: Reload Window** and a new **Output -> Flowboard Triage** version/path line are still required to establish active 0.18.0, followed by the actual Cursor walkthrough check. Package installation alone is not that evidence.

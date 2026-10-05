@@ -392,6 +392,7 @@ async function semanticFixture(t, options = {}) {
 interface IGuard { function finish(bool accepted) external; }
 contract Other { function finish(bool accepted) external {} }
 contract Guard {
+ error Rejected();
  function finish(bool accepted) external {
   ${options.reassign ? (typeof options.reassign === 'string' ? options.reassign : 'accepted = false;') + '\n  ' : ''}${options.guard || 'require(accepted, "rejected");'}
  }
@@ -403,10 +404,11 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   guard = IGuard(address(new Guard()));
  }
  ${options.inherited ? '}\ncontract Caller is Base {\n bool completed;' : ''}
- function enter(${options.unknown ? 'bool unknown' : ''}) external {
-  ${local ? 'IGuard guard = IGuard(address(new Guard()));\n  ' + options.local + '\n  ' : ''}${options.catches !== undefined ? `try guard.finish(${options.unknown ? 'unknown' : 'false'}) {} ` + options.catches : `guard.finish(${options.drift ? 'true' : 'false'});`}
+ function enter(${options.entryParameter || (options.unknown ? 'bool unknown' : '')}) external ${options.returns ? 'returns (bool)' : ''}{
+  ${options.entrySetup ? options.entrySetup + '\n  ' : ''}${local ? 'IGuard guard = IGuard(address(new Guard()));\n  ' + options.local + '\n  ' : ''}${options.catches !== undefined ? `try guard.finish(${options.argument || (options.unknown ? 'unknown' : 'false')}) {} ` + options.catches : `guard.finish(${options.drift ? 'true' : 'false'});`}
   ${options.drift ? 'guard.finish(false);' : ''}
   completed = true;
+  ${options.returns ? 'return true;' : ''}
  }
 }`;
   const catalog = await sourceFixture(t, source);
@@ -418,15 +420,19 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   const draft = callDraft('    finish(false);');
   draft.sources = [caller, callee, constructor, declaration];
   const lineOf = (unit, text) => unit.source.line + unit.code.split('\n').findIndex(line => line.includes(text));
-  draft.evidence = [note(caller, 'call', call.line), note(callee, 'guard', lineOf(callee, options.guard || 'require('), 'contradicts'),
+  draft.evidence = [note(caller, 'call', call.line), note(callee, 'guard', lineOf(callee, options.failureNeedle || options.guard || 'require('), 'contradicts'),
     note(constructor, 'construction', lineOf(constructor, 'guard =')), note(declaration, 'immutable', declaration.source.line),
     note(caller, 'continuation', lineOf(caller, 'completed ='))];
   if (local) draft.evidence.push(note(caller, 'local-binding', lineOf(caller, 'IGuard guard =')));
   if (options.reassign) draft.evidence.push(note(callee, 'assignment', lineOf(callee, typeof options.reassign === 'string' ? options.reassign : 'accepted = false')));
+  if (options.entrySetup) draft.evidence.push(note(caller, 'entry-assignment', lineOf(caller, options.entrySetup)));
   const ids = draft.evidence.map(item => item.id), [entry, finish] = draft.causal.events;
   entry.callSiteId = call.id; entry.receiver = 'Caller';
   finish.receiver = 'guard'; finish.caller = 'Caller';
   if (options.unknown) finish.inputs[0].expression = 'unknown';
+  if (options.argument) finish.inputs[0].expression = options.argument;
+  if (options.entryParameter) entry.inputs = [{ name: 'flag', expression: options.entryValue || 'false', type: 'bool', units: 'boolean', origin: 'The displayed call-time input; the external entry premise may be changed by earlier source.', evidence: ['call', 'entry-assignment'] }];
+  if (options.success) finish.effect = 'condition';
   if (options.drift) {
     finish.effect = 'condition'; finish.inputs[0].expression = 'true';
     draft.causal.events.push({ ...structuredClone(finish), id: 'later-check', title: 'Reject inside the same invocation',
@@ -437,11 +443,16 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
       binding: 'Inspect the same invocation.', explanation: 'Read the next condition.', evidence: ids });
   }
   const link = draft.causal.relationships[0]; link.callSiteId = call.id; link.evidence = ids;
-  link.dispatch = { kind: 'local-instance', receiver: 'guard', implementation: 'callee', evidence: ids, context: 'call', failure: options.continues === false ? 'propagates' : options.catches !== undefined ? 'caught' : call.failure };
+  link.dispatch = { kind: 'local-instance', receiver: 'guard', implementation: 'callee', evidence: ids, context: 'call', failure: options.success ? 'not-applicable' : options.catchReturn ? 'caught-return' : options.continues === false ? 'propagates' : options.catches !== undefined ? 'caught' : call.failure };
   if (options.catches !== undefined && options.continues !== false) {
-    draft.causal.events.push({ ...entry, id: 'after-catch', title: 'Commit after the handled failure', evidenceId: 'continuation', callSiteId: '', effect: 'committed' });
+    draft.causal.events.push({ ...entry, inputs: [], id: 'after-catch', title: 'Commit after the handled failure', evidenceId: 'continuation', callSiteId: '', effect: 'committed' });
     draft.causal.order.push('after-catch');
     draft.causal.relationships.push({ ...structuredClone(link), from: 'finish', to: 'after-catch', kind: 'return', explanation: 'Continue after handling the callee failure.' });
+    if (options.catchReturn) {
+      draft.evidence.find(item => item.id === 'continuation').source = { ...draft.evidence.find(item => item.id === 'call').source };
+      draft.evidence.find(item => item.id === 'continuation').quote = draft.evidence.find(item => item.id === 'call').quote;
+      Object.assign(draft.causal.events.at(-1), { effect: 'return', title: 'The matching catch returns false from the caller' });
+    }
   }
   draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key,
     reason: 'Controlled challenge claims complete coverage; deterministic Solidity checks must independently agree.', evidence: ids, documentation: [] }));
@@ -537,6 +548,62 @@ test('production acceptance checks typed catches and a continuing matching catch
   }
 });
 
+test('conditional custom errors need a reachable source path, not a matching error class', { skip: !native }, async t => {
+  const bad = await semanticFixture(t, { guard: 'if (accepted) {\n   revert Rejected();\n  }', failureNeedle: 'revert Rejected', catches: 'catch {}' });
+  assert.equal(bad.result.gate.ready, false, 'accepted=false cannot execute the nested custom revert.');
+  assert.equal(bad.result.exposed.causal, undefined);
+  const good = await semanticFixture(t, { guard: 'revert Rejected();', catches: 'catch {}' });
+  assert.equal(good.result.gate.ready, true, good.result.gate.problems.join('\n'));
+  const chosen = await semanticFixture(t, { guard: 'if (!accepted) {\n   revert Rejected();\n  }', failureNeedle: 'revert Rejected', catches: 'catch {}' });
+  assert.equal(chosen.result.gate.ready, true, chosen.result.gate.problems.join('\n'));
+  const unknown = await semanticFixture(t, { unknown: true, guard: 'if (accepted) {\n   revert Rejected();\n  }', failureNeedle: 'revert Rejected', catches: 'catch {}' });
+  assert.equal(unknown.result.gate.ready, false);
+});
+test('the first displayed root call uses preceding assignments instead of its entry premise', { skip: !native }, async t => {
+  const { result } = await semanticFixture(t, { entryParameter: 'bool flag', entrySetup: 'flag = true;', argument: 'flag',
+    catches: 'catch Error(string memory) {}', returns: true });
+  assert.equal(result.gate.ready, false, 'The explicit flag=true write defeats the claimed require failure.');
+  assert.equal(result.exposed.causal, undefined);
+  const success = await semanticFixture(t, { entryParameter: 'bool flag', entrySetup: 'flag = true;', argument: 'flag',
+    entryValue: 'true', success: true, catches: 'catch Error(string memory) {}', returns: true });
+  assert.equal(success.result.gate.ready, true, success.result.gate.problems.join('\n'));
+});
+test('root input literals survive entry checks without being replaced by their parameter name', { skip: !native }, async t => {
+  const { draft } = await semanticFixture(t);
+  const finish = draft.causal.events.find(event => event.id === 'finish');
+  // A report may start at the external function itself. No caller in the
+  // reading route does not erase the explicitly chosen entry input.
+  finish.inputs[0].evidence = ['guard'];
+  const later = { ...structuredClone(finish), id: 'outcome', title: 'The invocation reverts' };
+  draft.causal.events = [finish, later]; draft.causal.order = ['finish', 'outcome'];
+  draft.causal.relationships = [{ from: 'finish', to: 'outcome', kind: 'branch',
+    explanation: 'The failed guard ends this invocation.', binding: '', evidence: ['guard'], callSiteId: '',
+    dispatch: { kind: 'not-applicable', receiver: '', implementation: '', evidence: [], context: 'none', failure: 'not-applicable' } }];
+  draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key,
+    reason: 'Checked complete local guard with an unchanged false input.', evidence: draft.evidence.map(item => item.id), documentation: [] }));
+  let result = checkedPipeline(draft);
+  assert.equal(result.gate.ready, true, result.gate.problems.join('\n'));
+  assert.ok(result.exposed.causal);
+  later.inputs[0].expression = 'true';
+  result = checkedPipeline(draft);
+  assert.equal(result.gate.ready, false, 'The same invocation cannot silently change the root input later.');
+  assert.equal(result.exposed.causal, undefined);
+});
+test('a matching catch may return from the caller but cannot reach the later committed write', { skip: !native }, async t => {
+  const good = await semanticFixture(t, { catches: 'catch Error(string memory) { return false; }', catchReturn: true, returns: true });
+  assert.equal(good.result.gate.ready, true, good.result.gate.problems.join('\n'));
+  assert.ok(good.result.exposed.causal);
+  const bad = await semanticFixture(t, { catches: 'catch Error(string memory) { return false; }', returns: true });
+  assert.equal(bad.result.gate.ready, false);
+  assert.equal(bad.result.exposed.causal, undefined);
+});
+test('a declared string require reason uses Error(string) without knowing the message contents', { skip: !native }, async t => {
+  const options = { guard: 'string memory reason = "rejected";\n  require(accepted, reason);', failureNeedle: 'require(accepted' };
+  const good = await semanticFixture(t, { ...options, catches: 'catch Error(string memory) {}' });
+  assert.equal(good.result.gate.ready, true, good.result.gate.problems.join('\n'));
+  const bad = await semanticFixture(t, { ...options, catches: 'catch Panic(uint256) {}' });
+  assert.equal(bad.result.gate.ready, false);
+});
 test('production acceptance conserves invocation inputs unless checked source changes them', { skip: !native }, async t => {
   const drift = await semanticFixture(t, { drift: true });
   assert.equal(drift.result.gate.ready, false, 'The first finish(true) invocation cannot borrow false from the second call.');

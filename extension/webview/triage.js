@@ -320,6 +320,9 @@
     guideMode = 'explore'; guideNavigation = null; renderGuide(); schedulePersist();
   }
   function beginGuideDetour(identity) {
+    // Manual source ownership exists before a guide is ready too. A newer
+    // gutter/editor selection invalidates every older async inspection.
+    guideNavigation = null; guidePending = false;
     if (!guide || sourceStale || guideMode === 'closed') return false;
     if (!guideReturn) guideReturn = guideCapture();
     guideMode = 'detour'; guideIntent = 'explore'; guideNavigation = null; guidePending = false; guideError = null;
