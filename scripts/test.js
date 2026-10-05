@@ -7,6 +7,10 @@ const root = path.resolve(__dirname, '..');
 // argument is no longer discovered as a test suite by newer Node releases.
 const files = fs.readdirSync(path.join(root, 'tests')).filter(name => name.endsWith('.test.js')).sort().map(name => path.join(root, 'tests', name));
 if (!files.length) throw new Error('No test files found.');
-const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2), ...files], { cwd: root, stdio: 'inherit' });
+// Process-ownership tests inspect live /proc state and intentionally short
+// deadlines. Run files sequentially by default so unrelated indexing/browser
+// work in other test files cannot consume those bounds. Explicit overrides
+// remain available for stress investigation, not the canonical CI result.
+const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...process.argv.slice(2), ...files], { cwd: root, stdio: 'inherit' });
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

@@ -2,7 +2,7 @@
 
 Flowboard Triage is an independent MIT-licensed companion. Useful contributions include explicit report formats/fixtures, source navigation precision, accessible native-canvas additions and editor/platform testing.
 
-1. Work on a branch. Run `npm test` with Node.js 18+.
+1. Work on a branch. Run `npm test` with Node.js 18+. The canonical runner uses `--test-concurrency=1`: live-owner/quarantine tests and source indexing must not compete across test files for short fixture deadlines. All assertions remain active. `npm test -- --test-concurrency=4` is an optional stress run, not the supported CI baseline. Earlier 0.19.2 parallel runs had capacity-deadline/cancellation failures; sequential 386/386 was clean, not proof that load explains every possible failure.
 2. For real source/panel integration, extract the pinned upstream VSIX and set `FLOWBOARD_EXTENSION_PATH` to its `extension/` directory before testing. Otherwise those cases are explicitly skipped.
 3. For real browser coverage, install Python Playwright/Chromium separately and run `scripts/native_visual_smoke.py` with that same environment variable.
 4. Keep examples fictional or explicitly cleared for public use. Never include engagement reports, tokens, credentials or proprietary source.

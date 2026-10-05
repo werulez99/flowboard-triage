@@ -169,13 +169,20 @@ try:
         result['checks'].append('A material caller argument opens an exact evidence detour; Return restores the first increment invocation rather than the second use of the same function.')
         # Persist the unchanged prepared artifact and navigation, then measure
         # ordinary reopen in this same host (not reload-only DOM mutation).
+        result['reopenPhases']=[]
         for run in range(args.reopens):
             wait_state(lambda s:(s.get('snapshots',{}).get('I-1',{}).get('state',{}).get('view',{}).get('walkthrough') or {}).get('index')==order.index('first-write'))
             page.evaluate('()=>{window.routeClosing=true;clearInterval(window.routeTimer)}');page.wait_for_timeout(60)
-            started=time.monotonic();request('/action',{'name':'reopen'});page.reload()
+            started=time.monotonic();request('/action',{'name':'reopen'});host_done=time.monotonic()
+            page.reload();reload_done=time.monotonic()
             page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:library")')
+            library_done=time.monotonic()
             page.locator('[data-finding-id="I-1"]').click();page.wait_for_selector('.guide-annotation')
-            verify('first-write');opening.append((time.monotonic()-started)*1000)
+            annotation_done=time.monotonic()
+            verify('first-write');verified=time.monotonic();opening.append((verified-started)*1000)
+            result['reopenPhases'].append({'hostMs':(host_done-started)*1000,'reloadMs':(reload_done-host_done)*1000,
+                'libraryMs':(library_done-reload_done)*1000,'selectionMs':(annotation_done-library_done)*1000,
+                'verificationMs':(verified-annotation_done)*1000})
             state=request('/state');assert state['investigation']['publication']['digest']==artifact and len(state['providerCalls'])==2
         result['checks'].append('Compatible saved reopen retains the same accepted artifact and repeated-invocation position with no new controlled requests.')
         # The problematic responsive boundaries, including a short pane, use

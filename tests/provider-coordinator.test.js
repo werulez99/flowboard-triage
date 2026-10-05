@@ -64,6 +64,34 @@ test('production coordinator waits for shared capacity without reserving, then g
   assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   await f.runner.ensure(); assert.equal(f.calls.length, 2, 'Opening a ready artifact does not acquire or dispatch another provider request.');
 });
+test('explicit guarded pair changes only its generation deadline; challenge/default and exact two-call allowance remain', { skip: !native }, async t => {
+  const { EventEmitter } = require('node:events'), { PassThrough } = require('node:stream');
+  const provider = require('../extension/semantic-provider'); let dispatched = 0; const audits = [];
+  const fake = value => (_exe, args) => {
+    assert.ok(args.includes('--output-schema')); assert.ok(args.includes('model_reasoning_effort="medium"'));
+    const child = new EventEmitter(); child.pid = process.pid; child.stdin = new PassThrough(); child.stdin.resume(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    child.stdin.on('finish', () => queueMicrotask(() => { child.emit('spawn'); child.stdout.write([
+      { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(value) } }, { type: 'turn.completed', usage: { output_tokens: 1 } }
+    ].map(JSON.stringify).join('\n')); child.emit('close', 0); })); return child;
+  };
+  const f = await fixture(t, 1, async (input, options) => {
+    assert.equal(input.finding.id, 'I-1'); assert.equal(input.phase, dispatched === 0 ? 'generate' : 'challenge');
+    assert.ok(dispatched < 2); dispatched++;
+    const result = await provider.runProvider(input, { ...options, ...(input.phase === 'generate' ? { timeoutMs: 600000 } : {}), spawn: fake(response(input)) });
+    audits.push(result.audit); return result;
+  });
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 2, findingRequestLimit: 2, workers: 1 });
+  await f.runner.ensure();
+  assert.equal(dispatched, 2); assert.deepEqual(audits.map(a => a.deadline.milliseconds), [600000, 240000]);
+  assert.ok(Object.values(f.runner.state.resources.receipts).every(receipt => receipt.hostAcceptedAt));
+  assert.equal(f.runner.state.resources.requests, 2);
+  assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
+  const normal = await provider.runCodex({ phase: 'generate' }, { spawn: fake({ controlled: true }) });
+  assert.equal(normal.audit.deadline.milliseconds, 240000);
+  fs.writeFileSync(path.join(f.root, 'report.md'), report(2)); await importReport(path.join(f.root, 'report.md'), f.root, native, { deferMapping: true });
+  await f.runner.ensure(); assert.equal(dispatched, 2, 'An extra job cannot reserve or dispatch a third request.');
+  assert.equal(f.runner.state.resources.requests, 2); assert.equal(f.runner.state.resources.limit, 2);
+});
 test('pause cancels a waiting sibling promptly without hiding ready work on reopen or reserving a request', { skip: !native }, async t => {
   const f = await fixture(t); await f.runner.ensure(); assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   const human = path.join(f.root, '.flowboard/human-note.txt'); fs.writeFileSync(human, 'Preserve this optional research note.');

@@ -13,10 +13,11 @@ const { ReportPreparation } = require('./report-preparation');
 const { relevantDirty, dirtyScope } = require('./workspace-snapshot');
 const UPSTREAM = 'anchabadze.solidity-flowboard';
 const VERSION = '1.2.0';
+const TRIAGE_VERSION = require('./package.json').version;
 
 function activate(context) {
   const log = vscode.window.createOutputChannel('Flowboard Triage');
-  log.appendLine(`Activated Flowboard Triage ${require('./package.json').version} from ${context.extensionPath}`);
+  log.appendLine(`Activated Flowboard Triage ${TRIAGE_VERSION} from ${context.extensionPath}`);
   context.subscriptions.push(log);
   let queue = Promise.resolve();
   const boards = new Map(), processed = new Map(), watchers = new Map();
@@ -435,13 +436,21 @@ function activate(context) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('flowboardTriage.doctor', async () => {
     const folder = await pickFolder(); if (!folder) return;
+    const config = vscode.workspace.getConfiguration('flowboardTriage', folder.uri), provider = config.get('semanticProvider', 'none');
     const report = { workspace: folder.uri.fsPath, trusted: vscode.workspace.isTrusted,
+      activeTriage: { version: TRIAGE_VERSION, extensionPath: context.extensionPath },
       dependency: vscode.extensions.getExtension(UPSTREAM)?.packageJSON.version || 'missing',
+      dependencyPath: vscode.extensions.getExtension(UPSTREAM)?.extensionPath || null,
       requiredDependency: VERSION, mode: vscode.workspace.getConfiguration('flowboardTriage', folder.uri).get('analysisMode', 'source'),
       hasReport: fs.existsSync(path.join(folder.uri.fsPath, '.flowboard/report.json')), reportWarnings: [],
       pythonOrCompilerRequiredInSourceMode: false };
     try { const index = store.readReport(folder.uri.fsPath); report.findings = index.issues.length; }
     catch (error) { report.reportWarnings.push(error.message); }
+    let receipts = [];
+    try { receipts = Object.values(p.readWorkspaceJson(folder.uri.fsPath, '.flowboard/report-preparation.json', 8 * 1024 * 1024).resources?.receipts || {}); }
+    catch (error) { if (error.code !== 'ENOENT') report.reportWarnings.push('Saved provider observations are unavailable.'); }
+    report.provider = await require('./runtime-diagnostics').providerIdentity(provider,
+      config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined, vscode.workspace.isTrusted, receipts);
     log.appendLine(JSON.stringify(report, null, 2)); log.show();
   }));
 }

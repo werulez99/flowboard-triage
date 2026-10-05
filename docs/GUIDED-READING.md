@@ -436,3 +436,76 @@ No offline Solidity controls were rerun for this transport-only iteration; close
 The latest observed actual Cursor activation remains **0.15.0**, path ending `local.flowboard-triage-0.15.0`; no 0.19.2 activation or actual editor playback was observed. Save editor work, use **Developer: Reload Window**, then check **Output -> Flowboard Triage** for fresh 0.19.2 activation and its matching extension path. Do **not** Resume/Retry the original exhausted report for this check. The private pilot remains paused and its diagnostic has a one-shot guard; no unused conditional allowance is automatically released on reload.
 
 The [official non-interactive CLI documentation](https://learn.chatgpt.com/docs/non-interactive-mode) and locally inspected `codex exec --help` identify JSON event output and the response-schema option. Neither establishes the isolated adapter's selected model or the cause of this timeout. This build delivers diagnostic isolation and evidence, not the missing real generation -> challenge -> persisted/readable walkthrough.
+
+### Local v0.19.3 bounded completion experiment (2026-10-05)
+
+Baseline: `29c87fd2351dd7e2dd9428010ae61c1862047bdd`, branch `improve/checked-reading-path`, v0.19.2. Policy remains **v9** and native dependency remains original Solidity Flowboard **1.2.0**. No semantic interpreter, publication policy, response schema, provider instructions or renderer change was made in this iteration. Closed empty-revert/helper/catch regressions remain closed.
+
+**Product result: the first complete real generation was obtained, but its substantive challenge timed out. There is still no accepted/readable real walkthrough.** The unchanged retained finding, intact private 261-entry report, original 68/68 ledger and human records were preserved. Only the private pilot ran; 260 siblings stayed paused. Its separate durable guard allowed exactly one generation and one conditional challenge, and refused any additional dispatch. Both authorized requests were consumed. No diagnostic, alternative model, automatic repair, fallback or extra retry ran.
+
+#### Exact strict generation, one changed deadline
+
+Fresh offline source acquisition reproduced the retained strict generation's serialized data, ten source units, saved premises, full schema, instructions and normalized CLI arguments byte-for-byte. Only this explicitly guarded generation received `timeoutMs: 600000` through the existing injectable production transport. Ordinary requests and the challenge retain **240000 ms**. `runProvider`/`runCodex`, strict `--output-schema`, slots, health checks, reservation/result receipts, cancellation and durable engine checkpoints remained in use. The textual-contract diagnostic was not used. No outer 240-second request timer was introduced.
+
+Private identities: generation data SHA256 `cd3dfdbbe45f7011e6a779b82982d06886e96f828ead66c39d9029c28f007f3c`; source packet `fefa75404dd797c3f7646fad047ed78135d72d9c2d11fe21b589391e0f47359a`; instructions `d37c71a327431036299ced49519e1e25f9e4d2769abc29d86184b3e4e7cd7334`; schema `d61edad66dd1e99eba821bde90df74578722bbb68b6aeb8fa3d081d6b35b8a04`. Exact inputs, responses, receipts and reference assessment remain outside public commits/packages. The reference assessment was not supplied to the model.
+
+Locally observed executable: `/home/merulz/.local/bin/codex`, CLI **0.160.0**. Requested configuration: isolated CLI-default model selection, medium reasoning, disabled tools, read-only sandbox. **Observed model identity remains unavailable**; neither Cursor's picker nor global user settings establish it. The nonterminal disabled-tool-host notice also occurred in this successful generation and is not identified as a failure cause.
+
+| Measured boundary | Generation G | Challenge C |
+| --- | ---: | ---: |
+| Configured wall deadline | 600 s (pilot only) | 240 s (ordinary) |
+| Queue / capacity wait | 6 ms | 18 ms |
+| Process start after adapter entry | 29 ms | 12 ms |
+| First provider event | 3.186 s | 1.336 s |
+| First substantive assistant content | 208.039 s | Not reached |
+| Complete structured response | 208.040 s | Not reached |
+| Adapter wall time | **208.424 s** | **247.012 s**, timeout including overhead |
+| Data / instruction / schema bytes | 51,001 / 20,943 / 8,509 | 128,126 / 31,117 / 1,580 |
+| Actual stdin plus separate schema | 80,503 bytes | 160,873 bytes |
+| Source units | 10 | 33 after bounded local acquisition |
+| Result | Complete generation, persisted private checkpoint | Failed transport; no review answer |
+
+G completed **below the old 240-second bound**. It therefore does not show that the longer deadline caused success or that earlier requests would have completed at this time. Historical load/service/default-model variation is uncontrolled; no speedup or universal timeout cause is inferred. One offline indexing/acquisition sample was 27.038/23.565 s with competing local test work, not a cold preparation benchmark. First accepted/readable real guide and accepted-to-visible latency were **not reached**.
+
+The exact generation satisfied the full generation schema and was ingested by the engine. It contains two material claims and eight source-linked events, with unresolved scope/evidence questions rather than a fabricated Ready result. Generation-stage local ingestion reached checking-source at 20:40:41.873 UTC; acquisition reached challenging at 20:40:43.813 and saved the challenge checkpoint at 20:40:46.351. The normal engine selected its targeted-patch substantive challenge after acquiring additional relevant local definitions. Complete schema/initial ingestion are not final semantic acceptance: the required opposing review never returned, so no generated ordinary-reading content was published.
+
+G reported 28,578 input tokens and 10,511 output tokens (including a reported reasoning-token count; no hidden reasoning was collected). C reported no usage. USD cost for both and aggregate token consumption are unknown. C's stop request to confirmed owned-group termination was **290 ms**, streams closed; the remaining deadline overhead is not all teardown. The supported non-daemonizing process-group containment contract is unchanged.
+
+The failed pilot is paused with zero active workers/requests. Its successful generation, unchanged raw answer, completed generation receipt, failed challenge receipt and **stage=challenge** checkpoint remain durable. The next meaningful paid boundary, if later authorized, is review of that compatible saved generation and acquired evidence—not regeneration, not another tiny probe, and not another generation-timeout extension. A metadata-only record preserves request/thread/configuration identities for routing diagnosis. Why C produced no substantive answer remains unresolved; its larger packet alone is not proof of causation. Current authorization is exhausted and no continuation is queued.
+
+#### Compact runtime diagnostics and reproducible tests
+
+Doctor now reports the loaded module's Flowboard Triage version and `context.extensionPath`, the native dependency version/path, and a bounded local provider executable/version query. Model identity is only shown when actually present in a matching saved receipt and is explicitly attributed to that historical request; it is not inferred as the current CLI default. Untrusted workspaces do not execute a version probe. Doctor does not start report preparation or make a model request.
+
+The canonical command is now sequential by default: `FLOWBOARD_EXTENSION_PATH=<native-1.2.0> npm test` invokes Node with `--test-concurrency=1`. The five new tests cover runtime diagnostics and the real coordinator/engine/slot path with controlled G=600000/C=240000, unchanged ordinary default and refusal of a third request. An initial focused run had one incorrect test assertion against the transport audit copy; it was corrected to inspect the durable host receipt. The subsequent single canonical run on Node 20.20.1/WSL Linux passed **391/391**, zero failures, cancellations or skips, in 31.911 s. This is not another independent audit-environment pass or 391 real model findings.
+
+The prior parallel lifecycle failures are documented, not hidden. The affected tests already synchronize process readiness but use short 50/200 ms deadlines; load sensitivity is plausible, not proved to be the only cause. Explicit suite isolation is the supported remedy here; live-owner, unknown-identity, quarantine and teardown assertions and their deadlines were not weakened. No offline Solidity controls were rerun for these diagnostic/test-runner-only changes.
+
+#### Native playback, mixed states and remaining performance miss
+
+After all live provider work ended, the unchanged paired workload ran sequentially with no competing agent test/index/browser jobs: `scripts/paired_native_route.py --baseline 29c87fd2351dd7e2dd9428010ae61c1862047bdd --output <private-output> --samples 3 --reopens 20`, using the pinned native dependency and Playwright Chromium on four-logical-CPU WSL2. Workload/source/extension hashes and all samples are retained locally. Both versions passed four functional groups, zero page/host errors, two fixed fictional responses each and **zero external provider requests**. Fifteen events traverse five original functions with real connections, repeated invocations, argument detours, return/rollback and a complete long function. These are controlled answers, not a real-model quality result.
+
+| Local boundary | Baseline 0.19.2 median / p95 | Working 0.19.3 median / p95 | Samples per version |
+| --- | ---: | ---: | ---: |
+| All steps | 12.05 / 32.90 ms | 12.80 / 26.50 ms | 84 |
+| Within-function | 7.90 / 15.90 ms | 8.45 / 15.20 ms | 24 |
+| Cross-function | 14.05 / 34.50 ms | 14.95 / 27.90 ms | 60 |
+| Controller reopen to verified source/annotation | 442.47 / 1035.27 ms | 476.09 / 5277.51 ms | 20 |
+
+**Functional pass is not performance pass.** Steps meet the provisional 100 ms p95 target; cached reopen misses 500 ms in both arms, with multi-second outliers in the current arm. No renderer change was made, so the unmeasured cause of those outliers is not attributed to this release or translated into a universal regression factor. This is a controller/browser reopening boundary, not an OS extension-host restart. The driver reports performance targets separately from functional assertions.
+
+A subsequent isolated profiling run retained the same functional endpoint and added host/reload/library/selection/verification phase measurements to `native_route_browser.py` (no production behavior change). Twenty current-build reopens measured median/p95 **385.58/618.09 ms**, still missing 500 ms but without the multi-second outliers. Phase median/p95: host recreation 6.11/10.50 ms; page reload 89.54/174.13 ms; library availability 26.27/37.36 ms; click-to-annotation 254.24/360.04 ms; exact source/annotation verification 6.15/10.74 ms. Selection includes native host work, bridge/polling, rendering and Playwright actionability; these measurements do not isolate a particular renderer function. No speculative hot-path rewrite was shipped. This additional four-group run passed with zero host/page errors and no external requests; its timings do not replace the paired samples above.
+
+Desktop and 761px actual native captures were inspected locally: original function header/body, active source line, adjacent or bottom-docked teaching point and controls are readable; further explanation remains scrollable. Private captures are not distributed. No visual judgment is made about an unavailable real accepted guide.
+
+`mixed_preparation_browser.py` passed **three groups**, zero errors, eight fixed responses and zero external requests: A stays readable while B is held in challenge, C is externally blocked and D fails; B's later publication preserves A's camera/highlight/manual text/caret and enables B without refresh. Pause, controller reopen and a recreated coordinator retain compatible artifacts and draft/reading state without another controlled request. One first-ready opening was 467.68 ms; controlled-response-release to observed acceptance was 40.28 ms, **not** accepted-to-visible latency. Real per-finding publication/playback beside the paused pilot siblings remains unverified because C did not complete.
+
+The next quality matrix remains deliberately unspent: a supported local issue with a material state effect, a narrowed/refuted allegation and an actual missing external-implementation premise. Existing fixed-response controls cover these mechanics; no second fresh real case or richer fresh-model native tutorial is claimed. The immediate missing gate is the saved real draft's substantive review, followed by current host acceptance and native playback. No additional provider request is authorized or scheduled.
+
+#### Package and actual-editor handoff
+
+`npm run package` builds the coherent **0.19.3** VSIX, source archive and install bundle; archive hashes are in `dist/SHA256SUMS`. The normal remote Cursor installer installed 0.19.3 and **55 packaged files matched the installed extension**, allowing only installer-added package metadata. Public release allowlist/content checks covered 184 files, and archive-path inspection found no private report, raw response, protocol source, pilot ledger, reference assessment or screenshot. The one-shot pilot and its evidence remain private. No main-branch merge or release publication is part of this delivery.
+
+Fresh read-only activation-log inspection still found **0.15.0** as the latest observed actual Cursor activation, from `/home/merulz/.cursor-server/extensions/local.flowboard-triage-0.15.0`. No 0.19.3 activation or actual Cursor playback was observed. Installed files, this benchmark and the runtime-Doctor command test do not establish that the user's window loaded the new build.
+
+User handoff: save editor work; run **Developer: Reload Window**; run **Flowboard Triage: Doctor** and check **Output -> Flowboard Triage** for active **0.19.3** and the matching `local.flowboard-triage-0.19.3` path. Do **not** Resume/Retry the exhausted original report to inspect activation. The guarded private pilot remains paused and has no remaining allowance. Reload does not complete the failed substantive challenge. A checked real tutorial is still pending, not hidden behind an unrelated sibling or an editor reload.

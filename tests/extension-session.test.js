@@ -49,7 +49,7 @@ async function setup(t, options = {}) {
   const vscode = {
     Uri: { file: uri }, RelativePattern: class { constructor(_folder, pattern) { this.pattern = pattern; } },
     ProgressLocation: { Notification: 15 },
-    window: { createOutputChannel: () => ({ appendLine: message => logs.push(message), dispose() {} }), showErrorMessage: message => errors.push(message),
+    window: { createOutputChannel: () => ({ appendLine: message => logs.push(message), show() {}, dispose() {} }), showErrorMessage: message => errors.push(message),
       showOpenDialog: async () => undefined,
       withProgress: async (options, action) => { const entry = { ...options, reports: [] }; progress.push(entry); return action({ report: value => entry.reports.push(value) }); } },
     workspace: { isTrusted: true, workspaceFolders: [folder], textDocuments: [],
@@ -89,7 +89,7 @@ async function setup(t, options = {}) {
     }
   } : original(name);
   loaded._compile(fs.readFileSync(filename, 'utf8'), filename);
-  const context = { subscriptions: [] };
+  const context = { subscriptions: [], extensionPath: path.resolve(__dirname, '../extension') };
   loaded.exports.activate(context);
   t.after(() => context.subscriptions.forEach(item => item.dispose()));
   await commands.get('flowboardTriage.report')();
@@ -98,6 +98,16 @@ async function setup(t, options = {}) {
     select: id => board.callbacks.select(id) };
 }
 
+test('Doctor command reports the loaded extension identity and native path without starting preparation', { skip: !native }, async t => {
+  const env = await setup(t, { empty: true }), analyses = env.analysis.count;
+  await env.commands.get('flowboardTriage.doctor')();
+  const report = JSON.parse(env.logs.at(-1));
+  assert.deepEqual(report.activeTriage, { version: require('../extension/package.json').version, extensionPath: path.resolve(__dirname, '../extension') });
+  assert.equal(report.dependency, '1.2.0'); assert.equal(report.dependencyPath, native);
+  assert.equal(report.provider.provider, 'none'); assert.equal(report.provider.observedModel, null);
+  assert.equal(env.analysis.count, analyses);
+  assert.ok(env.logs[0].includes(report.activeTriage.version)); assert.ok(env.logs[0].includes(report.activeTriage.extensionPath));
+});
 test('Import Report command opens a large report library before indexing; only selected findings are mapped', { skip: !native }, async t => {
   const env = await setup(t, { empty: true }), report = path.join(env.root, 'report.md');
   // The function identity occurs ONLY in the title. Deferred mapping must keep
