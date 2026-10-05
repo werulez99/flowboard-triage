@@ -93,3 +93,86 @@ test('legacy context aliases require identical file, complete range, hash and or
     assert.throws(() => engine.checkExplanations(output, draft, engine.accept(output, draft, draft.sources), [...draft.sources, altered]), /did not inspect/);
   }
 });
+test('all repair forms preserve evidence scope, including shared context, with actionable aggregated identities', () => {
+  const scope = require('../extension/review-scope');
+  const draft = example(), previous = format.earlier(draft, schema), update = delta(draft);
+  const patch = { mode: format.PATCH, updates: [], explanationReviews: update.explanationReviews, checks: update.causal.checks };
+  for (const claimId of ['', 'c2']) for (const updates of [
+    [{ path: '/evidence/guard/claimId', valueJSON: JSON.stringify(claimId) }],
+    [{ path: '/evidence/guard', valueJSON: JSON.stringify({ ...previous.evidence[0], claimId }) }],
+    [{ path: '/evidence', valueJSON: JSON.stringify([{ ...previous.evidence[0], claimId }]) }]
+  ]) assert.throws(() => format.apply({ ...patch, updates }, previous, schema), error => {
+    const problem = error.validationProblems[0];
+    assert.equal(problem.code, 'EVIDENCE_SCOPE_CHANGED'); assert.equal(problem.evidenceId, 'guard');
+    assert.equal(problem.oldClaimId, 'c1'); assert.equal(problem.proposedClaimId, claimId);
+    assert.ok(problem.dependentTargets.previous.includes('/causal/events/event/evidenceId'));
+    assert.match(problem.permittedOperation, /fresh ID/); return true;
+  });
+  const shared = structuredClone(previous); shared.evidence[0].claimId = '';
+  assert.throws(() => format.apply({ ...patch, updates: [{ path: '/evidence/guard/claimId', valueJSON: '"c1"' }] }, shared, schema), /claim ""/);
+  const changed = structuredClone(previous); changed.evidence[0].claimId = ''; changed.evidence[0].stance = 'context';
+  const next = engine.accept(changed, draft, draft.sources); changed.explanationReviews = [{ ...update.explanationReviews[0], checkedSourceIds: ['absent'] }];
+  assert.throws(() => engine.checkExplanations(changed, draft, next, draft.sources), error => {
+    assert.deepEqual(new Set(error.validationProblems.map(p => p.code)), new Set(['EVIDENCE_SCOPE_CHANGED', 'EXPLANATION_REVIEW_INVALID', 'EXPLANATION_REVIEW_MISSING'])); return true;
+  });
+  assert.equal(next.evidence[0].explanationReview, undefined, 'Failed checking has no partial accepted-note mutations.');
+  assert.deepEqual(scope.manifest(previous), { claims: ['c1'], evidence: [{ id: 'guard', claimId: 'c1' }] });
+  assert.match(format.patchInstruction, /claimId=""/);
+});
+test('explicit removal and fresh scoped note preserve checks/references but cannot close an unresolved material claim', () => {
+  const draft = example(), previous = format.earlier(draft, schema), replacement = structuredClone(previous);
+  // One source may support a separately scoped note. Update ALL dependent
+  // references explicitly; the host does not renumber the model's answer.
+  replacement.claims.push({ ...replacement.claims[0], id: 'c2', status: 'unresolved', unknowns: ['External rule is unavailable.'] });
+  replacement.evidence = [{ ...replacement.evidence[0], id: 'new-guard', claimId: 'c2' }];
+  const replaceRefs = value => {
+    if (Array.isArray(value)) return value.map(replaceRefs);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replaceRefs(child)]));
+    return value === 'guard' ? 'new-guard' : value;
+  };
+  const fixed = replaceRefs(replacement), update = delta(draft);
+  const patch = { mode: format.PATCH, updates: Object.entries(fixed).filter(([key]) => !['explanationReviews', 'inputReviews', 'causal'].includes(key)).map(([key, value]) => ({ path: '/' + key, valueJSON: JSON.stringify(value) })),
+    explanationReviews: [{ ...update.explanationReviews[0], result: 'removed' }, { ...update.explanationReviews[0], evidenceId: 'new-guard', result: 'added' }], checks: replaceRefs(update.causal.checks) };
+  for (const [key, value] of Object.entries(fixed.causal)) if (key !== 'checks') patch.updates.push({ path: '/causal/' + key, valueJSON: JSON.stringify(value) });
+  const output = format.apply(patch, previous, schema), next = engine.accept(output, draft, draft.sources);
+  assert.doesNotThrow(() => engine.checkExplanations(output, draft, next, draft.sources));
+  const candidate = { ...draft, ...next, actions: [] };
+  assert.equal(policy.gate(candidate).ready, false);
+  assert.equal(policy.expose(candidate).causal, undefined);
+  output.explanationReviews.pop();
+  assert.throws(() => engine.checkExplanations(output, draft, next, draft.sources), /new-guard/);
+});
+test('pure replay diagnoses the exact rejected base without mutating or publishing any input', () => {
+  const { replayReview } = require('../scripts/replay-review');
+  const saved = { ...example(), actions: [] }, earlierDraft = format.earlier(saved, schema), update = delta(saved);
+  const source = saved.sources[0], input = { phase: 'challenge', earlierDraft, sources: [{ id: source.id, file: source.source.file,
+    line: 1, endLine: 3, code: source.code.split('\n').map((line, i) => `${i + 1} | ${line}`).join('\n') }] };
+  const response = { mode: format.PATCH, updates: [{ path: '/evidence/guard/claimId', valueJSON: '""' }, { path: '/evidence/guard/stance', valueJSON: '"context"' }],
+    checks: update.causal.checks, explanationReviews: [{ ...update.explanationReviews[0], result: 'repaired' }] };
+  const before = JSON.stringify({ saved, input, response });
+  const result = replayReview({ saved, input, response, units: saved.sources });
+  assert.equal(result.fullSchema, true); assert.equal(result.errors[0].code, 'EVIDENCE_SCOPE_CHANGED');
+  assert.equal(result.accepted, false); assert.equal(result.writes, 0); assert.equal(result.providerRequests, 0);
+  assert.equal(JSON.stringify({ saved, input, response }), before);
+  assert.throws(() => replayReview({ saved: { ...saved, evidence: [] }, input, response, units: saved.sources }), /exact earlierDraft/);
+});
+test('a substantive repair can inspect its old function inside exact complete current context', () => {
+  const draft = example(), update = delta(draft), output = format.expand(update, format.earlier(draft, schema), schema);
+  const contained = { ...structuredClone(draft.sources[0]), id: 'whole-file', contextKind: 'excerpt',
+    code: draft.sources[0].code + '\n// surrounding source', source: { ...draft.sources[0].source, endLine: 4 } };
+  output.explanationReviews[0].checkedSourceIds = [contained.id];
+  assert.doesNotThrow(() => engine.checkExplanations(output, draft, engine.accept(output, draft, draft.sources), [...draft.sources, contained]));
+  for (const alter of [u => u.complete = false, u => u.source.file = 'other.sol', u => u.source.sourceHash = 'b'.repeat(64),
+    u => u.code = u.code.replace('require(accepted)', 'require(true)'), u => u.source.endLine = 2, u => u.code += '\nunknown bytes']) {
+    const invalid = structuredClone(contained); alter(invalid);
+    assert.throws(() => engine.checkExplanations(output, draft, engine.accept(output, draft, draft.sources), [...draft.sources, invalid]), /did not inspect/);
+  }
+});
+test('already read enclosing source does not become new evidence merely by extracting a declaration', () => {
+  const { contains } = require('../extension/source-coverage'), unit = example().sources[0];
+  const enclosing = { ...structuredClone(unit), readThrough: 3 };
+  const declaration = { ...structuredClone(unit), id: 'new-id', source: { ...unit.source, line: 2, endLine: 2 }, code: unit.code.split('\n')[1] };
+  assert.equal(contains(declaration, enclosing, true), true);
+  enclosing.readThrough = 1; assert.equal(contains(declaration, enclosing, true), false);
+  enclosing.readThrough = 3; declaration.source.sourceHash = 'b'.repeat(64); assert.equal(contains(declaration, enclosing, true), false);
+});

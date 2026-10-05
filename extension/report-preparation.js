@@ -50,13 +50,14 @@ class ReportPreparation {
     this.root = root; this.options = options; this.owner = crypto.randomUUID(); this.epoch = 0; this.disposed = false;
     this.state = null; this.active = null; this.tasks = new Map(); this.loop = null; this.pendingRestart = false; this.pendingRetry = false;
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
-    this.pendingFindings = new Set(); this.localEligible = new Set();
+    this.pendingFindings = new Map(); this.admitting = new Map(); this.localEligible = new Set(); this.controlRevision = 0;
   }
   continueFinding(id) {
     p.identifier(id, 'finding continuation ID');
     if (this.disposed) throw new Error('This report owner is closed. Reopen the report.');
     if (!store.readReport(this.root).issues.some(item => item.id === id)) throw new Error('The selected finding is no longer in this report.');
-    this.pendingFindings.add(id);
+    if (!this.pendingFindings.has(id) && !this.admitting.has(id) && !this.localEligible.has(id) && !this.tasks.has(id))
+      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch });
     // Existing workers admit this at a durable stage boundary. No report-wide
     // resume, allowance increase or cancellation of a sibling is implied.
     return this.ensure();
@@ -67,21 +68,34 @@ class ReportPreparation {
     if (typeof id !== 'string' || id === this.preferredFinding) return;
     this.preferredFinding = id; this.priorityStages = 2;
   }
-  save() { clearTimeout(this.progressTimer); this.progressTimer = null; this.aggregate(); this.state.updatedAt = now(); p.atomicJson(this.root, FILE, this.state);
+  save() { clearTimeout(this.progressTimer); this.progressTimer = null;
+    // Controls outside a run also need ownership. Never overwrite another
+    // live host's journal merely to display a local admission failure.
+    if (this.locked && !this.ownsLock()) { this.locked = false; this.admissionStatus = { mode: 'paused', reason: 'Report ownership changed. No journal update or new request is permitted from this host.' }; return; }
+    const temporary = !this.locked;
+    if (temporary) try { this.lock(); } catch (error) { this.admissionStatus = { mode: 'paused', reason: error.message }; return; }
+    try {
+      if (temporary && this.savedJournalHash) {
+        const latest = p.readWorkspaceJson(this.root, FILE, 8 * 1024 * 1024);
+        if (hash(latest) !== this.savedJournalHash) { this.admissionStatus = { mode: 'paused', reason: 'Another host updated this report. Reopen it before applying a control; its journal was preserved.' }; return; }
+      }
+      this.aggregate(); this.state.updatedAt = now(); p.atomicJson(this.root, FILE, this.state); this.savedJournalHash = hash(this.state);
+    }
+    finally { if (temporary) this.unlock(); }
     Promise.resolve().then(() => this.options.changed?.(this.status())).catch(error => this.options.log?.(`Report display update: ${error.message}`)); }
   progress() { if (!this.progressTimer) this.progressTimer = setTimeout(() => { if (!this.disposed) this.save(); }, 250); }
   status() {
-    if (!this.state) return null;
+    if (!this.state) return this.admissionStatus ? { ...this.admissionStatus, total: 0, ready: 0, counts: {}, jobs: [], active: [], stopped: [], requests: 0, requestLimit: 0 } : null;
     const jobs = Object.values(this.state.jobs), counts = {};
     for (const job of jobs) counts[job.state] = (counts[job.state] || 0) + 1;
     return { version: VERSION, reportName: this.state.reportName, reportHash: this.state.reportHash, project: this.state.project,
       total: jobs.length, ready: jobs.filter(job => this.artifact(job.id)).length, counts, ambiguities: this.state.ambiguities.length,
-      published: !!this.state.publication, mode: this.state.mode, reason: this.state.reason || '', startedAt: this.state.startedAt,
+      published: !!this.state.publication, mode: this.admissionStatus?.mode || this.state.mode, reason: this.admissionStatus?.reason || this.state.reason || '', startedAt: this.state.startedAt,
       requests: this.state.resources.requests, requestLimit: this.state.resources.limit, costUSD: this.state.resources.costUSD,
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt }) => ({ id, state, stage, reason,
+      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,
         publishable: !!this.artifact(id), digest: this.artifact(id), outcome, publishedAt })),
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
@@ -102,7 +116,7 @@ class ReportPreparation {
     const accepted = { digest, at, policy: policy.POLICY, project: this.state.project, findingHash: entryHash(entry),
       generation: draft.revision, sourceSnapshot: draft.snapshot, dependencies: draft.dependencies || null };
     Object.assign(job, { state: 'completed', stage: 'ready', publishable: true, digest, snapshot: draft.snapshot, outcome: draft.causal.outcome,
-      findingHash: entryHash(entry), accepted, publishedAt: at, reason: '' });
+      findingHash: entryHash(entry), accepted, publishedAt: at, reason: '', failureKind: null, missingInputs: [], validationProblems: [] });
     this.accepted.set(entry.id, accepted);
   }
   artifact(id) { return this.options.dirty?.(id) ? null : this.accepted.get(id)?.digest || null; }
@@ -149,18 +163,28 @@ class ReportPreparation {
     try { require('./provider-ownership').removeOwned(path.join(this.root, LOCK), this.owner); } catch { /* owner already released; an existing live lock remains protective */ }
     this.locked = false;
   }
+  ownsLock() {
+    try { return !!this.locked && require('./provider-ownership').snapshot(path.join(this.root, LOCK))?.entry?.owner === this.owner; }
+    catch { return false; }
+  }
   async ensure({ retry = false } = {}) {
     if (this.loop) { if (retry || this.state?.mode === 'interrupted') this.pendingRestart = true; this.pendingRetry ||= retry; return this.loop; }
     if (this.disposed) return;
     // Even a missed watcher event must revoke a ready report on reopening.
     // The catalog provider reconciles content once for this generation; no
     // per-finding scan is required. Reuse is checked below under the report lock.
-    const runEpoch = this.epoch;
+    const runEpoch = this.epoch, attempted = new Map(this.pendingFindings);
+    this.admissionStatus = null;
     this.loop = this.run(retry).catch(error => {
       if (this.disposed || runEpoch !== this.epoch) return;
+      this.admissionStatus = { mode: 'paused', reason: error.message };
       if (this.state && this.locked) { this.state.mode = 'paused'; this.state.reason = error.message; this.save(); }
       this.options.log?.(`Report preparation stopped: ${error.message}`);
-    }).finally(() => { this.unlock(); this.loop = null; this.localEligible.clear(); if ((this.pendingRestart || this.pendingFindings.size) && !this.disposed) {
+    }).finally(() => {
+      // Setup may stop before admission. Consume only the intents this run
+      // attempted, not a genuinely new action received while it was awaiting.
+      for (const [id, intent] of attempted) if (this.pendingFindings.get(id) === intent) this.pendingFindings.delete(id);
+      this.unlock(); this.loop = null; this.localEligible.clear(); if ((this.pendingRestart || this.pendingFindings.size) && !this.disposed) {
       const again = this.pendingRetry; this.pendingRestart = false; this.pendingRetry = false; return this.ensure({ retry: again });
     } });
     return this.loop;
@@ -180,6 +204,7 @@ class ReportPreparation {
     }
     let old;
     try { old = p.readWorkspaceJson(this.root, FILE, 8 * 1024 * 1024); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    this.savedJournalHash = old ? hash(old) : null;
     if (old && old.identity !== identity) p.atomicJson(this.root, `.flowboard/recovery/preparation-${old.identity}.json`, old);
     const config = this.options.configuration();
     const concurrency = Math.max(1, Math.min(4, Number.isInteger(config.workers) ? config.workers : 2));
@@ -220,6 +245,9 @@ class ReportPreparation {
     this.indexAbort = new AbortController();
     const catalog = await this.validatedCatalog(this.indexAbort.signal);
     if (epoch !== this.epoch || this.disposed) return;
+    const currentReport = store.readReport(this.root);
+    if (currentReport.reportHash !== report.reportHash || entries.some(entry => !currentReport.issues.some(item => item.id === entry.id)))
+      throw new Error('The report changed during preparation setup. No selected continuation was admitted; reopen the current report.');
     // Recheck the complete manifest before reuse, including working-tree
     // changes, imported report text, local documentation and configuration.
     for (const entry of entries) {
@@ -241,6 +269,7 @@ class ReportPreparation {
         // new request or resuming any sibling's paid work.
         await this.work(entry, catalog, report, job, epoch, config, true);
       }
+      if (!job.publishable) this.recoveryStatus(job, saved);
       } catch (error) { this.recordFailure(job, error); }
       await new Promise(resolve => setImmediate(resolve));
     }
@@ -248,7 +277,7 @@ class ReportPreparation {
     this.save();
     const admitPending = async () => {
       const admitted = [];
-      for (const id of [...this.pendingFindings]) {
+      for (const [id, intent] of [...this.pendingFindings]) {
         this.pendingFindings.delete(id);
         const entry = entries.find(item => item.id === id), job = this.state.jobs[id];
         if (!entry || !job) { this.options.log?.('Selected continuation was discarded because its finding left the report.'); continue; }
@@ -258,11 +287,20 @@ class ReportPreparation {
           job.reason = `Shared report allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). This finding was not resumed; no allowance was added.`;
           this.save(); continue;
         }
-        if (['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
-          await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable });
+        this.admitting.set(id, intent);
+        try {
+          if (['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
+            await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable });
+          if (this.disposed || !this.ownsLock() || intent.revision !== this.controlRevision || intent.epoch !== this.epoch ||
+              this.admitting.get(id) !== intent || this.state.jobs[id] !== job || this.tasks.has(id) || job.publishable ||
+              this.options.dirty?.(id) || this.options.configuration().provider !== config.provider ||
+              this.options.configuration().executable !== config.executable || !store.readReport(this.root).issues.some(item => item.id === id)) continue;
+        } finally { if (this.admitting.get(id) === intent) this.admitting.delete(id); }
+        const available = this.state.resources.limit - this.state.resources.requests;
+        if (available <= 0) { job.reason = 'Shared report allowance exhausted during admission; no request was reserved.'; this.save(); continue; }
         // Only an exhausted selected-finding allowance can be renewed, bounded
         // by already authorized shared capacity. Sibling limits never change.
-        if (job.requests >= job.requestLimit) job.requestLimit = job.requests + Math.min(remaining, config.findingRequestLimit || 6);
+        if (job.requests >= job.requestLimit) job.requestLimit = job.requests + Math.min(available, config.findingRequestLimit || 6);
         job.state = 'queued'; job.reason = ''; job.providerFailures = 0;
         this.localEligible.add(id); admitted.push(entry); this.save();
       }
@@ -385,7 +423,7 @@ class ReportPreparation {
       attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
     const current = () => {
-      if (this.disposed || !owns() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
+      if (this.disposed || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
       try {
         return p.readWorkspaceJson(this.root, '.flowboard/report.json', 12 * 1024 * 1024).reportHash === report.reportHash &&
           engine.findingInputHash(this.request(entry, catalog, report), issue) === fresh.snapshot.reportHash;
@@ -446,6 +484,7 @@ class ReportPreparation {
         publishable: checked(draft), digest: checked(draft) ? policy.digest(draft) : null, checkpoint: draft.checkpoint || null,
         finishedAt: now(), elapsedMs: Date.now() - Date.parse(job.startedAt), runs: draft.runs.slice(-12) });
       if (checked(draft)) this.accept(entry, draft, job);
+      else this.recoveryStatus(job, draft);
       if (draft.failureKind === 'provider' && (job.providerFailures = (job.providerFailures || 0) + 1) < 2 && job.requests < job.requestLimit && this.state.mode === 'running') job.state = 'retry-scheduled';
       this.save();
       if (draft.failureKind === 'report-budget') this.pauseForBudget();
@@ -468,11 +507,16 @@ class ReportPreparation {
     }
   }
   published(draft) { return !!draft && this.artifact(draft.findingId) === policy.digest(draft) && checked(draft); }
+  recoveryStatus(job, draft) {
+    job.failureKind = draft.failureKind || null;
+    job.validationProblems = (draft.checkpoint?.feedback?.validationProblems || []).map(({ code, evidenceId, oldClaimId, proposedClaimId, message }) => ({ code, evidenceId, oldClaimId, proposedClaimId, message }));
+    job.missingInputs = (draft.questions || []).filter(item => item.action === 'missing-context').map(({ id, claimId, text, why }) => ({ id, claimId, text, why }));
+  }
   async control(action) {
     if (action === 'resume' || action === 'retry') return this.ensure({ retry: true });
-    if (!this.state) return;
     if (!['pause', 'cancel'].includes(action)) throw new Error('Unknown report preparation action.');
-    this.localEligible.clear(); this.pendingFindings.clear();
+    this.controlRevision++; this.admitting.clear(); this.localEligible.clear(); this.pendingFindings.clear(); this.pendingRestart = false; this.pendingRetry = false;
+    if (!this.state) return;
     this.state.mode = action === 'pause' ? 'paused' : 'cancelled';
     this.state.reason = action === 'pause' ? 'Paused. A request already running may finish; no new request will start. Accepted stages are saved.' : 'Cancelled. Accepted stages and researcher work are saved.';
     if (action === 'pause') for (const task of this.tasks.values()) if (this.state.jobs[task.id]?.state === 'waiting-for-provider-capacity') task.abort.abort();
@@ -493,6 +537,7 @@ class ReportPreparation {
         } catch { /* An unreadable/malformed saved input must be withheld. */ }
       }
       this.tasks.get(id)?.abort.abort();
+      this.pendingFindings.delete(id); this.admitting.delete(id); this.localEligible.delete(id);
       this.accepted.delete(id);
       Object.assign(job, { attemptId: crypto.randomUUID(), publishable: false, accepted: null, digest: null,
         state: 'queued', reason });
@@ -505,6 +550,7 @@ class ReportPreparation {
       this.save(); return;
     }
     const stopped = ['paused', 'cancelled'].includes(this.state.mode);
+    this.controlRevision++; this.admitting.clear(); this.pendingFindings.clear(); this.localEligible.clear();
     for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); this.epoch++; this.state.publication = null;
     if (!stopped) this.state.mode = 'interrupted';
     this.state.reason = reason;
@@ -526,7 +572,7 @@ class ReportPreparation {
     }
     this.save();
   }
-  dispose() { this.disposed = true; clearTimeout(this.progressTimer); for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); if (this.state) {
+  dispose() { this.disposed = true; this.controlRevision++; this.admitting.clear(); this.pendingFindings.clear(); this.localEligible.clear(); clearTimeout(this.progressTimer); for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); if (this.state) {
     for (const job of Object.values(this.state.jobs)) if (['running', 'waiting-for-provider-capacity'].includes(job.state)) job.state = 'queued';
     try { this.save(); } catch (error) { if (error.code !== 'ENOENT') this.options.log?.(`Could not checkpoint host shutdown: ${error.message}`); }
   } }

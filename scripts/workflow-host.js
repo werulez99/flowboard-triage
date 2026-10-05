@@ -11,6 +11,22 @@ const Module = require('node:module');
 // but load all product code and webview assets from that exact extension tree.
 const productionExtension = fs.realpathSync(process.env.FLOWBOARD_TRIAGE_EXTENSION_PATH || path.resolve(__dirname, '../extension'));
 const productionVersion = JSON.parse(fs.readFileSync(path.join(productionExtension, 'package.json'), 'utf8')).version;
+// Instrument the real synchronous Git implementation, including each actual
+// subprocess. No fake Git result or test-only cache is substituted.
+let protocolTrace = () => {};
+const protocolFile = path.join(productionExtension, 'protocol.js'), protocolModule = new Module(protocolFile, module);
+protocolModule.filename = protocolFile; protocolModule.paths = Module._nodeModulePaths(productionExtension);
+const protocolRequire = protocolModule.require.bind(protocolModule);
+protocolModule.require = name => {
+  const value = protocolRequire(name);
+  return name === 'node:child_process' ? { ...value, execFileSync: (...args) => {
+    const start = performance.now();
+    try { return value.execFileSync(...args); }
+    finally { if (args[0] === 'git') protocolTrace('git-operation', { operation: args[1][0], durationMs: performance.now() - start }); }
+  } } : value;
+};
+require.cache[protocolFile] = protocolModule;
+protocolModule._compile(fs.readFileSync(protocolFile, 'utf8'), protocolFile);
 const p = require(path.join(productionExtension, 'protocol'));
 const store = require(path.join(productionExtension, 'store'));
 const { analyze } = require(path.join(productionExtension, 'runner-adapter'));
@@ -25,8 +41,15 @@ function boardClass(storage, invoke, trace) {
   loaded.filename = filename; loaded.paths = Module._nodeModulePaths(path.dirname(filename));
   const normalRequire = loaded.require.bind(loaded);
   loaded.require = name => {
-    if (name === './store') return storage;
+    if (name === './store') return !trace ? storage : { ...storage, readBoard: (...args) => {
+      const start = performance.now(); try { return storage.readBoard(...args); } finally { trace('saved-canvas-read', { durationMs: performance.now() - start }); }
+    } };
     const value = normalRequire(name);
+    if (trace && (name === './graph' || name === './investigation')) {
+      const key = name === './graph' ? 'layoutGraph' : 'prepareInvestigation';
+      return { ...value, [key]: (...args) => { const start = performance.now(); try { return value[key](...args); }
+        finally { trace(key, { durationMs: performance.now() - start }); } } };
+    }
     if (name === './investigation-engine') return { ...value,
       ...(invoke ? { advance: options => value.advance({ ...options, invoke }) } : {}),
       ...(trace ? { validateCurrent: (...args) => { const start = performance.now(); trace('saved-guide-validation-start');
@@ -56,6 +79,11 @@ async function start(options = {}) {
   if (!readOnly) {
     if (options.mixedFixture || options.routeFixture) {
       fs.cpSync(path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/project' : 'fixtures/mixed-preparation/project'), root, { recursive: true });
+      if (options.productionSelection) {
+        const git = (...args) => require('node:child_process').execFileSync('git', args, { cwd: root, stdio: 'pipe', timeout: 10000 });
+        git('init', '-q'); git('add', '.');
+        git('-c', 'user.name=Flowboard fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Tracked fictional route');
+      }
     } else if (options.qualityBatch) {
       const base = path.join(__dirname, 'fixtures/quality-cases');
       for (const name of ['d3', 'd7']) fs.cpSync(path.join(base, name, 'project'), root, { recursive: true });
@@ -80,6 +108,7 @@ async function start(options = {}) {
   let html = '', board, panel, origin, selection = Promise.resolve(), serial = 0, productionEditor, materializeBoard;
   const productionTrace = [];
   const trace = (event, fields = {}) => productionTrace.push({ event, at: Date.now(), ...fields });
+  protocolTrace = trace;
   const uri = file => ({ fsPath: file, toString: () => file });
   const disposable = () => ({ dispose() {} });
   const storage = readOnly ? { ...store,
@@ -228,7 +257,12 @@ async function start(options = {}) {
               assets.set(route, absolute); return origin + route;
             },
             onDidReceiveMessage: callback => { callbacks.push(callback); return disposable(); },
-            postMessage: async message => { pending.push(structuredClone(message)); return true; }
+            postMessage: async message => {
+              const start = performance.now(), bytes = Buffer.byteLength(JSON.stringify(message));
+              pending.push(structuredClone(message));
+              if (message.type === 'triage:load') trace('load-payload', { durationMs: performance.now() - start, bytes, findingId: message.issueId, token: message.token });
+              return true;
+            }
           } };
         return panel;
       }

@@ -35,7 +35,10 @@
     const job = preparationJob(active);
     return job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
-  const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' : preparationLabel(job?.state);
+  const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
+    ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
+    job?.failureKind === 'material-evidence' ? 'Needs evidence' : ['validation', 'structural'].includes(job?.failureKind) ? 'Invalid review response' :
+    job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
   const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
   function updatePreparationRows() {
     for (const row of drawer.querySelectorAll('[data-finding-id]')) {
@@ -146,12 +149,23 @@
       return;
     }
     if (reportPreparation) {
-      const progress = reportPreparation, running = progress.mode === 'running';
-      parent.append(element('h2', '', running ? 'Preparing report' : 'Preparation incomplete'),
+      const progress = reportPreparation, running = progress.mode === 'running', selectedJob = preparationJob(active);
+      parent.append(element('h2', '', selectedJob ? jobLabel(selectedJob) : running ? 'Preparing report' : 'Preparation incomplete'),
         element('p', '', `${progress.ready} of ${progress.total} walkthroughs ready · ${progress.reportName}`),
         element('p', '', preparationJob(active)?.reason || progress.reason || 'Ready walkthroughs are available immediately. Other findings continue preparing in the background.'),
         element('small', 'triage-muted', `${progress.requests} of ${progress.requestLimit} model requests used${progress.ambiguities ? ` · ${progress.ambiguities} report sections need classification` : ''}`));
       for (const job of progress.active || []) parent.append(element('p', '', `${job.id} · ${job.stage || 'Locating code'}`));
+      if (selectedJob?.missingInputs?.length) {
+        const needed = element('details'); needed.append(element('summary', '', 'Evidence needed before this finding can finish'));
+        for (const item of selectedJob.missingInputs) needed.append(element('p', '', `${item.claimId}: ${item.text}`), element('small', 'triage-muted', item.why));
+        needed.append(element('p', 'triage-muted', 'Provide the named source or observation first. Continuing unchanged cannot establish an unavailable external fact.'));
+        parent.append(needed);
+      }
+      if (selectedJob?.validationProblems?.length) {
+        const invalid = element('details'); invalid.append(element('summary', '', 'Retained response: targeted repair needed'));
+        for (const item of selectedJob.validationProblems) invalid.append(element('p', '', `${item.code}: ${item.message}`));
+        parent.append(invalid);
+      }
       const controls = element('div', 'guide-preparation-actions');
       if (canContinueFinding()) {
         parent.append(element('small', 'triage-muted', 'Continue uses remaining shared allowance and may renew only this finding’s limit. Paused siblings stay paused. It never adds report allowance.'));

@@ -164,6 +164,106 @@ test('pause during explicit authorization prevents a late reservation and dispat
   assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0);
   assert.equal(f.runner.state.mode, 'paused'); assert.equal(f.runner.tasks.size, 0);
 });
+test('selected setup failure consumes one intent: disabled provider, permanent catalog error and live owner', { skip: !native }, async t => {
+  for (const mode of ['disabled', 'catalog', 'owner']) await t.test(mode, async t => {
+    const f = await fixture(t), original = f.runner.run.bind(f.runner); let attempts = 0;
+    // A breaker makes the historical infinite finally/restart defect safe to reproduce.
+    f.runner.run = async (...args) => { if (++attempts > 3) { f.runner.disposed = true; throw new Error('Test restart breaker'); } return original(...args); };
+    let lock, metadata, before;
+    if (mode === 'disabled') f.options.configuration = () => ({ provider: 'none', requestLimit: 20 });
+    if (mode === 'catalog') f.options.catalog = async () => { throw new Error('Permanent controlled index failure'); };
+    if (mode === 'owner') {
+      lock = path.join(f.root, '.flowboard/report-preparation.lock.json');
+      const ownership = require('../extension/provider-ownership'); metadata = ownership.ownerMetadata(); ownership.publish(lock, metadata);
+      before = fs.readFileSync(lock); t.after(() => ownership.removeOwned(lock, metadata.owner));
+    }
+    await f.runner.continueFinding('I-1');
+    assert.equal(attempts, 1, 'An unchanged failed intent cannot schedule itself again.');
+    assert.equal(f.calls.length, 0); assert.equal(f.runner.pendingFindings.size, 0);
+    assert.match(f.runner.status().reason, mode === 'disabled' ? /provider/ : mode === 'catalog' ? /index failure/ : /another local host/);
+    if (lock) { assert.ok(before.equals(fs.readFileSync(lock))); assert.ok(!fs.existsSync(path.join(f.root, '.flowboard/report-preparation.json'))); }
+  });
+});
+test('Pause, Cancel and disposal during real health-lock admission revoke its authority', { skip: !native }, async t => {
+  for (const action of ['pause', 'cancel', 'dispose']) await t.test(action, async t => {
+    let recovering = false;
+    const f = await fixture(t, 1, input => {
+      if (!recovering && input.phase === 'challenge') throw new Error('Saved challenge interruption');
+      return { value: response(input), audit: { phase: input.phase, outcome: 'completed' } };
+    });
+    await f.runner.ensure(); await f.runner.control('pause'); recovering = true;
+    const used = f.calls.length, spent = f.runner.state.resources.requests;
+    const ownership = require('../extension/provider-ownership'), metadata = ownership.ownerMetadata();
+    const lock = path.join(f.directory, `health-${health.identity('codex')}.lock`); ownership.publish(lock, metadata);
+    t.after(() => ownership.removeOwned(lock, metadata.owner));
+    let entered; const observed = new Promise(resolve => { entered = resolve; }); const reset = health.reset;
+    health.reset = (...args) => { entered(); return reset(...args); }; t.after(() => { health.reset = reset; });
+    const pending = f.runner.continueFinding('I-1'); await observed;
+    const duplicate = f.runner.continueFinding('I-1');
+    if (action === 'dispose') f.runner.dispose(); else await f.runner.control(action);
+    ownership.removeOwned(lock, metadata.owner); await pending; await duplicate;
+    assert.equal(f.calls.length, used, 'Admission must not restore eligibility after control revoked it.');
+    assert.equal(f.runner.state.resources.requests, spent); assert.equal(f.runner.localEligible.size, 0);
+    assert.equal(f.runner.pendingFindings.size, 0); assert.equal(f.runner.tasks.size, 0);
+  });
+});
+test('a genuinely new intent survives failed setup; repeated selection is idempotent', { skip: !native }, async t => {
+  const f = await fixture(t, 2); let release, entered, catalogs = 0;
+  const blocked = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  f.options.catalog = async () => { if (++catalogs === 1) { entered(); await blocked; throw new Error('One controlled setup interruption'); } return f.catalog; };
+  const first = f.runner.continueFinding('I-1'); await started;
+  const second = f.runner.continueFinding('I-2'), duplicate = f.runner.continueFinding('I-2'); release();
+  await Promise.all([first, second, duplicate]);
+  assert.equal(catalogs, 2); assert.deepEqual(f.calls.map(c => [c.id, c.phase]), [['I-2', 'generate'], ['I-2', 'challenge']]);
+  assert.equal(f.runner.state.jobs['I-1'].requests, 0); assert.ok(f.runner.published(engine.read(f.root, 'I-2')));
+});
+test('a finding removed while indexing cannot be admitted or reserve a request', { skip: !native }, async t => {
+  const f = await fixture(t); let release, entered;
+  const blocked = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  f.options.catalog = async () => { entered(); await blocked; return f.catalog; };
+  const pending = f.runner.continueFinding('I-1'); await started;
+  const file = path.join(f.root, '.flowboard/report.json'), report = JSON.parse(fs.readFileSync(file)); report.issues = [];
+  fs.writeFileSync(file, JSON.stringify(report)); release(); await pending;
+  assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0); assert.equal(f.runner.pendingFindings.size, 0);
+  assert.match(f.runner.status().reason, /report changed/);
+});
+test('single saved-review guard rejects the next internal repair before coordinator reservation', { skip: !native }, async t => {
+  const { SingleReviewRepairGuard } = require('../scripts/challenge-pilot-guard'), format = require('../extension/challenge-format'), { schema } = require('../extension/semantic-provider');
+  let pilot = false, guard;
+  const f = await fixture(t, 1, input => {
+    if (!pilot) {
+      if (input.phase === 'challenge') throw new Error('Controlled interruption at challenge');
+      return { value: response(input), audit: { phase: input.phase, outcome: 'completed' } };
+    }
+    const receipt = guard.reserve(input, 'r1'); assert.equal(receipt.timeoutMs, 600000);
+    const audit = { phase: 'challenge', outcome: 'completed' }; guard.result(receipt, 'unusable prose', audit);
+    return { value: 'unusable prose', audit };
+  });
+  await f.runner.ensure(); await f.runner.control('pause');
+  const draft = engine.read(f.root, 'I-1'); draft.checkpoint.feedback = { problems: ['A specific checked-note repair is required.'], validationProblems: [{ code: 'EXPLANATION_REVIEW_MISSING' }], rejectedOutput: { invalid: true } }; draft.revision++; engine.write(f.root, draft);
+  const ledger = { limit: 1, used: 0, receipts: [], prerequisites: { controlsPassed: true, localReplayHash: 'controlled', necessarySourcesRead: true,
+    noIndispensableMissingEvidence: true, savedBaseHash: engine.hash(format.earlier(draft, schema)), snapshotHash: engine.hash(draft.snapshot) } };
+  guard = new SingleReviewRepairGuard('I-1', ledger, () => {}); f.options.authorizeRequest = ({ input }) => guard.check(input);
+  const requests = f.runner.state.resources.requests, calls = f.calls.length; pilot = true;
+  await f.runner.continueFinding('I-1');
+  assert.equal(ledger.used, 1); assert.equal(f.calls.length, calls + 1); assert.equal(f.calls.at(-1).phase, 'challenge');
+  assert.equal(f.runner.state.resources.requests, requests + 1); assert.equal(f.runner.tasks.size, 0);
+  assert.equal(f.runner.published(engine.read(f.root, 'I-1')), false);
+});
+test('an unpaid recovered incomplete review exposes its real blockers, not a transport retry invitation', { skip: !native }, async t => {
+  const f = await fixture(t); await f.runner.ensure(); const calls = f.calls.length;
+  const draft = engine.read(f.root, 'I-1'); draft.claims[0].unknowns = ['A separately asserted external receiver is not established.'];
+  draft.phase = 'blocked'; draft.failureKind = 'paused'; draft.failureCode = 'LOCAL_RECOVERY_PENDING'; draft.yielded = true;
+  draft.runs.at(-1).reusedResponse = true; draft.checkpoint.stage = 'challenge'; draft.checkpoint.feedback = {}; delete draft.publication;
+  draft.revision++; engine.write(f.root, draft); const claimHash = engine.hash(draft.claims);
+  f.runner.dispose(); f.options.configuration = () => ({ provider: 'none', requestLimit: 20 });
+  const reopened = new ReportPreparation(f.root, f.options); t.after(() => reopened.dispose()); await reopened.ensure();
+  const recovered = engine.read(f.root, 'I-1');
+  assert.equal(recovered.failureKind, 'material-evidence'); assert.match(recovered.error, /external receiver/);
+  assert.equal(engine.hash(recovered.claims), claimHash); assert.equal(reopened.published(recovered), false);
+  assert.equal(f.calls.length, calls); assert.equal(recovered.publication.ready, false);
+  const revision = recovered.revision; await reopened.ensure(); assert.equal(engine.read(f.root, 'I-1').revision, revision);
+});
 test('pause cancels a waiting sibling promptly without hiding ready work on reopen or reserving a request', { skip: !native }, async t => {
   const f = await fixture(t); await f.runner.ensure(); assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   const human = path.join(f.root, '.flowboard/human-note.txt'); fs.writeFileSync(human, 'Preserve this optional research note.');

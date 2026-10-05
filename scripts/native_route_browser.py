@@ -52,9 +52,12 @@ try:
         page.expose_function('__routeSend',lambda message:request('/message',message))
         page.expose_function('__routePoll',lambda cursor:request('/events?after='+str(cursor)))
         page.add_init_script('''window.sent=[];window.hostMessages=[];window.routeEvents=[];
+            function timeNative(){for(const name of ['loadSnapshot','redrawEdges']){const old=window[name];if(typeof old!=='function'||old.routeTimed)continue;
+                const wrap=function(...args){const start=performance.now();try{return old.apply(this,args)}finally{window.routeEvents.push({event:name,durationMs:performance.now()-start,at:Date.now(),perf:performance.now()})}};
+                wrap.routeTimed=true;window[name]=wrap;}}
             document.addEventListener('click',e=>{const row=e.target.closest('[data-finding-id]');if(row)window.routeEvents.push({event:'actual-finding-click',findingId:row.dataset.findingId,at:Date.now(),perf:performance.now()})},true);
             window.acquireVsCodeApi=()=>({postMessage(m){if(window.routeClosing)return;window.sent.push(m);if(m.type==='triage:rendered')window.routeEvents.push({event:'rendered-send',at:Date.now(),perf:performance.now(),token:m.token});return window.__routeSend(m)}});
-            let cursor=0,polling=false;window.routeTimer=setInterval(async()=>{if(polling||window.routeClosing)return;polling=true;try{const b=await window.__routePoll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);if(m.type==='triage:load')window.routeEvents.push({event:'load-received',at:Date.now(),perf:performance.now(),token:m.token});window.dispatchEvent(new MessageEvent('message',{data:m}))}}finally{polling=false}},25);''')
+            let cursor=0,polling=false;window.routeTimer=setInterval(async()=>{if(polling||window.routeClosing)return;polling=true;try{const b=await window.__routePoll(cursor);cursor=b.cursor;for(const m of b.messages){timeNative();window.hostMessages.push(m);if(m.type==='triage:load')window.routeEvents.push({event:'load-received',at:Date.now(),perf:performance.now(),token:m.token,findingId:m.issueId});window.dispatchEvent(new MessageEvent('message',{data:m}))}}finally{polling=false}},25);''')
         def wait_state(predicate):
             until=time.monotonic()+15
             while time.monotonic()<until:
@@ -187,7 +190,9 @@ try:
             page.locator('[data-finding-id="I-1"]').click();page.wait_for_selector('.guide-annotation')
             annotation_done=time.monotonic()
             verify('first-write');verified=time.monotonic();opening.append((verified-started)*1000)
-            browser_trace=page.evaluate('({events:window.routeEvents,verified:performance.now()})')
+            browser_trace=page.evaluate('''()=>{const m=window.hostMessages.filter(m=>m.type==='triage:load').at(-1);
+                window.routeEvents.push({event:'guide-readable-verified',findingId:m.issueId,token:m.token,at:Date.now(),perf:performance.now()});
+                return {events:window.routeEvents,verified:performance.now()}}''')
             actual_click=next(e for e in browser_trace['events'] if e['event']=='actual-finding-click')
             result['reopenPhases'].append({'hostMs':(host_done-started)*1000,'reloadMs':(reload_done-host_done)*1000,
                 'libraryMs':(library_done-reload_done)*1000,'selectionMs':(annotation_done-library_done)*1000,

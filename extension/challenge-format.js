@@ -2,6 +2,7 @@
 // Reduce repeated model output, not review obligations. An unchanged field is
 // retained verbatim; every note and causal target still needs a fresh check.
 const MODE = 'review-delta-v1';
+const scope = require('./review-scope');
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] });
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 // A first challenge checks the argument without asking for a second copy of
@@ -32,6 +33,13 @@ function patchSchema(full) {
     explanationReviews: full.properties.explanationReviews, checks: full.properties.causal.properties.checks });
 }
 function apply(value, previous, full) {
+  const result = assemblePatch(value, previous, full);
+  scope.assert(previous, result);
+  return result;
+}
+// Diagnostic assembly alone is NOT a validated review. Ordinary ingestion
+// always uses apply(), including the immutable-scope check after assembly.
+function assemblePatch(value, previous, full) {
   if (full.properties.inputReviews && !previous.inputReviews?.length && value?.inputReviews === undefined) value = { ...value, inputReviews: [] };
   if (!valid(value, patchSchema(full))) throw new Error('The targeted repair has an invalid shape.');
   const result = structuredClone(previous), touched = new Set();
@@ -110,7 +118,10 @@ function expand(value, previous, fullSchema) {
   // Checks can never be inherited from a previous pass or lost through null.
   result.explanationReviews = structuredClone(value.explanationReviews);
   if (!valid(result, fullSchema)) throw new Error('The second pass left an incomplete explanation. Required fields still need checking.');
+  scope.assert(previous, result);
   return result;
 }
 const instruction = `During challenge return review-delta-v1 using the supplied schema. earlierDraft is the exact earlier result in the same field format. In changes and causal, null means preserve that field EXACTLY, not remove it or consider it automatically checked. Replace an array as a whole when it changes; [] deliberately clears it. Supply fresh causal.checks for EVERY event, obligation and relationship, plus explanationReviews for EVERY retained/removed/new evidence ID. Never return null for these checks. Review the actual new code before keeping an earlier statement. Changes to a premise require all dependent claims, events, evidence, questions and assessment to be reconsidered. Preserve real blockers. Do not repeat unchanged quotes, conditions and event data merely to acknowledge reading them. Keep each review reason to one concrete sentence with its evidence links. This response format saves copying, not any required reasoning or source check.`;
-module.exports = { MODE, schemaFor, earlier, expand, instruction, checkSchema, checked, checkInstruction, PATCH, patchSchema, apply, patchInstruction, valid };
+module.exports = { MODE, schemaFor, earlier, expand, instruction: instruction + '\n' + scope.instruction,
+  checkSchema, checked, checkInstruction: checkInstruction + '\n' + scope.instruction, PATCH, patchSchema, apply, assemblePatch,
+  patchInstruction: patchInstruction + '\n' + scope.instruction, valid };

@@ -26,4 +26,19 @@ class ChallengePilotGuard {
   result(receipt, value, audit) { Object.assign(receipt, { outcome: audit?.outcome || 'failed', substantive: substantive(value),
     finishedAt: new Date().toISOString(), audit }); this.save(this.ledger); }
 }
-module.exports = { ChallengePilotGuard, substantive, materialSources };
+class SingleReviewRepairGuard extends ChallengePilotGuard {
+  check(input) {
+    const deny = message => { throw Object.assign(new Error(message), { code: 'REPORT_PAUSED' }); };
+    const permit = this.ledger.prerequisites;
+    if (this.ledger.limit !== 1 || this.ledger.used !== 0) deny('R1 is one invocation only; no retry or second repair is authorized.');
+    if (input.phase !== 'challenge' || input.finding?.id !== this.findingId) deny('R1 permits only the saved finding challenge; generation and siblings are forbidden.');
+    if (!permit?.controlsPassed || !permit.localReplayHash || !permit.necessarySourcesRead || !permit.noIndispensableMissingEvidence)
+      deny('R1 prerequisites are incomplete. Obtain the named evidence or finish local checks without spending a request.');
+    if (!permit.savedBaseHash || hash(input.earlierDraft) !== permit.savedBaseHash || hash(input.snapshot) !== permit.snapshotHash)
+      deny('R1 saved base/source/input identity changed; no request is authorized.');
+    if (!input.hostReview?.rejectedOutput || !input.hostReview.validationProblems?.length || !input.evidenceScopes)
+      deny('R1 needs the exact rejected response, structured repair feedback and immutable evidence scope manifest.');
+    return 600000;
+  }
+}
+module.exports = { ChallengePilotGuard, SingleReviewRepairGuard, substantive, materialSources };

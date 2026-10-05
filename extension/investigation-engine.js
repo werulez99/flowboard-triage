@@ -60,6 +60,15 @@ function revalidate(draft, catalog, request, issue) {
       draft.phase = 'ready'; delete draft.error; delete draft.failureKind;
       draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), at: now(), recoveredLocally: true };
       draft.revision++; write(catalog.root, draft);
+    } else if (draft.failureKind === 'paused' && (draft.failureCode === 'LOCAL_RECOVERY_PENDING' || draft.yielded && last.reusedResponse)) {
+      // A recovered substantive response may still fail the gate. Display its
+      // actual blockers rather than leaving the unpaid-recovery transport stop
+      // as the apparent analytical result. No claim or review is changed.
+      draft.publication = publication; draft.phase = 'blocked';
+      draft.failureKind = publication.details?.some(item => item.kind === 'material-evidence') ? 'material-evidence' : 'structural';
+      draft.error = publication.problems[0];
+      draft.checkpoint.feedback = { ...draft.checkpoint.feedback, problems: publication.problems, details: publication.details };
+      draft.revision++; write(catalog.root, draft);
     }
   }
   return true;
@@ -614,28 +623,30 @@ function correct(draft, change) {
 function checkExplanations(output, previous, next, units) {
   // This checks the challenge's coverage/identity, NOT the truth of its prose.
   // A real quote cannot by itself certify a model's interpretation.
+  const scope = require('./review-scope'), problems = scope.problems(previous, next);
   const sourceIds = new Set(units.map(unit => unit.id)), reviewed = new Set();
   const inspected = (ids, target) => {
     const expected = units.find(unit => unit.id === target);
-    return ids.some(id => id === target || expected && units.some(unit => unit.id === id && unit.code === expected.code &&
-      unit.source.file === expected.source.file && unit.source.line === expected.source.line && unit.source.endLine === expected.source.endLine && unit.source.sourceHash === expected.source.sourceHash));
+    return ids.some(id => id === target || expected && units.some(unit => unit.id === id && require('./source-coverage').contains(expected, unit)));
   };
   const checks = output.explanationReviews || [];
-  for (const claim of previous.claims) if (!next.claims.some(item => item.id === claim.id)) throw new Error(`The second pass omitted statement ${claim.id}. Its unresolved path was preserved; the result was not applied.`);
+  for (const claim of previous.claims) if (!next.claims.some(item => item.id === claim.id)) problems.push({ code: 'CLAIM_REMOVED', claimId: claim.id, message: `The second pass omitted statement ${claim.id}. Its unresolved path was preserved; the result was not applied.` });
   if (!Array.isArray(checks) || checks.length > limits.explanationReviews) throw new Error('The second pass returned invalid explanation checks.');
   const accepted = [];
   for (const check of checks) {
+    try {
     const old = previous.evidence.find(item => item.id === check.evidenceId), item = next.evidence.find(item => item.id === check.evidenceId);
     if (reviewed.has(check.evidenceId) || !old && !item || !['kept', 'repaired', 'removed', 'added'].includes(check.result) || !text(check.reason) || !Array.isArray(check.checkedSourceIds) || !check.checkedSourceIds.length || check.checkedSourceIds.some(id => !sourceIds.has(id))) throw new Error('Each explanation check needs its own note, a concrete reason and available code references.');
     if (old && !inspected(check.checkedSourceIds, old.sourceId) || item && !inspected(check.checkedSourceIds, item.sourceId)) throw new Error(`The explanation check for ${check.evidenceId} did not inspect its referenced function (${old?.sourceId || item?.sourceId}).`);
     if (check.result === 'removed' ? !old || !!item : !item || (check.result === 'added' ? !!old : !old)) throw new Error('The explanation check does not match the retained or removed note.');
     if (check.result === 'kept' && (['note', 'quote', 'stance', 'claimId', 'sourceId'].some(key => old[key] !== item[key]) || JSON.stringify(old.source) !== JSON.stringify(item.source))) throw new Error('A changed explanation must be marked repaired, not kept.');
-    if (old && item && old.claimId !== item.claimId) throw new Error('A repaired note cannot silently change its report statement. Remove it and add a separately scoped note.');
     const record = { evidenceId: check.evidenceId, result: check.result, reason: text(check.reason), checkedSourceIds: [...new Set(check.checkedSourceIds)], origin: 'model-challenge', independentlyVerified: false };
-    if (item) item.explanationReview = record;
     reviewed.add(check.evidenceId); accepted.push(record);
+    } catch (error) { problems.push({ code: 'EXPLANATION_REVIEW_INVALID', evidenceId: check?.evidenceId || '', message: error.message }); }
   }
-  for (const item of [...previous.evidence, ...next.evidence]) if (!reviewed.has(item.id)) throw new Error(`The second pass did not check explanation ${item.id}. Earlier work remains a draft, not a checked explanation.`);
+  for (const id of new Set([...previous.evidence, ...next.evidence].map(item => item.id))) if (!reviewed.has(id)) problems.push({ code: 'EXPLANATION_REVIEW_MISSING', evidenceId: id, message: `The second pass did not check explanation ${id}. Earlier work remains a draft, not a checked explanation.` });
+  if (problems.length) throw scope.failure(problems);
+  for (const record of accepted) { const item = next.evidence.find(item => item.id === record.evidenceId); if (item) item.explanationReview = record; }
   next.explanationReviews = accepted;
   return next;
 }
@@ -680,7 +691,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       configurationVerified: false, limitation: 'All compilation input texts match. Active build profile/settings and deployed bytecode are not certified by source matching.' } : { available: false, reason: context.compiler.reason };
     draft.actions.push({ id: `prepare-${crypto.randomUUID()}`, kind: 'source-preparation', outcome: 'source-returned', performedAt: now(), sourceIds: context.units.map(unit => unit.id), result: 'Report references, separate production/test candidates and bounded compiler declaration context prepared. No execution route is assumed.' });
     draft.phase = ['claude', 'codex'].includes(provider) ? resumeChallenge ? 'challenging' : 'generating' : 'provider-required';
-    delete draft.error; delete draft.failureKind;
+    delete draft.error; delete draft.failureKind; delete draft.failureCode;
     if (resumeChallenge) draft.actions.push({ id: `resume-${crypto.randomUUID()}`, kind: 'checkpoint-resume', outcome: 'source-returned',
       sourceIds: draft.sources.map(unit => unit.id), result: 'Resuming the saved explanation check. The accepted generation is reused after checking its report and code.', performedAt: now() });
     await save();
@@ -695,11 +706,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary) },
       snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })), sources: modelSources(context.units),
       compiler: draft.compiler, experiments: draft.experiments, codeGaps: context.gaps, documentation: context.documentation,
-      ...(phase === 'challenge' ? { earlierDraft: challengeFormat.earlier(draft, reviewSchema), actions: draft.actions.slice(-5) } : {}) });
+      ...(phase === 'challenge' ? { earlierDraft: challengeFormat.earlier(draft, reviewSchema), evidenceScopes: require('./review-scope').manifest(draft), actions: draft.actions.slice(-5) } : {}) });
     let repairUsed = resumeChallenge && !!draft.checkpoint?.repairUsed;
     let followups = resumeChallenge && !resumeQuestions ? draft.checkpoint?.followups || 0 : 0;
     const readQuestions = result => {
-      let progress = false; const alreadyRead = new Set(context.units.map(unit => unit.id));
+      let progress = false; const priorUnits = [...context.units], alreadyRead = new Set(priorUnits.map(unit => unit.id));
       const deferred = context.prioritize(result);
       if (deferred.length) draft.actions.push({ id: `prioritize-${crypto.randomUUID()}`, kind: 'context-priority', outcome: 'candidates-deferred', sourceIds: [], performedAt: now(),
         result: `Reserved follow-up room by deferring unreferenced discovery candidates, not evidence: ${deferred.join('; ')}. These definitions remain in the local index.` });
@@ -715,7 +726,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (previous && ['no-additional-context', 'context-already-available', 'blocked'].includes(previous.outcome) && previous.sourceIds.every(id => context.units.some(unit => unit.id === id))) continue;
         const action = { ...context.act(question, claim), acquisitionKey: key };
         draft.actions.push(action);
-        if (['source-returned', 'reading-limit'].includes(action.outcome) && action.sourceIds.some(id => !alreadyRead.has(id))) progress = true;
+        if (['source-returned', 'reading-limit'].includes(action.outcome) && action.sourceIds.some(id => !alreadyRead.has(id) &&
+            (question.action !== 'missing-context' || !priorUnits.some(unit => require('./source-coverage').contains(context.units.find(item => item.id === id), unit, true))))) progress = true;
       }
       return progress;
     };
@@ -809,8 +821,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       draft.runs.push({ ...response.audit, resultAccepted: false, ...(feedback ? { repair: true } : {}) });
       const validate = value => {
         if (data.checkOnly && value?.result) value = challengeFormat.checked(value, data.earlierDraft, reviewSchema);
-        if (value?.mode === challengeFormat.PATCH) value = challengeFormat.apply(value, data.earlierDraft, reviewSchema);
+        // Assemble first so independent note/scope failures can be reported
+        // together. checkExplanations below enforces the same immutable scope
+        // gate before anything is accepted; diagnostic assembly is not approval.
+        if (value?.mode === challengeFormat.PATCH) value = previous ? challengeFormat.assemblePatch(value, data.earlierDraft, reviewSchema) : challengeFormat.apply(value, data.earlierDraft, reviewSchema);
         else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, reviewSchema);
+        try {
         const accepted = accept(value, draft, context.units);
         for (const entry of accepted.evidence) {
           const unit = context.units.find(item => item.id === entry.sourceId), supplied = data.sources.find(item => item.id === entry.sourceId);
@@ -818,6 +834,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           if (entry.source.endLine > readTo) throw Object.assign(new Error(`Evidence ${entry.id} refers to local code not yet supplied: ${entry.source.file}:${entry.source.line}-${entry.source.endLine}. Request that segment before explaining it.`), { code: 'LOCAL_READING_LIMIT' });
         }
         return previous ? checkExplanations(value, previous, accepted, context.units) : accepted;
+        } catch (error) {
+          if (!previous) throw error;
+          const scope = require('./review-scope'), independent = scope.problems(previous, value);
+          if (!independent.length) throw error;
+          const all = [...independent, ...(error.validationProblems || [{ code: 'REVIEW_SOURCE_OR_COVERAGE', message: error.message }])];
+          throw scope.failure([...new Map(all.map(item => [[item.code, item.evidenceId, item.message].join(':'), item])).values()]);
+        }
       };
       let accepted;
       try { accepted = validate(response.value); }
@@ -827,11 +850,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (repairUsed) {
           draft.lastRejected = { phase, inputHash: response.audit?.inputHash, at: now(), error: error.message, output: response.value };
           draft.checkpoint ||= { stage: phase, snapshot: hash(draft.snapshot) };
-          draft.checkpoint.feedback = { problems: [error.message], rejectedOutput: response.value };
+          draft.checkpoint.feedback = { problems: error.reviewProblems || [error.message], validationProblems: error.validationProblems || [], rejectedOutput: response.value };
           throw error;
         }
         repairUsed = true;
-        const repairFeedback = { problems: error.reviewProblems || [error.message], rejectedOutput: response.value };
+        const repairFeedback = { problems: error.reviewProblems || [error.message], validationProblems: error.validationProblems || [], rejectedOutput: response.value };
         draft.checkpoint = { stage: phase, snapshot: hash(draft.snapshot), repairUsed: true, followups, feedback: repairFeedback, at: now() }; await save();
         // One bounded repair with the exact rejected response and host error.
         // Never guess new line spans, silently fix meaning, or publish it.
@@ -923,6 +946,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
   } catch (error) {
     if (error.code === 'INVESTIGATION_SUPERSEDED' || signal?.aborted || !current()) return draft;
     if (error.code === 'LOCAL_RECOVERY_PENDING') draft.yielded = true;
+    draft.failureCode = error.code || null;
     draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' :
       ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE', 'PROVIDER_TEARDOWN_UNCONFIRMED', 'PROVIDER_RESOURCE_UNAVAILABLE', 'PROVIDER_OWNERSHIP_UNAVAILABLE'].includes(error.code) || error.audit?.teardown?.confirmed === false ? 'provider-health' :
       ['REPORT_PAUSED', 'LOCAL_RECOVERY_PENDING'].includes(error.code) ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : ['LOCAL_READING_LIMIT', 'LOCAL_PACKET_LIMIT'].includes(error.code) ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);

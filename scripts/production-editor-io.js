@@ -23,7 +23,7 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, onBoar
         const select = this.callbacks.select;
         this.callbacks.select = id => { trace('selection-received', { findingId: id }); const work = select(id); onSelection(work); return work; };
       }
-      async open(...args) { trace('board-open', { cache: args[2]?.cache, findingId: args[0].findingId }); const result = await super.open(...args); trace('board-readable-ack', { findingId: this.activeId }); return result; }
+      async open(...args) { trace('board-open', { cache: args[2]?.cache, findingId: args[0].findingId }); const result = await super.open(...args); trace('board-shell-ack', { findingId: this.activeId, token: this.activeToken }); return result; }
       async post(message) { if (message.type === 'triage:load') trace('load-send', { findingId: message.issueId, token: message.token }); return super.post(message); }
     } };
     const value = normal(name);

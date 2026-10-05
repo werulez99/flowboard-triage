@@ -4,8 +4,8 @@
 const fs = require('node:fs'), path = require('node:path');
 const engine = require('../extension/investigation-engine'), provider = require('../extension/semantic-provider');
 async function main() {
-  const [root, id, output, mode] = process.argv.slice(2), native = process.env.FLOWBOARD_EXTENSION_PATH;
-  if (mode && mode !== '--saved-challenge') throw new Error('Only --saved-challenge is supported after the output path.');
+  const [root, id, output, mode, priorInput, priorResponse] = process.argv.slice(2), native = process.env.FLOWBOARD_EXTENSION_PATH;
+  if (mode && !['--saved-challenge', '--replay-challenge'].includes(mode)) throw new Error('Choose --saved-challenge or --replay-challenge INPUT RESPONSE.');
   if (!root || !id || !output || !native || !path.isAbsolute(root) || !path.isAbsolute(output))
     throw new Error('Usage: FLOWBOARD_EXTENSION_PATH=... node scripts/inspect-review-packet.js ABSOLUTE_IMPORTED_WORKSPACE FINDING ABSOLUTE_PRIVATE_OUTPUT');
   const repository = path.resolve(__dirname, '..'), destination = path.resolve(output);
@@ -31,8 +31,17 @@ async function main() {
   if (!entry) throw new Error('The imported finding cannot be reconciled with its original report boundaries.');
   const request = coordinator.request(entry, catalog, report);
   const draft = mode ? structuredClone(engine.read(root, id)) : engine.create({ findingId: id, request, issue, catalog });
-  let packet;
-  if (mode) ({ packet } = await require('./saved-stage-packet').inspectSavedStage({ root, catalog, request, issue, findingId: id, saved: draft }));
+  let packet, replay, retainedHashes;
+  if (mode === '--replay-challenge') {
+    if (!path.isAbsolute(priorInput || '') || !path.isAbsolute(priorResponse || '')) throw new Error('Exact saved request/response absolute paths are required.');
+    retainedHashes = [priorInput, priorResponse].map(file => engine.hash(fs.readFileSync(file).toString('base64')));
+    packet = JSON.parse(fs.readFileSync(priorInput, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(priorResponse, 'utf8'));
+    if (!engine.compatible(draft, catalog, request, issue) || !engine.sameSnapshot(packet.snapshot, draft.snapshot)) throw new Error('Saved response/source/input identities changed.');
+    engine.validateCurrent(catalog, draft);
+    replay = require('./replay-review').replayReview({ saved: draft, input: packet, response: raw.value || raw, units: draft.sources });
+    if (JSON.stringify(retainedHashes) !== JSON.stringify([priorInput, priorResponse].map(file => engine.hash(fs.readFileSync(file).toString('base64'))))) throw new Error('Retained request or response changed.');
+  } else if (mode) ({ packet } = await require('./saved-stage-packet').inspectSavedStage({ root, catalog, request, issue, findingId: id, saved: draft }));
   else
   await engine.advance({ root, findingId: id, request, issue, catalog, draft, provider: 'codex', persist: false,
     current: () => true, publish: async () => {}, invoke: async input => {
@@ -44,7 +53,8 @@ async function main() {
   if (JSON.stringify(records()) !== JSON.stringify(beforeRecords)) throw new Error('Offline inspection changed saved workspace records.');
   fs.mkdirSync(destination, { mode: 0o700 });
   fs.writeFileSync(path.join(destination, 'input.json'), JSON.stringify(packet, null, 2), { flag: 'wx', mode: 0o600 });
-  const result = { mode: mode ? 'offline-saved-challenge' : 'offline-production-packet', providerRequests: 0, findingId: id, reportCount: report.issues.length,
+  if (replay) fs.writeFileSync(path.join(destination, 'replay.json'), JSON.stringify({ ...replay, retainedHashes }, null, 2), { flag: 'wx', mode: 0o600 });
+  const result = { mode: replay ? 'offline-rejected-review-replay' : mode ? 'offline-saved-challenge' : 'offline-production-packet', providerRequests: 0, findingId: id, reportCount: report.issues.length,
     reportHash: report.reportHash, snapshot: draft.snapshot, sourceUnits: packet.sources.length, savedRecordsUnchanged: true, savedRecordHashes: beforeRecords,
     indexingMs: indexedAt - start, acquisitionAndPacketMs: Date.now() - indexedAt,
     inputBytes: metrics.inputBytes, inputSections: metrics.inputSections, packetBoundBytes: metrics.requestBytes,

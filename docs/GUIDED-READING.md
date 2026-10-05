@@ -598,4 +598,99 @@ On this WSL2 host, Node v20.20.1 with `FLOWBOARD_EXTENSION_PATH` pointing to the
 
 After installation, save editor work, run **Developer: Reload Window**, then **Flowboard Triage: Diagnose Setup**. In **Output -> Flowboard Triage**, verify active **0.19.4**, its matching extension path and native **1.2.0**. Do not resume the original exhausted report just to inspect activation. The private pilot's two new calls are exhausted and it stays paused; opening source/status is not permission for another review.
 
-The first accepted real native walkthrough remains **NOT VERIFIED / not achieved**. Both new requests delivered substantive JSON, so this is no longer another silent-deadline result. Complete evidence-scope repair and material-premise review are still required. A private next-quality reference matrix was prepared from the unchanged real pilot and existing fictional d6/h2/h3 source/report: supported bookkeeping-state consequence, two-branch refutation, and an unavailable external recorder. No reference was supplied to the model or represented as new model output, and no further case was dispatched. The fictional references do not replace a diverse real-case acceptance matrix. This iteration does not establish generic live-model quality from its controlled native routes.
+### v0.19.5 continuation authority and retained-review repair (2026-10-06)
+
+Baseline: `1a95dc4` on `improve/checked-reading-path`, native Flowboard 1.2.0, checked policy **v9 unchanged**. This iteration preserves original cards, per-finding publication, local ready-guide playback, human research, saved-stage inspection and the production selection harness. It does not claim the first accepted real walkthrough.
+
+#### Reproduced coordinator defects
+
+The actual coordinator reproduced repeated setup attempts for disabled provider, permanent catalog failure and another live report owner. A bounded test breaker stopped the old loop. Selected intents now have individual identity and control revision: a terminal setup failure consumes only the attempted intents; a genuinely new action received during the run survives. Ownership contention produces a finite host-local status, never another owner's journal update. Every journal save and dispatch requires report ownership.
+
+A second production-coordinator control held an actual health lock during selected admission. Old Pause then allowed a reservation after the lock was released; disposal also left admission state behind. Admission now rechecks revision, ownership, current finding/job, dirty inputs, provider configuration and remaining allowance after the awaited reset. Pause/Cancel/dispose revoke admission without invalidating an already-dispatched request's permitted completion. Duplicate Continue actions are idempotent. Report-wide Resume remains a separate operation; selected continuation does not enlarge shared allowance or resume paused siblings.
+
+#### Repair contract and pure replay
+
+The existing evidence ID-to-claim invariant is now explicit in instructions and a compact `evidenceScopes` manifest derived from the actual earlier draft, including shared-context `claimId=""`. Field edits, item replacement, array replacement, delta and full review ingestion keep that invariant. Failures identify `EVIDENCE_SCOPE_CHANGED`, evidence ID, old/proposed claim and dependent references. Explicit removal plus a fresh scoped ID still requires removed/added reviews, coherent references and a complete material gate. Deterministic review failures are aggregated where safe; no answer is auto-renumbered.
+
+`inspect-review-packet.js ROOT FINDING PRIVATE_OUTPUT --replay-challenge EXACT_INPUT EXACT_RESPONSE` is an offline diagnostic route. It checks current compatibility/source, the exact earlier base, assembly, scope, explanation checks and the publication gate, with before/after record hashes. It neither dispatches nor publishes. Downstream unchecked-reference errors after a rejected review are labeled as consequences, not automatically counted as independent model mistakes.
+
+The retained C2 assembled into the full schema but reassigned one existing evidence note from the first claim to the second. Exact local replay confirmed that invariant failure; additional call-site/return-binding errors and unresolved premises remained. Original C1, C2 and their receipts were not edited. The retained wire request contains **40 source units** (its input hash matches its receipt); the earlier prose log's 41-unit count should not be treated as the verified serialized count.
+
+#### One authorized real R1, no generation
+
+Before R1, complete local contract/inherited source and exact constructor, alias helper and modifier definitions were read. Eight unreferenced discovery snippets were replaced by their **complete original enclosing source**, not omitted: exact range/code containment was asserted for every previous source unit, and all 29 accepted referenced source IDs remained. The 38-unit packet stayed within the existing 40-unit capacity. The C1 semantic object and original report/premises stayed unchanged. The independent reference/disposition table was not sent to the provider.
+
+The report's conditional source claims can be examined without inventing a deployed instance. Actual integration reliance, delivery and prior storage are different claims and remain unobserved. This distinction justified one substantive repair attempt with the new local evidence, not an advance promise of Ready or permission to erase a material unknown.
+
+R1 used the normal strict adapter, isolated Codex CLI **0.160.0**, requested CLI-default model, medium reasoning and disabled tools. Observed model and USD cost were unavailable. Only its guarded deadline was **600000 ms**; ordinary defaults were unchanged. No concurrent agent tests/browser/index jobs ran during the provider invocation; unrelated user CPU load remained outside this task's control.
+
+| R1 phase/quantity | Observed |
+| --- | ---: |
+| Capacity wait | 28 ms |
+| Process start after adapter entry | 49 ms |
+| First provider event | 1.163 s |
+| First substantive content | 204.245 s |
+| Complete structured response | 204.280 s |
+| Adapter wall time | 204.865 s |
+| Data / instructions / schema | 209,873 / 31,919 / 1,580 bytes |
+| Actual stdin plus schema (with transport envelope) | 243,422 bytes |
+| Reported input / output tokens | 73,328 / 9,438 |
+| New generation / challenge requests | 0 / 1 |
+| New allowance / cumulative private pilot | 1/1 / 6/6 |
+
+The answer completed below 240 seconds; the longer bound did **not** cause this completion. The owned process group ended normally and was confirmed stopped; this does not certify unsupported daemonized descendants. Original 68/68 accounting, original report/human work, prior private history and sibling accounting were preserved. No second request was dispatched.
+
+R1 corrected the note-scope rebind but initially encountered a reproduced host-only false blocker: a repaired note cited a complete file containing its old function, whereas source-review coverage only recognized identical-sized aliases. The correction requires complete exact containment, matching file/hash and every original byte; partial, altered and mismatched controls fail. The unchanged paid response was then recovered locally with **zero requests** and unchanged 6/6 allowance. Fresh review was ingested, but the full gate still rejects incorrect call anchors/dispatch and unresolved reliance/delivery/prior-credit claims. Generated guidance remains private. Transport completion, substantive ingestion and publication are three separate outcomes.
+
+Already-read full context must not become new material evidence merely by re-extracting a declaration for an external-context question. Reading coverage now prevents that false progress signal. A locally recovered incomplete review reports its actual source/gate blockers rather than a generic transport-retry invitation. Status distinguishes Needs evidence, Invalid review response and Operational failure, with concise missing-input/repair details.
+
+#### Reopen profiling boundary
+
+The same production-route driver now uses a tracked Git fixture and measures individual real `rev-parse`/`status` subprocesses, layout, investigation preparation, saved-canvas reading and load payload serialization. `board-shell-ack` no longer claims guide readability: the browser separately verifies the exact annotation, source, occurrence, restored position and visibility and correlates its acknowledgement by finding/token. Native snapshot/edge work is timed without replacing renderer logic.
+
+An initial three-reopen profile observed 14 Git subprocesses per reopen, 96.4–232.1 ms combined, versus about 0.1–4.4 ms for layout and 9.7–23.1 ms for investigation preparation. This supported one bounded change: reuse the initial Git observation only across the synchronous prepare/render segment of a selection. No await or cross-operation cache is crossed; later post-acquisition and board-delivery revision/source checks remain. No renderer rewrite or speculative layout cache was shipped.
+
+The first pair was correctly rejected by its identity guard when a temporary product edit occurred during the baseline arm. That invalid attempt and its raw samples were retained, not compared. After restoring and freezing the tree, one complete pair used baseline `1a95dc4` and candidate 0.19.5 with the same Git-backed fixture and driver, three navigation rounds and twenty reopens per arm. No agent test suite competed with either arm. Four functional groups passed per arm, with zero page/host errors, two fixed responses per arm and zero external requests. Actual screenshots of original cards, exact highlights and adjacent annotations were inspected; these are not the user's Cursor or a real accepted finding.
+
+| Production-route boundary | Baseline median / p95 | Candidate median / p95 | Samples per arm |
+| --- | ---: | ---: | ---: |
+| All material steps | 30.30 / 68.00 ms | 33.70 / 89.50 ms | 84 |
+| Within-function steps | 21.80 / 31.90 ms | 24.70 / 47.90 ms | 24 |
+| Cross-function steps | 32.70 / 70.70 ms | 36.60 / 92.50 ms | 60 |
+| Full close/reload/select/verified-readable | 1073.21 / 1558.16 ms | 1095.47 / 1394.54 ms | 20 |
+| Actual click to verified readable content | 666.65 / 853.30 ms | 658.45 / 946.80 ms | 20 |
+| Automation actionability before click | 77.50 / 125.10 ms | 70.15 / 156.50 ms | 20 |
+
+Functional status passed; step p95 <100 ms passed; reopen p95 <500 ms **still missed in both arms**. Git calls fell from 14 to 12 per reopen; their combined median/p95 changed from 133.64/222.03 to 120.59/178.84 ms. This removes demonstrated duplicate work, but neither the mixed end-to-end timings nor this one historical pair establishes a general speedup. Step and actual-click p95 were higher in this run. WSL2 had four logical CPUs; unrelated user load was not terminated or controlled.
+
+All outliers remain. Candidate maximum total reopen was 1810.12 ms, with 1054.10 ms from actual click to verified guide. Its host selection-to-load was 309 ms, load-send to browser receipt 187 ms, receipt to shell-rendered-send 307 ms and rendered-send to verified guide 213 ms. These are intervals from **one correlated sample**, not added phase percentiles. Its layout took 0.09 ms, investigation preparation 19.94 ms, saved-guide validation 2.46 ms, payload serialization 5.90 ms (104,753 bytes), and native loadSnapshot 67.9 ms. Remaining scheduling/render/layout time is not established as a single bottleneck; no speculative renderer rewrite was made. The shell acknowledgement remains separately named and cannot end the readable timer.
+
+Reproduce the same workload with the pinned native dependency and Playwright environment:
+
+```sh
+FLOWBOARD_EXTENSION_PATH=/path/to/anchabadze.solidity-flowboard-1.2.0 \
+  python scripts/paired_native_route.py --baseline 1a95dc4e1f6b0b06fee7fc31981d9b7ed3003870 \
+  --production-selection --samples 3 --reopens 20 --output /private/new-v0195-pair
+```
+
+The separate `mixed_preparation_browser.py --local-retry` control passed four groups: selected B continues only its saved challenge while A is ready and C/D remain stopped; B's later acceptance leaves A's original function, highlights, camera, source scroll, text and caret unchanged. Pause, controller reopen and a new coordinator reading persisted artifacts keep A/B readable with zero additional calls. It used nine fixed-response calls, zero external calls, zero page/host errors. This is not an OS editor-host restart or fresh model reasoning.
+
+The first accepted real native walkthrough remains **NOT VERIFIED / not achieved**. The one new R1 delivered substantive JSON, so this is no longer another silent-deadline result. Exact call/return/dispatch repairs and material-premise review remain necessary even though the original scope rebind was corrected. A private next-quality reference matrix was prepared from the unchanged real pilot and existing fictional d6/h2/h3 source/report: supported bookkeeping-state consequence, two-branch refutation, and an unavailable external recorder. No reference was supplied to the model or represented as new model output, and no further case was dispatched. The fictional references do not replace a diverse real-case acceptance matrix. This iteration does not establish generic live-model quality from its controlled native routes.
+
+#### Final checks and runtime identity
+
+The canonical command ran **once after the final production/test edits**, on WSL2, Node **v20.20.1**, with the installed original native **1.2.0** dependency:
+
+```sh
+FLOWBOARD_EXTENSION_PATH=/home/merulz/.cursor-server/extensions/anchabadze.solidity-flowboard-1.2.0 npm test
+```
+
+It used the existing sequential `scripts/test.js`: **416 passed, 0 failed, 0 skipped**, 77.934 seconds (402 top-level tests, including nested controls). Focused tests had already covered the setup loop, ownership, held-lock Pause/Cancel/dispose, new/duplicate/removed intents, immutable-scope patch forms, exact containing-source review and single-request recovery. Initial baseline race probes intentionally failed; early new-test fixture mistakes were corrected before this canonical run. No default-parallel or independent audit-executor full-suite pass is claimed. No new offline Solidity execution run was needed or claimed for these changes. Native/browser fixed-response results above remain separate from the one live R1.
+
+Release input inspection contains **191 allowlisted public files**, with no private source/report, responses, receipts, reference assessments or screenshots. Policy stays v9; there is no version-only promotion of an unchecked guide. No main merge or GitHub release is authorized.
+
+The quality-harness self-tests passed **3/3**, separately from Node/native/model evidence. Packaging produced coherent 0.19.5 VSIX, source and install bundles. The normal remote Cursor installer installed `/home/merulz/.cursor-server/extensions/local.flowboard-triage-0.19.5`; all **57 packaged extension files** matched, allowing only installer-added package metadata. Native dependency remained 1.2.0 and its VSIX SHA256 remained `de98a6cfe43cd441ab1e06d818c5a082ebba79c7224ece2176506f7162a19c13`. Archive files were checked against the exact public allowlist. An initial overbroad filename tripwire matched the public `challenge-pilot-guard.js` and its fictional tests; exact allowlist inspection confirmed these were not private pilot artifacts.
+
+A fresh actual Cursor log now records activation of **0.19.4**, from `/home/merulz/.cursor-server/extensions/local.flowboard-triage-0.19.4`, in the `20261006T015416` output session. This supersedes the older last-observed 0.15.0 record; it does **not** prove activation of the delivery build **0.19.5**, or actual Cursor playback of an accepted real guide. The native screenshots and production-IO simulation are labeled separately.
+
+After installing 0.19.5: save editor work, run **Developer: Reload Window**, then **Flowboard Triage: Diagnose Setup**. In **Output -> Flowboard Triage**, verify active 0.19.5, its matching extension path and native 1.2.0. Do not resume the exhausted original report to inspect activation. The private pilot is finite and paused at challenge with the R1 result preserved and 6/6 spent; no further request is authorized by this delivery.

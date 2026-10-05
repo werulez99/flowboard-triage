@@ -22,3 +22,20 @@ test('timeout, no JSON and nonresponsive objects cannot spend C2 even with host 
     assert.equal(ledger.used, 1);
   }
 });
+test('R1 requires exact saved base and available evidence; every terminal outcome consumes its sole permission', () => {
+  const { SingleReviewRepairGuard } = require('../scripts/challenge-pilot-guard'), { hash } = require('../extension/investigation-engine');
+  const packet = { ...input(), earlierDraft: { claims: ['unchanged'] }, snapshot: { policy: 'v9', source: 'fixed' },
+    evidenceScopes: { evidence: [] }, hostReview: { rejectedOutput: { mode: 'review-patch-v1' }, validationProblems: [{ code: 'EVIDENCE_SCOPE_CHANGED' }] } };
+  for (const outcome of ['completed', 'failed']) {
+    const ledger = { limit: 1, used: 0, receipts: [], prerequisites: { controlsPassed: true, localReplayHash: 'replay-hash', necessarySourcesRead: true,
+      noIndispensableMissingEvidence: false, savedBaseHash: hash(packet.earlierDraft), snapshotHash: hash(packet.snapshot) } };
+    const guard = new SingleReviewRepairGuard('I-2', ledger, () => {});
+    assert.throws(() => guard.check(packet), /prerequisites/); assert.equal(ledger.used, 0);
+    ledger.prerequisites.noIndispensableMissingEvidence = true;
+    for (const wrong of [{ ...packet, phase: 'generate' }, { ...packet, finding: { id: 'I-1' } }, { ...packet, earlierDraft: {} }, { ...packet, snapshot: {} }])
+      assert.throws(() => guard.check(wrong));
+    assert.equal(ledger.used, 0); assert.equal(guard.check(packet), 600000);
+    const receipt = guard.reserve(packet, 'r1'); guard.result(receipt, outcome === 'completed' ? 'unusable prose' : null, { outcome });
+    assert.throws(() => guard.check(packet), /one invocation/); assert.equal(ledger.used, 1);
+  }
+});

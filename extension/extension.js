@@ -169,9 +169,9 @@ function activate(context) {
       return openFinding(folder, id, work);
     });
   }
-  function prepare(root, request) {
+  function prepare(root, request, git = p.gitState(root)) {
     const copy = structuredClone(p.validate(request));
-    const git = p.gitState(root); p.checkRevision(copy, git);
+    p.checkRevision(copy, git);
     const refs = p.sources(root, copy);
     copy.id = `review-${crypto.randomUUID()}`;
     copy.findingId ||= store.findingKey(copy);
@@ -179,10 +179,10 @@ function activate(context) {
     copy.cards = copy.cards.map((card, i) => ({ ...card, sourceHash: refs[i].hash }));
     return copy;
   }
-  async function render(folder, request, issue = null, work = operation(folder)) {
+  async function render(folder, request, issue = null, work = operation(folder), initialGit = null) {
     assertSelected(work);
     trust(); const root = folder.uri.fsPath;
-    const refs = p.sources(root, request); const git = p.gitState(root); p.checkRevision(request, git);
+    const refs = p.sources(root, request); const git = initialGit || p.gitState(root); p.checkRevision(request, git);
     const config = vscode.workspace.getConfiguration('flowboardTriage', folder.uri);
     const mode = config.get('analysisMode', 'source');
     const isolated = path.join(root, '.flowboard/tools/slither-venv', process.platform === 'win32' ? 'Scripts/slither.exe' : 'bin/slither');
@@ -223,13 +223,16 @@ function activate(context) {
       if (error.code === 'ENOENT' && issue) return rebuildFinding(folder, id, undefined, work);
       const board = await boardFor(folder); if (current(work)) await board.showUnmapped(id, issue, error.message, () => current(work)); return;
     }
-    let request;
-    try { request = prepare(folder.uri.fsPath, store.selectedDraft(draft, id)); }
+    let request, initialGit;
+    try { initialGit = p.gitState(folder.uri.fsPath); request = prepare(folder.uri.fsPath, store.selectedDraft(draft, id), initialGit); }
     catch (error) { const board = await boardFor(folder); if (current(work)) await board.showUnmapped(id, issue, error.message, () => current(work)); return; }
     // Preserve stable draft ID/content for review concurrency; submission IDs only
     // identify delivery. The board receives the original draft fingerprint below.
     request._draftFingerprint = crypto.createHash('sha256').update(JSON.stringify(draft)).digest('hex');
-    try { await render(folder, request, issue, work); }
+    // These initial checks share one synchronous selection segment, with no
+    // await or retained cross-operation cache. Recheck Git after async source
+    // acquisition and again at board delivery, exactly as before.
+    try { await render(folder, request, issue, work, initialGit); }
     catch (error) {
       if (error.code === 'FLOWBOARD_SUPERSEDED' || !current(work)) return;
       writeStatus(work, { requestId: request.id, findingId: id, state: 'error', error: error.message, updatedAt: new Date().toISOString() });
