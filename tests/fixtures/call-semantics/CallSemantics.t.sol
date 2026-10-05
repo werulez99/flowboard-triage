@@ -24,11 +24,28 @@ contract BooleanGuard {
     function reassigned(bool accepted) external pure returns (bool) { accepted = false; return accepted; }
     function helperFirst(bool accepted) external pure { reject(); require(accepted, "rejected"); }
     function reject() internal pure { assert(false); }
+    function emptyRequire() external pure { rejectEmptyRequire(); }
+    function emptyRevert() external pure { rejectEmptyRevert(); }
+    function rejectEmptyRequire() internal pure { require(false); }
+    function rejectEmptyRevert() internal pure { revert(); }
 }
 
 contract CatchControl {
     BooleanGuard immutable guard = new BooleanGuard();
     bool public completed;
+    function typedEmpty(bool useRequire) external {
+        if (useRequire) {
+            try guard.emptyRequire() {} catch Error(string memory) {}
+        } else {
+            try guard.emptyRevert() {} catch Error(string memory) {}
+        }
+        completed = true;
+    }
+    function generalEmpty() external {
+        try guard.emptyRequire() {} catch {}
+        try guard.emptyRevert() {} catch {}
+        completed = true;
+    }
     function earlyReturn(bool flag) external returns (bool) {
         if (!flag) return false;
         try guard.requireAccepted(false) {} catch Error(string memory) {}
@@ -76,6 +93,21 @@ contract CatchControl {
 }
 
 contract CallSemanticsTest {
+    function testEmptyHelperFailurePropagatesPastTypedCatch() external {
+        CatchControl control = new CatchControl();
+        for (uint256 i; i < 2; i++) {
+            bool failed;
+            try control.typedEmpty(i == 0) {} catch (bytes memory data) {
+                require(data.length == 0, "no Error(string) payload"); failed = true;
+            }
+            require(failed && !control.completed(), "typed catch cannot commit later write");
+        }
+    }
+    function testGeneralCatchHandlesEmptyHelperFailure() external {
+        CatchControl control = new CatchControl();
+        control.generalEmpty();
+        require(control.completed(), "general catch continues after empty data");
+    }
     function testEarlierReturnSkipsCallAndWrite() external {
         CatchControl control = new CatchControl();
         require(!control.earlyReturn(false) && !control.completed(), "false returns before the call");

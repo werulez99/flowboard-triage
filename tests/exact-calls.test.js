@@ -594,6 +594,46 @@ test('earlier internal helper effects cannot be skipped to select a later failur
     assert.equal(result.gate.ready, ready, result.gate.problems.join('\n'));
   }
 });
+test('helper failure data must match the actual catch, just as direct failures do', { skip: !native }, async t => {
+  for (const body of ['require(false);', 'revert();', 'require(false, "rejected");', 'revert("rejected");', 'assert(false);', 'revert Rejected();', 'string memory reason = "rejected"; require(false, reason);']) {
+    for (const catches of ['catch Error(string memory) {}', 'catch {}']) {
+      const expected = catches === 'catch {}' || body.includes('"rejected"');
+      const { result } = await semanticFixture(t, { guard:'reject();\n  require(accepted, "rejected");', failureNeedle:'reject();',
+        helper:`function reject() internal pure { ${body} }`, catches });
+      assert.equal(result.gate.ready, expected, `${body} / ${catches}: ${result.gate.problems.join('; ')}`);
+      assert.equal(!!result.exposed.causal, expected);
+    }
+  }
+  const direct = await semanticFixture(t, { guard:'require(false);', catches:'catch Error(string memory) {}' });
+  assert.equal(direct.result.gate.ready, false); assert.equal(!!direct.result.exposed.causal, false);
+  for (const body of ['require(false);', 'revert();']) {
+    const propagation = await semanticFixture(t, { guard:'reject();\n  require(accepted, "rejected");', failureNeedle:'reject();',
+      helper:`function reject() internal pure { ${body} }`, catches:'catch Error(string memory) {}', continues:false });
+    assert.equal(propagation.result.gate.ready, true, propagation.result.gate.problems.join('; '));
+    assert.ok(propagation.result.exposed.causal, 'The correct propagation route remains publishable without a fabricated later commit.');
+  }
+  const unresolved = await semanticFixture(t, { guard:'reject();\n  require(accepted, "rejected");', failureNeedle:'reject();',
+    helper:'function reject() internal pure { require(false, string.concat("a", "b")); }', catches:'catch Error(string memory) {}' });
+  assert.equal(unresolved.result.gate.ready, false, 'An unsupported payload operation is not defaulted to Error.');
+});
+test('sealed v8 helper guides are locally rechecked, preserving valid catches and withholding the old empty/Error mistake', { skip: !native }, async t => {
+  const engine = require('../extension/investigation-engine');
+  for (const catches of ['catch Error(string memory) {}', 'catch {}']) {
+    const f = await semanticFixture(t, { guard:'reject();\n  require(accepted, "rejected");', failureNeedle:'reject();',
+      helper:'function reject() internal pure { require(false); }', catches });
+    const request = { finding:{ title:'Check a helper failure', summary:'Inspect whether the handled failure permits continuation.' } };
+    const issue = { reportText:request.finding.summary };
+    const saved = f.result.accepted, causal = structuredClone(saved.causal);
+    saved.snapshot = { ...engine.snapshot(f.catalog, request, issue), policy:'checked-explanation-v8' };
+    saved.semanticInput = require('../extension/semantic-input').input(request, issue);
+    saved.publication = { ...saved.publication, ready:true, policy:'checked-explanation-v8' };
+    saved.publication.digest = policy.digest(saved);
+    const migrated = engine.migrateChecked(saved, f.catalog, request, issue);
+    assert.equal(migrated, catches === 'catch {}');
+    assert.deepEqual(saved.causal, causal, 'Local review never edits the paid causal explanation.');
+    assert.equal(!!policy.expose(saved).causal, catches === 'catch {}');
+  }
+});
 test('local helper arguments, unavailable effects, and caller continuation are checked independently of display order', { skip: !native }, async t => {
   for (const [argument, ready] of [['false', false], ['true', true]]) {
     const { result } = await semanticFixture(t, { guard: `reject(${argument});\n  require(accepted, "rejected");`, failureNeedle: 'require(',

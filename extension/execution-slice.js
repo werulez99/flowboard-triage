@@ -4,6 +4,7 @@
 // cannot be used to prove a selected failure. Offsets remain original UTF-16.
 const { lexicalCode, matching, functionParts } = require('./solidity-text');
 const { occurrences } = require('./call-occurrences');
+const { parts, failureClass } = require('./failure-data');
 const cache = new WeakMap();
 function boolean(value, values, depth = 0) {
   if (depth > 16 || value == null) return null;
@@ -88,6 +89,7 @@ function pathTo(unit, offset, initial, options = {}) {
   const values = new Map(initial), guards = [], locals = new Set();
   const unknown = reason => ({ reachable: null, reason, values, guards });
   const stopped = (reason, outcome, failure) => ({ reachable: false, reason, outcome, failure, values, guards });
+  const classify = (kind, args, offset, custom = false) => options.failureClass ? options.failureClass(kind, args, offset, custom) : failureClass(kind, args, custom);
   function operation(node) {
     const result = options.operation?.(node, values);
     if (!result || result.outcome === 'unknown') return unknown(result?.reason || 'A preceding invocation needs its exact implementation and a checked effect before this statement.');
@@ -140,7 +142,11 @@ function pathTo(unit, offset, initial, options = {}) {
         ...(node.kind === 'unknown' ? { reason: 'This structured statement is outside the supported failure-path subset.' } : {}) };
       const text = unit.code.slice(node.start, node.end), clean = lexicalCode(text).trim();
       if (node.kind === 'unknown') return unknown('A preceding structured operation needs a checked path before this statement.');
-      if (/^(?:revert|throw)\b/.test(clean)) return stopped('An earlier failure terminates this path.', 'failure', /^revert\s+\w/.test(clean) ? 'custom' : 'Error');
+      if (/^(?:revert|throw)\b/.test(clean)) {
+        const open = clean.indexOf('('), close = open < 0 ? -1 : matching(clean, open);
+        const kind = close < 0 ? 'unknown' : classify('revert', parts(text.slice(open + 1, close)), node.start, /^revert\s+\w/.test(clean));
+        return stopped('An earlier failure terminates this path.', 'failure', kind);
+      }
       // Do not let assignment syntax hide an invocation in its RHS. The
       // operation resolver must account for it before values can advance.
       const calls = occurrences(text).filter(site => !['require', 'assert'].includes(site.name));
@@ -161,9 +167,9 @@ function pathTo(unit, offset, initial, options = {}) {
       if (arithmetic && options.noOverflow) { values.set(arithmetic[1], null); continue; }
       const guard = /^(?:require|assert)\s*\(/.exec(clean);
       if (guard) {
-        const open = clean.indexOf('('), close = matching(clean, open), first = clean.slice(open + 1, close).split(',')[0];
-        const value = boolean(first, values);
-        if (value === false) return stopped('An earlier guard rejects this path.', 'failure', /^assert\b/.test(clean) ? 'Panic' : 'Error');
+        const open = clean.indexOf('('), close = matching(clean, open), args = parts(text.slice(open + 1, close));
+        const value = boolean(args[0], values);
+        if (value === false) return stopped('An earlier guard rejects this path.', 'failure', classify(/^assert\b/.test(clean) ? 'assert' : 'require', args, node.start));
         if (value == null) return unknown('An earlier guard has not been established for this path.');
       } else if (/\bassembly\b|\b(?:delete|break|continue)\b|\+\+|--|[+*/%&|^]=/.test(clean)) return unknown('A preceding mutation or control operation needs a checked derivation.');
       else if (!calls.length && clean !== ';') return unknown('A preceding statement has no established effect in the supported source-path subset.');

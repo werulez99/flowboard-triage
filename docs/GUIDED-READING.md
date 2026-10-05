@@ -328,3 +328,57 @@ Cold live generation/challenge, accepted-to-visible real latency and richer fres
 Workspace, package and local WSL installation are **0.19.0**, with native Flowboard **1.2.0**. Installation used `cursor-server --install-extension ... --force`; the 53 extension files were compared with the tested VSIX, excluding installer-added package metadata. The installed modules also passed the five-function native route with two fixed responses, zero external requests and no page/host errors. This is simulated editor transport, not the actual Cursor window.
 
 Public source/package allowlists contain tool code and fictional fixtures only. Private reports, protocol code, receipts, answers, reference assessments and screenshots stay outside them. The original report/68-request ledger hashes were unchanged. The latest explicit activation line still identifies **0.15.0** at `local.flowboard-triage-0.15.0`. No editor reload was forced. After saving work, **Developer: Reload Window**, a new **Output -> Flowboard Triage** version/path line and the actual window walkthrough remain required before attributing Cursor behavior to 0.19.0.
+
+### Local v0.19.1 verification, 2026-10-05
+
+Baseline: clean `dfcfacba35a840b69e68b2f9061b2320251472cf` on `improve/checked-reading-path`. This patch preserves the original native 1.2.0 cards and per-finding publication; there is no layout redesign or provider/schema/deadline change.
+
+#### Empty helper failure correction
+
+The new production-path assertion reproduced the old false Ready: a helper's `require(false)` was summarized as Error(string), permitting an impossible typed-catch continuation. `failure-data.js` now supplies the same source-grounded payload classification to `execution-slice.js` and `call-bindings.js`: empty, Error, Panic, custom or unresolved. Unknown payload operations are not defaulted to Error. Reachability remains a separate prerequisite.
+
+Native parser -> SourceCatalog -> acceptance -> explanation review -> publication gate -> exposure controls cover empty require/revert with typed and general catches, string require/revert, a locally declared string reason, assertion/Panic and custom failure. Empty data with only Error(string) is withheld; general catch and supported string catches pass. An unsupported computed reason remains blocked. An offline Solidity control independently verifies both empty payloads propagate past Error(string) and a general catch can continue; no RPC/fork/protocol mutation is involved.
+
+Policy v9 revalidates sealed compatible v7/v8 guides locally. A regression models the old sealed empty/Error artifact and withholds it, while the valid general-catch artifact migrates without editing the causal explanation or invoking a model. Human reviews remain separate. Earlier-return, helper-effect, exact occurrence, saved-premise and note-navigation protections remain covered.
+
+#### Local verification boundaries
+
+On Node 20.20.1 / WSL with the pinned original Flowboard 1.2.0:
+
+- `FLOWBOARD_EXTENSION_PATH=<native> npm test`: **382 passed, 0 failed, 0 skipped**; includes **50 exact-call tests** through the native dependency.
+- `node scripts/check-call-semantics.js`: **19 passed, 0 failed, 0 skipped**, local Foundry 1.7.1 / Solidity 0.8.13.
+- `scripts/native_walkthrough_browser.py`: **17 groups**, no page errors, controlled native presentation/editor transport.
+- `scripts/quality_harness_test.py`: **3 passed** using the existing Playwright virtual environment. The initial system-Python invocation lacked Playwright and did not run tests; no dependency was installed to hide that result.
+
+These categories are not a count of real findings completed by AI. Browser fixtures do not establish active Cursor code. No new paired UI speedup is claimed; the prior v0.19 before/after measurements remain the comparable record.
+
+The controlled mixed-state browser initially timed out waiting for its first library message while other local work was running; this failed attempt is not counted as a pass and its cause was not established. The unchanged isolated rerun passed **3 groups**, with **8 fixed responses**, no page/host errors and zero external calls: A remains readable while B checks and publishes; C blocks and D fails. Pause/recreated coordinator/controller preserves A/B with no additional requests. The separate five-function/15-event native route passed **4 groups** with two fixed responses and zero external calls. These are simulated editor transport, not a Cursor activation or real-model quality result. The readable code/adjacent explanation capture was visually inspected.
+
+The corrected **0.19.1** VSIX was installed through the normal WSL Cursor server CLI and all **54** extension files matched (excluding installer-added package metadata). Native dependency remains 1.2.0. Available tools do not control the actual Cursor window. The latest explicit activation still says **0.15.0** at `local.flowboard-triage-0.15.0`; no reload is claimed. Save editor work, run **Developer: Reload Window**, then verify **Output -> Flowboard Triage** says 0.19.1 and its matching extension path. Do not press Resume/Retry on the original exhausted report merely to check activation; the paid pilot is separately guarded and unrelated jobs are paused.
+
+#### Fresh two-request real pilot
+
+The complete current instruction authorized at most two new requests: generation for the unchanged prepared real finding, then challenge only after generation succeeds. **One request used; one unused.** The intact private copy retained all 261 findings and saved researcher fields, with 260 unrelated jobs paused. The original report and exhausted 68/68 ledger hashes stayed unchanged. A separate two-request ledger, exact finding/phase guards and pause after every transport result prevented automatic retries or unrelated dispatch. No old allowance was reused and the unused second request was not repurposed as another diagnostic.
+
+The real generation **failed at its configured 240-second deadline**, with measured adapter wall time **244.833 s** and no substantive/final output. There was no complete draft, challenge, accepted artifact or real native tutorial. The job is failed and the pilot report is paused, not indefinitely running. Its completed failure receipt, exact input, metrics and diagnostics are retained privately. Usage and USD cost were not supplied and remain unknown. The owned Linux process group was confirmed ended with closed streams; this does not certify daemonized descendants outside that group. No equivalent retry was launched.
+
+| Measured boundary | This pilot |
+| --- | ---: |
+| Private source copy / report import | 18.055 s / 1.363 s |
+| Cold private-copy index | 29.529 s, one sample with other local work |
+| Selected job start to generating state | 1.197 s after shared preparation; not full cold acquisition |
+| Capacity wait | 23 ms |
+| Process start after adapter entry | 38 ms |
+| First provider event after adapter entry | 968 ms |
+| First substantive / structured final | Not reached |
+| Generation adapter wall time | 244.833 s |
+| Teardown requested to confirmed | 13 ms; remaining deadline overhead not attributed |
+| Challenge / acceptance / persisted guide / first readable real step | Not reached |
+
+Manifest reconciliation and all local startup costs were not independently timed; offline preflight separately measured 12.887 s index and 11.166 s acquisition/packet. These individual samples are not a throughput comparison or p95. No local UI timing is presented as generation speed.
+
+The exact serialized request remained 10 source units, 51,001 data bytes and 80,581 bounded total bytes: report 6,910, source packet 34,264, metadata 9,677, envelope 150, instructions 20,943, schema 8,509 plus framing. Private input/source/configuration and schema/instruction hashes are recorded with the receipt and pre-model reference assessment. No reference answer was supplied to the model. CLI 0.160.0 requested isolated default-model selection, medium reasoning, tools disabled and read-only mode. Requested/observed model names remain unavailable. Events were thread.started, a nonterminal disabled-tool-host notice and turn.started; none proves source-analysis progress. The same notice occurred in the historical small successful run, so it is not identified as the cause.
+
+This trial establishes that the unchanged real case still did not complete within this bound despite primed context; it does not distinguish payload, response-contract, reasoning/configuration or service latency. A single next diagnostic is prepared but **not authorized or run**: retain the exact full material input, instructions, configuration and deadline, changing only strict response-schema enforcement, then compare first substantive/final output and completeness. Its output would be diagnostic only and could not publish a guide or replace the required structured generation/challenge. One result would still not prove a universal cause. No new response-contract feature or timeout increase was shipped speculatively.
+
+The remaining product milestone is explicitly **not verified**: a real generation -> substantive challenge -> current checks -> persisted native walkthrough. Controlled supported/refuted/missing-context fixtures and the five-function route are retained as the smaller reference matrix, not substituted for fresh real-model success. The next editor action verifies activation only; it cannot complete this missing provider stage.

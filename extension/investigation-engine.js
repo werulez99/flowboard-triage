@@ -67,10 +67,10 @@ function revalidate(draft, catalog, request, issue) {
 function migrateChecked(draft, catalog, request, issue) {
   // A policy version is not a new semantic review. Only old complete, sealed
   // v4/v5 artifacts with no execution handoff can be revalidated locally.
-  // v7 already has occurrence/dispatch review, but still must pass the new
+  // v7/v8 already have occurrence/dispatch review, but still must pass the new
   // source-path checks. No version-only promotion is permitted.
-  const currentEvidence = draft?.snapshot?.policy === 'checked-explanation-v7';
-  if (!['checked-explanation-v4', 'checked-explanation-v5', 'checked-explanation-v7'].includes(draft?.snapshot?.policy) || guidePolicy.POLICY === draft.snapshot.policy ||
+  const currentEvidence = ['checked-explanation-v7', 'checked-explanation-v8'].includes(draft?.snapshot?.policy);
+  if (!['checked-explanation-v4', 'checked-explanation-v5', 'checked-explanation-v7', 'checked-explanation-v8'].includes(draft?.snapshot?.policy) || guidePolicy.POLICY === draft.snapshot.policy ||
     draft.phase !== 'ready' || draft.publication?.policy !== draft.snapshot.policy || draft.publication.digest !== guidePolicy.digest(draft) ||
     !draft.causal || !currentEvidence && draft.causal.relationships.some(link => ['call', 'callback', 'return'].includes(link.kind))) return false;
   const next = snapshot(catalog, request, issue), inputs = semanticInput.input(request, issue);

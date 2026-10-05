@@ -2,16 +2,7 @@
 const { lexicalCode, matching, functionParts, escaped } = require('./solidity-text');
 const { occurrences, commaSpans, span } = require('./call-occurrences');
 const execution = require('./execution-slice');
-function parts(value) {
-  const clean = lexicalCode(value), result = []; let start = 0, depth = 0;
-  for (let i = 0; i < clean.length; i++) {
-    if ('([{'.includes(clean[i])) depth++;
-    else if (')]}'.includes(clean[i])) depth--;
-    else if (clean[i] === ',' && depth === 0) { result.push(value.slice(start, i).trim()); start = i + 1; }
-  }
-  if (value.slice(start).trim()) result.push(value.slice(start).trim());
-  return result;
-}
+const { parts, failureClass } = require('./failure-data');
 // Ignore formatting/comments, not literal contents: "a b" is not "ab".
 function expression(value) {
   let out = '', quote = null;
@@ -387,6 +378,15 @@ function booleanValue(value, values) {
 // Source effects are evaluated independently of which statements the tutorial
 // chooses to display. Only exact, unique non-virtual internal helpers in the
 // bounded statement subset can be summarized. Unknown effects never fall through.
+function unitFailure(unit, kind, args, absolute, custom = false) {
+  const body = functionParts(unit.code, unit.name.split('::').at(-1));
+  return failureClass(kind, args, custom, payload => {
+    if (!/^[A-Za-z_$][\w$]*$/.test(payload) || !body) return false;
+    const declaration = bindingWrites(body, payload, absolute).active;
+    const parameter = parameterSpans(unit.code, unit.name.split('::').at(-1)).find(item => item.name === payload);
+    return declaration?.type === 'string' || declaration?.id === `parameter:${payload}` && /^string\b/.test(parameter?.declaration.trim() || '');
+  });
+}
 function sourcePath(unit, offset, values, units, options = {}, stack = []) {
   if (stack.includes(unit.id) || stack.length >= 12) return { reachable: null, reason: 'A recursive or over-budget helper path needs a separate checked effect.' };
   const body = functionParts(unit.code, unit.name.split('::').at(-1));
@@ -396,7 +396,8 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
     .replace(/\b(?:public|external|internal|private|pure|view|payable|virtual)\b/g, '').trim();
   if (suffix) return { reachable: null, reason: `The function modifier path (${suffix}) needs a checked effect before entering this body.` };
   if (offset >= body.start && offset < body.bodyStart) return { reachable: true, values: new Map(values), guards: [] };
-  return execution.pathTo(unit, offset, values, { ...options, operation(node, current) {
+  return execution.pathTo(unit, offset, values, { ...options,
+    failureClass: (kind, args, absolute, custom) => unitFailure(unit, kind, args, absolute, custom), operation(node, current) {
     const provided = options.operation?.(node, current); if (provided) return provided;
     const sites = unitSites(unit).filter(site => site.span.start >= node.start && site.span.end <= node.end);
     const creation = sites.filter(site => site.isNew);
@@ -450,16 +451,7 @@ function failedClass(unit, event, evidence, site, callerValues = new Map(), unre
     if (match[1] !== 'revert' && booleanValue(args[0] || '', path.values) !== false) {
       unresolved('The cited guard is not established false with the checked call-time values.'); continue;
     }
-    if (match[1] === 'revert' && match[2]) { failures.push('custom'); continue; }
-    if (match[1] === 'assert') failures.push('Panic');
-    else {
-      const payload = args[match[1] === 'require' ? 1 : 0];
-      const named = payload && /^[A-Za-z_$][\w$]*$/.test(payload.trim()) ? payload.trim() : null;
-      const declaration = named && body && bindingWrites(body, named, absolute).active;
-      const parameter = named && parameterSpans(unit.code, unit.name.split('::').at(-1)).find(item => item.name === named);
-      const stringType = declaration?.type === 'string' || declaration?.id === `parameter:${named}` && /^string\b/.test(parameter?.declaration.trim() || '');
-      failures.push(payload === undefined ? 'empty' : /^(?:unicode)?["']/.test(payload.trim()) || stringType ? 'Error' : 'unknown');
-    }
+    failures.push(unitFailure(unit, match[1], args, absolute, !!match[2]));
   }
   if (!failures.length) {
     const calls = unitSites(unit).filter(call => call.span.line >= anchor.source.line && call.span.endLine <= anchor.source.endLine);
