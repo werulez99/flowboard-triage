@@ -3,7 +3,7 @@
 // host checked. Interpretations also need an evidence-grounded challenge.
 const capacity = require('./review-capacity'), { limits, kinds, POLICY } = capacity;
 const crypto = require('node:crypto');
-const { lexicalCode, functionParts, escaped } = require('./solidity-text');
+const { lexicalCode } = require('./solidity-text');
 const bindings = require('./call-bindings');
 function digest(draft) {
   return crypto.createHash('sha256').update(JSON.stringify({ findingId: draft.findingId, snapshot: draft.snapshot,
@@ -12,6 +12,10 @@ function digest(draft) {
 }
 const str = { type: 'string' }, strings = { type: 'array', items: str };
 const object = properties => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
+const dispatchSchema = object({ kind: { enum: ['internal', 'internal-library', 'self', 'constructor', 'local-instance', 'observed-external', 'unresolved', 'not-applicable'] },
+  receiver: str, implementation: str, evidence: strings,
+  context: { enum: ['same', 'call', 'delegatecall', 'staticcall', 'creation', 'none'] },
+  failure: { enum: ['propagates', 'caught', 'returns-status', 'not-applicable'] } });
 const schema = object({
   scope: str, summary: str, outcome: { enum: ['supported', 'refuted', 'blocked'] },
   obligations: { type: 'array', maxItems: limits.obligations, items: object({ id: str, claimId: str,
@@ -19,7 +23,7 @@ const schema = object({
     question: str, state: { enum: ['established', 'refuted', 'not-applicable', 'open'] }, reason: str,
     evidence: strings, documentation: strings }) },
   events: { type: 'array', maxItems: limits.events, items: object({ id: str, invocationId: str, transaction: str, phase: str,
-    claimId: str, evidenceId: str, title: str, role: str, actor: str, caller: str, receiver: str,
+    claimId: str, evidenceId: str, callSiteId: str, title: str, role: str, actor: str, caller: str, receiver: str,
     conditions: strings, what: str, why: str,
     inputs: { type: 'array', maxItems: 8, items: object({ name: str, expression: str, type: str, units: str, origin: str, evidence: strings }) },
     changes: { type: 'array', maxItems: 6, items: object({ name: str, before: str, operation: str, after: str, units: str, evidence: strings }) },
@@ -27,7 +31,7 @@ const schema = object({
     paragraphId: str, phrase: str }) },
   relationships: { type: 'array', maxItems: limits.relationships, items: object({ from: str, to: str,
     kind: { enum: ['call', 'callback', 'return', 'branch', 'data', 'later-transaction', 'context'] },
-    explanation: str, binding: str, evidence: strings }) },
+    explanation: str, binding: str, evidence: strings, callSiteId: str, dispatch: dispatchSchema }) },
   order: strings,
   checks: { type: 'array', maxItems: limits.checks, items: object({ target: str, reason: str, evidence: strings, documentation: strings }) }
 });
@@ -83,6 +87,10 @@ function gate(draft) {
     if (eventIds.has(event.id) || !['id', 'invocationId', 'transaction', 'title', 'role', 'what', 'why'].every(key => nonempty(event[key])) || !claims.has(event.claimId) || evidence.get(event.evidenceId)?.claimId !== event.claimId || !refs([event.evidenceId]) || !check(capacity.target('event', event), [event.evidenceId]) || !['read', 'condition', 'intermediate', 'committed', 'rolled-back', 'return'].includes(event.effect)) fail(`The step ${event.title || event.id || '(unnamed)'} is incomplete or lacks checked code.`);
     eventIds.add(event.id);
     const eventUnit = units.get(evidence.get(event.evidenceId)?.sourceId);
+    if (event.callSiteId) {
+      const site = bindings.exactSite(eventUnit, event.callSiteId), anchor = evidence.get(event.evidenceId)?.source;
+      if (!site || anchor?.line !== site.span.line || anchor?.endLine !== site.span.endLine) fail(`${event.title}: the highlighted call occurrence does not match this event's exact checked lines.`, 'structural', capacity.target('event', event));
+    }
     if (transactions.has(event.invocationId) && transactions.get(event.invocationId) !== event.transaction) fail(`${event.title}: one invocation cannot belong to different transactions.`);
     transactions.set(event.invocationId, event.transaction);
     // Modifiers execute within their enclosing function invocation. Context
@@ -110,19 +118,9 @@ function gate(draft) {
     if (from && to && ['call', 'callback', 'return', 'branch'].includes(link.kind) && from.transaction !== to.transaction) fail('A call or return was incorrectly joined across transactions.');
     if (from && to && ['call', 'callback', 'return'].includes(link.kind)) {
       const source = units.get(evidence.get(from.evidenceId)?.sourceId), destination = units.get(evidence.get(to.evidenceId)?.sourceId);
-      const destinationParts = destination && functionParts(destination.code, destination.name.split('::').at(-1));
       if (!nonempty(link.binding)) fail(`${from.title}: the ${link.kind} handoff has no checked value binding or reason it needs none.`, 'structural', capacity.target('relationship', link));
-      if (['call', 'callback'].includes(link.kind)) {
-        const sites = source?.relatedCalls?.filter(site => site.targets.some(target => target.file === destination?.source.file && target.line === destination?.source.line)) || [];
-        if (!sites.length && source?.relatedCalls) fail(`${from.title}: the claimed call has no matching local call-site target. Keep callback/external dispatch unresolved until its entry and receiver are evidenced.`, 'structural', capacity.target('relationship', link));
-        for (const input of list(to.inputs)) {
-          if (destinationParts && !bindings.parameterNames(destinationParts.header).includes(input.name)) fail(`${to.title}: ${input.name} is not a parameter of this function.`, 'structural', to.id);
-          const supplied = list(input.evidence).map(id => evidence.get(id));
-          if (!supplied.some(item => item?.sourceId === source?.id && sites.some(site => site.line >= item.source.line && site.line <= item.source.endLine))) fail(`${to.title}: input ${input.name} has no exact caller-side origin at this handoff.`, 'structural', to.id);
-          if (sites.length && destinationParts && !sites.some(site => { const actual = bindings.boundArgument(site, input.name, destinationParts.header); return actual !== null && bindings.expression(actual) === bindings.expression(input.expression); })) fail(`${to.title}: input ${input.name} does not match its actual argument position at this call.`, 'structural', to.id);
-        }
-        if (!to.inputs?.length && destinationParts && !/\(\s*\)/.test(destinationParts.header) && !/^No material parameters:/i.test(link.binding || '')) fail(`${to.title}: name the material input bindings, or justify why no parameter affects this statement.`, 'structural', to.id);
-      }
+      bindings.validateTransition({ draft, link, from, to, source, destination, units, evidence, refs, events, links,
+        fail: (reason, kind = 'structural') => fail(reason, kind, capacity.target('relationship', link)) });
     }
   }
   if (!events.length || !Array.isArray(model.order) || model.order.length !== events.length || new Set(model.order).size !== events.length || model.order.some(id => !eventIds.has(id))) fail('The tutorial has no complete, unique reading order.');
@@ -132,7 +130,7 @@ function gate(draft) {
 function expose(draft, report = null) {
   if (!draft) return null;
   const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
-  if (checked && (!report || report.published)) return structuredClone(draft);
+  if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) return structuredClone(draft);
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
@@ -141,9 +139,9 @@ function expose(draft, report = null) {
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',
     reason: draft.error || draft.publication?.problems?.[0] || (draft.phase === 'provider-required' ? 'Choose an authenticated provider to prepare the explanation.' : ''),
     problems: draft.publication?.problems || [], attempted: draft.actions.slice(-5).map(action => action.result) };
-  if (report && !report.published) copy.preparation = { state: report.mode === 'running' ? 'preparing' : 'blocked',
-    reason: report.reason || 'Generated guides are private until every finding in this report passes its checks.', report,
-    attempted: report.stopped.map(job => `${job.id}: ${job.reason || job.state}`) };
+  if (checked && report && !report.findingReady) copy.preparation = { state: 'checking',
+    reason: 'Checking this saved walkthrough against the current finding and code.',
+    attempted: [] };
   if (copy.phase === 'ready') copy.phase = 'preparing';
   return copy;
 }

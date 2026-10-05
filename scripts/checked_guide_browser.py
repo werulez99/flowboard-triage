@@ -94,7 +94,8 @@ try:
                 (out / 'progress.json').write_text(json.dumps(state, indent=2))
                 last_stage = stage
             terminal_report = not state.get('reportPreparation') or state['reportPreparation']['mode'] not in ['running', 'interrupted']
-            if draft and draft['phase'] in ['ready', 'blocked', 'provider-required'] and terminal_report: break
+            selected_ready = bool((state.get('investigation') or {}).get('publication', {}).get('ready'))
+            if selected_ready or draft and draft['phase'] in ['blocked', 'provider-required'] and terminal_report: break
             if terminal_report and state.get('reportPreparation', {}).get('mode') in ['incomplete', 'paused', 'cancelled']: break
             if state['lastLoad'].get('preparation', {}).get('state') == 'blocked': break
             page.wait_for_timeout(500)
@@ -168,10 +169,10 @@ try:
             assert len(request('/state')['providerCalls']) == before_calls
             result['checks'].append('Editor link, detour return and free exploration preserve the step and camera; navigation makes no provider calls.')
             result['darkContrast'] = contrast()[:6]
-            for width, height in [(1440,900),(1280,800),(1366,768),(640,800)]:
+            for width, height in [(1440,900),(1280,800),(1366,768),(1051,800),(1050,800),(801,800),(800,800),(799,800),(761,800),(760,800),(759,800),(640,800)]:
                 page.set_viewport_size({'width':width,'height':height}); page.wait_for_timeout(150)
                 code = page.locator('#flowboard').bounding_box(); aside = page.locator('.guide-aside').bounding_box()
-                assert code['x'] + code['width'] <= aside['x'] + 1 if width > 760 else code['y'] + code['height'] <= aside['y'] + 1
+                assert code['x'] + code['width'] <= aside['x'] + 1 if width > 800 else code['y'] + code['height'] <= aside['y'] + 1
                 visible = page.locator('.guide-active-card .triage-claim-line').first.bounding_box()
                 assert visible and visible['y'] >= code['y'] and visible['y'] < code['y'] + code['height'], ('Exact active line is offscreen', width, visible, code)
                 header = page.locator('.guide-active-card .card-header').bounding_box()
@@ -181,7 +182,7 @@ try:
             page.screenshot(path=str(out / 'light.png'))
             result['lightContrast'] = contrast()[:6]
             assert all(item['ratio'] >= 4.5 for item in result['darkContrast'] + result['lightContrast']), 'Reading text contrast below 4.5:1.'
-            result['checks'].append('Four viewport sizes, narrow stacked code/explanation and light theme rendered.')
+            result['checks'].append('Desktop and narrow viewport sizes, responsive breakpoint boundaries, stacked code/explanation and light theme rendered.')
             page.evaluate('document.body.classList.remove("vscode-light")')
             if len(steps) > 1:
                 page.keyboard.press('Alt+Shift+ArrowLeft')

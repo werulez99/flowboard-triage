@@ -10,6 +10,8 @@ const store = require('../extension/store');
 const { analyze } = require('../extension/runner-adapter');
 const { importReport } = require('../extension/report');
 const { TriageBoard } = require('../extension/board');
+const { ReportPreparation } = require('../extension/report-preparation');
+const investigation = require('../extension/investigation-engine');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
 function gate() {
@@ -19,11 +21,11 @@ function gate() {
 }
 async function setup(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-session-'));
-  fs.cpSync(path.resolve(__dirname, '../examples/project'), root, { recursive: true });
-  if (!options.empty) await importReport(path.resolve(__dirname, '../scripts/fixtures/workflow-report.md'), root, native);
+  fs.cpSync(options.projectFixture || path.resolve(__dirname, '../examples/project'), root, { recursive: true });
+  if (!options.empty) await importReport(options.reportFixture || path.resolve(__dirname, '../scripts/fixtures/workflow-report.md'), root, native);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const commands = new Map(), callbacks = {}, watchers = new Map(), instances = [], opened = [], errors = [], logs = [], progress = [];
-  const analysis = { count: 0, hold: null }, documents = { hold: null }, configuration = { analysisMode: 'source' };
+  const analysis = { count: 0, hold: null }, documents = { hold: null }, configuration = { analysisMode: 'source', ...options.configuration };
   const uri = fsPath => ({ fsPath, toString: () => fsPath }), disposable = () => ({ dispose() {} });
   const folder = { uri: uri(root) };
   class Board {
@@ -42,6 +44,7 @@ async function setup(t, options = {}) {
     async showUnmapped(id, _issue, error, canPublish = () => true) { await this.ready; if (canPublish()) this.unmapped = { id, error }; }
     async post(message) { this.messages ||= []; this.messages.push(message); }
     async sourceChanged(file, dirty) { this.changed = { file, dirty }; }
+    async reportChanged(file) { this.reportChanges ||= []; this.reportChanges.push(file); }
   }
   const vscode = {
     Uri: { file: uri }, RelativePattern: class { constructor(_folder, pattern) { this.pattern = pattern; } },
@@ -72,7 +75,13 @@ async function setup(t, options = {}) {
   const filename = path.resolve(__dirname, '../extension/extension.js');
   const loaded = new Module(filename, module); loaded.filename = filename; loaded.paths = Module._nodeModulePaths(path.dirname(filename));
   const original = loaded.require.bind(loaded);
-  loaded.require = name => name === 'vscode' ? vscode : name === './board' ? { TriageBoard: Board } : name === './runner-adapter' ? {
+  loaded.require = name => name === 'vscode' ? vscode : name === './board' ? { TriageBoard: Board } : name === './report-preparation' && options.preparationInvoke ? {
+    // Only the model response is controlled. Keep the real extension callback,
+    // coordinator, source acquisition, source gate and artifact persistence.
+    ReportPreparation: class extends ReportPreparation {
+      constructor(project, settings) { super(project, { ...settings, invoke: options.preparationInvoke }); }
+    }
+  } : name === './runner-adapter' ? {
     analyze: async (...args) => {
       analysis.count++; const hold = analysis.hold; analysis.hold = null;
       if (hold) { hold.entered(); await hold.held; }
@@ -165,6 +174,82 @@ test('extension.activate reuses only fresh source catalogs and invalidates added
   assert.match(env.board.unmapped.error, /Save unsaved Solidity files/);
   dirty.isDirty = false; callbacks.save(dirty); await select('I-02');
   assert.equal(analysis.count, 7, 'Saving an edited buffer cannot revive the previous catalog.');
+});
+
+test('editing finding B in an actual extension buffer preserves accepted A and pauses only B', { skip: !native }, async t => {
+  const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation'), requests = [];
+  const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'),
+    configuration: { semanticProvider: 'codex', reportRequestLimit: 20 }, preparationInvoke: async input => {
+      requests.push([input.finding.id, input.phase]);
+      return { value: require('../scripts/fixtures/mixed-ready-output').response(input), audit: { outcome: 'completed', provider: 'controlled-fixture' } };
+    } });
+  const preparation = env.board.callbacks.reportPreparation(); await preparation.ensure(); await preparation.control('pause');
+  const first = investigation.read(env.root, 'I-1'), second = investigation.read(env.root, 'I-2'), digest = preparation.artifact('I-1');
+  assert.ok(preparation.published(first) && preparation.published(second));
+  const before = requests.length, savedHuman = fs.readFileSync(path.join(env.root, store.draftPath('I-1')), 'utf8');
+  const dirty = { uri: env.uri(path.join(env.root, store.draftPath('I-2'))), isDirty: true };
+  env.vscode.workspace.textDocuments.push(dirty); env.callbacks.document({ document: dirty });
+  assert.equal(preparation.published(first), true, 'Unsaved B must not hide already checked A.');
+  assert.equal(preparation.options.dirty(), false, 'An individual finding edit is not a project-wide dependency change.');
+  assert.equal(preparation.options.dirty('I-1'), false); assert.equal(preparation.options.dirty('I-2'), true);
+  assert.equal(preparation.artifact('I-1'), digest); assert.equal(preparation.artifact('I-2'), null);
+  await preparation.ensure();
+  assert.equal(preparation.published(first), true); assert.equal(preparation.published(second), false, 'Local reuse cannot relabel dirty B as ready.');
+  assert.equal(requests.length, before); assert.equal(fs.readFileSync(path.join(env.root, store.draftPath('I-1')), 'utf8'), savedHuman);
+  const unrelated = { uri: env.uri(path.join(env.root, 'scratch.json')), isDirty: true };
+  env.vscode.workspace.textDocuments.push(unrelated); env.callbacks.document({ document: unrelated });
+  assert.equal(preparation.published(first), true);
+  dirty.isDirty = false; env.callbacks.save(dirty); await preparation.ensure();
+  assert.ok(preparation.published(first) && preparation.published(second), 'Discarding a dirty edit and saving matching content reuses checked work.');
+  assert.equal(requests.length, before, 'Reading and revalidation spend no model requests.');
+  const savedSecond = store.readDraft(env.root, 'I-2');
+  savedSecond.finding.status = 'invalid';
+  savedSecond.finding.triage.decisionReason = 'The original zero-count allegation is contradicted by the guard; preserve this human decision while checking the correction.';
+  savedSecond.finding.triage.evidence.push({ id: 'human-guard', stance: 'contradicts', source: second.evidence[0].source,
+    note: 'The require rejects the zero count mentioned by the original report.' });
+  store.writeDraft(env.root, 'I-2', savedSecond);
+  const findingWatcher = [...env.watchers].find(([pattern]) => pattern.includes('.flowboard/findings/'))[1];
+  findingWatcher.change(dirty.uri);
+  assert.equal(preparation.published(second), true, 'A saved human verdict/note does not withdraw the compatible generated explanation.');
+  await preparation.ensure(); assert.equal(requests.length, before);
+  savedSecond.finding.expectedBehavior = 'Researcher correction: inspect the nonzero count instead.';
+  store.writeDraft(env.root, 'I-2', savedSecond);
+  findingWatcher.change(dirty.uri); await preparation.ensure();
+  assert.equal(preparation.artifact('I-1'), digest, 'Saving B’s changed expectation still leaves unrelated A ready.');
+  assert.equal(preparation.artifact('I-2'), null, 'A saved semantic correction cannot reuse the old explanation.');
+  assert.equal(requests.length, before, 'The paused report does not spend on rechecking the correction.');
+  assert.equal(store.readDraft(env.root, 'I-2').finding.status, 'invalid', 'Invalidation never changes a saved human verdict.');
+  assert.equal(store.readDraft(env.root, 'I-2').finding.expectedBehavior, savedSecond.finding.expectedBehavior);
+  const config = { uri: env.uri(path.join(env.root, 'foundry.toml')), isDirty: true };
+  env.vscode.workspace.textDocuments.push(config); env.callbacks.document({ document: config });
+  assert.equal(preparation.options.dirty('I-1'), true); assert.equal(preparation.options.dirty('I-2'), true);
+  assert.equal(preparation.published(first), false, 'Unresolved project configuration still withholds affected guidance.');
+});
+
+test('a dirty finding buffer cancels only its in-flight work and rejects its late response', { skip: !native }, async t => {
+  const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation'), holds = { 'I-1': gate(), 'I-2': gate() }, signals = {}, requests = [];
+  const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'),
+    configuration: { semanticProvider: 'codex', reportRequestLimit: 20 }, preparationInvoke: async (input, options) => {
+      requests.push([input.finding.id, input.phase]);
+      const hold = input.phase === 'challenge' && holds[input.finding.id];
+      if (hold) { signals[input.finding.id] = options.signal; hold.entered(); await hold.held; }
+      return { value: require('../scripts/fixtures/mixed-ready-output').response(input), audit: { outcome: 'completed', provider: 'controlled-fixture' } };
+    } });
+  const preparation = env.board.callbacks.reportPreparation(), pending = preparation.ensure();
+  try {
+    await Promise.all(Object.values(holds).map(hold => hold.started));
+    const dirty = { uri: env.uri(path.join(env.root, store.draftPath('I-2'))), isDirty: true };
+    env.vscode.workspace.textDocuments.push(dirty); env.callbacks.document({ document: dirty });
+    assert.equal(signals['I-1'].aborted, false, 'A’s live challenge belongs to A, not B’s dirty editor buffer.');
+    assert.equal(signals['I-2'].aborted, true);
+    holds['I-1'].release();
+    const until = Date.now() + 3000;
+    while (!preparation.artifact('I-1') && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(preparation.published(investigation.read(env.root, 'I-1')), 'A finishes its original accepted stage while B remains dirty.');
+  } finally { holds['I-1'].release(); holds['I-2'].release(); await pending; }
+  assert.equal(preparation.artifact('I-2'), null, 'The superseded response cannot publish B.');
+  assert.equal(requests.filter(([id]) => id === 'I-1').length, 2, 'A was not cancelled or regenerated.');
+  assert.equal(preparation.tasks.size, 0); assert.notEqual(preparation.state.jobs['I-2'].state, 'running');
 });
 
 test('queued and in-flight old selections cannot publish after the newer selection', { skip: !native }, async t => {

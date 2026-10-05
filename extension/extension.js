@@ -10,7 +10,7 @@ const { SourceCatalog, projectConfigurationStamp: configurationStamp } = require
 const { TriageBoard } = require('./board');
 const { importReport, refreshFindingMap } = require('./report');
 const { ReportPreparation } = require('./report-preparation');
-const { relevantDirty } = require('./workspace-snapshot');
+const { relevantDirty, dirtyScope } = require('./workspace-snapshot');
 const UPSTREAM = 'anchabadze.solidity-flowboard';
 const VERSION = '1.2.0';
 
@@ -37,7 +37,14 @@ function activate(context) {
         configuration: () => { const config = vscode.workspace.getConfiguration('flowboardTriage', folder.uri), provider = config.get('semanticProvider', 'none');
           return { provider, executable: config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined,
             budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 12), workers: config.get('preparationWorkers', 2) }; },
-        dirty: () => !vscode.workspace.isTrusted || (vscode.workspace.textDocuments || []).some(doc => doc.isDirty && relevantDirty(root, doc.uri.fsPath, preparation.state?.reportName)),
+        // Unsaved project dependencies affect every analysis. A finding JSON
+        // is an input only to that finding, not a report-wide reading barrier.
+        // No ID means "project-wide dirty", not "any finding is dirty".
+        dirty: findingId => !vscode.workspace.isTrusted || (vscode.workspace.textDocuments || []).some(doc => {
+          if (!doc.isDirty) return false;
+          const scope = dirtyScope(root, doc.uri.fsPath, preparation.state?.reportName);
+          return !!scope && (scope.kind !== 'finding' || scope.findingId === findingId);
+        }),
         catalog: async signal => { trust(); const result = await sourceCatalog(folder, upstream(), { mode: 'source', slitherPath: '' }, p.gitState(root), { ...operation(folder, 'background'), signal }); return result.catalog; },
         changed: () => { const board = boards.get(root); if (board && !board.disposed) return board.reportProgress?.(); },
         log: message => log.appendLine(message)
@@ -274,9 +281,14 @@ function activate(context) {
     const reportWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '{.flowboard/report.json,.flowboard/findings/*.json,README.md,SPECIFICATION.md,docs/**/*.md,specification/**/*.md}'));
     const reportChanged = uri => {
       const preparation = preparations.get(folder.uri.fsPath);
-      try { if (preparation?.state && store.readReport(folder.uri.fsPath).reportHash !== preparation.state.reportHash) { preparation.invalidate('The imported report changed.'); scheduleReport(folder); } } catch (error) { log.appendLine(error.message); }
+      try { if (preparation?.state && store.readReport(folder.uri.fsPath).reportHash !== preparation.state.reportHash) { preparation.invalidate('The imported report changed. Rechecking affected findings.', { kind: 'report' }); scheduleReport(folder); } } catch (error) { log.appendLine(error.message); }
       const file = uri?.fsPath;
-      if (file && !file.includes(`${path.sep}.flowboard${path.sep}`)) { preparation?.invalidate('Local documentation changed. The report must be rechecked.'); scheduleReport(folder); }
+      const scope = dirtyScope(folder.uri.fsPath, file, preparation?.state?.reportName);
+      if (scope?.kind === 'finding') {
+        preparation?.invalidate('This finding changed. Rechecking its saved explanation.', { findingId: scope.findingId, saved: true }); scheduleReport(folder);
+      } else if (scope?.kind === 'documentation') {
+        preparation?.invalidate('Local documentation changed. The report must be rechecked.'); scheduleReport(folder);
+      }
       const board = boards.get(folder.uri.fsPath);
       if (board && !board.disposed) board.reportChanged().catch(error => log.appendLine(error.stack || error.message));
     };
@@ -314,7 +326,11 @@ function activate(context) {
   if (vscode.workspace.onDidChangeTextDocument) context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
     const file = event.document.uri.fsPath;
     if (event.document.isDirty && file && !file.endsWith('.sol')) {
-      for (const [root, preparation] of preparations) if (relevantDirty(root, file, preparation.state?.reportName)) preparation.invalidate('Relevant unsaved report, documentation or configuration edits. Save before resuming preparation.');
+      for (const [root, preparation] of preparations) {
+        const scope = dirtyScope(root, file, preparation.state?.reportName);
+        if (scope?.kind === 'finding') preparation.invalidate('Unsaved finding edits. Save before resuming this finding.', { findingId: scope.findingId });
+        else if (scope) preparation.invalidate('Relevant unsaved report, documentation or configuration edits. Save before resuming preparation.');
+      }
       for (const [root, board] of boards) if (!board.disposed && relevantDirty(root, file, preparations.get(root)?.state?.reportName)) board.reportChanged(file).catch(error => log.appendLine(error.stack || error.message));
     }
     if (!file?.endsWith('.sol')) return;
@@ -328,7 +344,7 @@ function activate(context) {
   }));
   if (vscode.workspace.onDidSaveTextDocument) context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
     if (document.uri.fsPath?.endsWith('.sol')) dirtySources.delete(document.uri.fsPath);
-    for (const folder of vscode.workspace.workspaceFolders || []) if (p.contained(folder.uri.fsPath, document.uri.fsPath)) scheduleReport(folder);
+    for (const folder of vscode.workspace.workspaceFolders || []) if (relevantDirty(folder.uri.fsPath, document.uri.fsPath, preparations.get(folder.uri.fsPath)?.state?.reportName)) scheduleReport(folder);
   }));
   for (const folder of vscode.workspace.workspaceFolders || []) addFolder(folder);
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(event => {

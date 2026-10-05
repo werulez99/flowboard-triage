@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const p = require('./protocol');
 const { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables, matching } = require('./solidity-text');
 const { functionSignature } = require('./report-content');
+const { occurrences } = require('./call-occurrences');
 const configurationFiles = ['foundry.toml', 'remappings.txt', 'foundry.lock', 'soldeer.lock', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'hardhat.config.js', 'hardhat.config.ts'];
 function projectConfigurationStamp(root) {
   return configurationFiles.map(name => {
@@ -45,6 +46,27 @@ class SourceCatalog {
         // collapsing definitions and silently picking one target.
         if (!seenDefinitions.has(fn)) { seenDefinitions.add(fn); this.functions.push(value); }
       } catch { /* missing dependency */ }
+    }
+    // The pinned native source-only index omits receive/fallback definitions.
+    // Retain their complete real body; low-level dispatch cannot be inspected
+    // by substituting an unrelated named function or an interface declaration.
+    for (const file of this.sourceStamps.keys()) {
+      if (!p.contained(this.root, file) || !file.endsWith('.sol')) continue;
+      const doc = this.document(this.relative(file)), clean = lexicalCode(doc.text);
+      for (const contract of this.runner.flowboardContracts(clean)) {
+        const bodyStart = clean.indexOf('{', contract.start);
+        for (const match of clean.slice(bodyStart + 1, contract.end).matchAll(/\b(receive|fallback)\s*\(/g)) {
+          const start = bodyStart + 1 + match.index;
+          const depth = [...clean.slice(bodyStart + 1, start)].reduce((n, c) => n + (c === '{' ? 1 : c === '}' ? -1 : 0), 0);
+          if (depth) continue;
+          const open = clean.indexOf('(', start), parameters = matching(clean, open), block = clean.indexOf('{', parameters), end = matching(clean, block, '{', '}');
+          if (parameters < 0 || block < 0 || end < 0 || end > contract.end || clean.slice(parameters, block).includes(';')) continue;
+          const startLine = clean.slice(0, start).split('\n').length, endLine = clean.slice(0, end).split('\n').length;
+          if (this.functions.some(fn => fn.file === file && fn.startLine === startLine && fn.name === match[1])) continue;
+          const fn = { file, startLine, endLine, name: match[1], contract: contract.name, calls: [], memberCalls: [], modifiers: [], paramCount: clean.slice(open + 1, parameters).trim() ? 1 : 0 };
+          this.functions.push(fn); if (!this.byKey.has(`${file}:${startLine}`)) this.byKey.set(`${file}:${startLine}`, fn);
+        }
+      }
     }
     for (const fn of this.functions) {
       const key = `${fn.contract}::${fn.name}`;
@@ -94,7 +116,8 @@ class SourceCatalog {
     const parts = this.anatomy(fn);
     if (!parts) throw new Error(`No unique Solidity declaration for ${fn.name} at ${card.file}:${card.line}; comments/string literals and overlapping declarations are not source functions.`);
     const scoped = this.scopeFor(fn), locals = new Map(); scanVariables(parts.declaration, this.knownTypes, locals);
-    return { ...fn, ...this.runner.flowboardClassifyCallSites(scoped, fn.contract, this.runner.flowboardCallSites(parts.body), locals),
+    return { ...fn, ...this.runner.flowboardClassifyCallSites(scoped, fn.contract,
+      occurrences(this.code(fn), { from: parts.bodyStart, to: parts.bodyStart + parts.body.length }), locals),
       modifiers: this.modifiersFor(fn) };
   }
   modifiersFor(fn) {
@@ -350,17 +373,18 @@ class SourceCatalog {
   callLinks(fn) {
     const key = this.key(fn);
     if (this.links.has(key)) return this.links.get(key);
-    const parts = this.anatomy(fn), links = [];
+    const declaration = fn.kind === 'context' && (fn.symbol || fn.contextKind === 'state');
+    const original = declaration ? this.code(fn) : '';
+    const parts = declaration ? { clean: lexicalCode(original), header: '', bodyStart: 0, body: lexicalCode(original), rawBody: original } : this.anatomy(fn), links = [];
     if (!parts) return links;
     const scoped = this.scopeFor(fn);
-    let cursor = 0;
-    for (const site of this.runner.flowboardCallSites(parts.body)) {
-      const re = new RegExp(`\\b${escaped(site.name)}\\s*\\(`, 'g'); re.lastIndex = cursor;
-      const occurrence = re.exec(parts.body); if (!occurrence) continue;
-      cursor = occurrence.index + occurrence[0].length;
+    const code = this.code(fn), sourceHash = crypto.createHash('sha256').update(this.document(this.relative(fn.file)).text).digest('hex');
+    for (const site of occurrences(code, { from: parts.bodyStart, to: parts.bodyStart + parts.body.length,
+      line: fn.startLine, identity: `${this.relative(fn.file)}:${sourceHash}` })) {
+      if (declaration && !site.isNew) continue; // constructor binding facts, not a running declaration frame
       // Events, custom errors, type conversions and ABI helpers are not
       // external implementation boundaries. Preserve real new/receiver calls.
-      const before = parts.body.slice(0, occurrence.index);
+      const before = parts.clean.slice(0, site.nameSpan.start);
       if (/\b(?:emit|revert)\s+(?:[\w$]+\.)?$/.test(before) || !site.isNew && !site.recv && this.knownTypes.has(site.name) ||
           site.recv === 'abi' || ['bytes', 'string'].includes(site.recv) && site.name === 'concat') continue;
       if (site.recv && ['wrap', 'unwrap'].includes(site.name)) {
@@ -392,12 +416,41 @@ class SourceCatalog {
       // to silently remove the call from a researcher's source context. Keep
       // ordinary Solidity builtins out of this dependency list.
       if (!candidates.length && !site.recv && /^(?:require|assert|revert|keccak256|sha256|ripemd160|ecrecover|addmod|mulmod|blockhash|gasleft|selfdestruct|type|address|payable|bool|string|bytes\d*|u?int\d*)$/.test(site.name)) continue;
-      const line = fn.startLine + parts.clean.slice(0, parts.bodyStart + occurrence.index).split('\n').length - 1;
-      const open = parts.body.indexOf('(', occurrence.index), close = matching(parts.body, open);
+      const line = site.span.line;
       const target = candidates.length === 1 ? candidates[0] : null, targetHeader = target && this.anatomy(target)?.header;
       const established = !site.recv && !site.isNew && target && target.contract === fn.contract && /\b(internal|private)\b/.test(targetHeader || '') && !/\bvirtual\b/.test(targetHeader || '') && !new RegExp(`\\b${escaped(site.name)}\\b`).test(parts.header.slice(parts.header.indexOf('(')));
-      links.push({ name, receiver: site.recvChain?.join('.') || site.recv || 'internal', arguments: close >= 0 ? parts.rawBody.slice(open + 1, close) : null,
-        implicitReceiver: !!target && libraryCandidates.has(this.key(target)), receiverTypes, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.recv ? site.recv + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates,
+      const internalLibrary = !!target && /\b(internal|private)\b/.test(targetHeader || '') &&
+        new RegExp(`\\blibrary\\s+${escaped(target.contract)}\\b`).test(lexicalCode(this.document(this.relative(target.file)).text));
+      const declarations = [];
+      if (site.recv && !['this', 'super'].includes(site.recv)) for (const type of receiverTypes) {
+        for (const definition of this.functionDeclarations(type, site.name, fn.file)) {
+          const header = this.code(definition), params = require('./call-bindings').parameterNames(header);
+          if (params.length === site.argCount) declarations.push({ file: this.relative(definition.file), line: definition.startLine,
+            signature: functionSignature(header, site.name), parameters: params });
+        }
+      }
+      // `call`, `send`, etc. are also legal user method names. Only an address
+      // receiver uses the low-level EVM convention; a known contract method
+      // with that spelling remains a normal ABI call.
+      const namedMember = site.callKind === 'low-level' && receiverTypes.length === 1 &&
+        receiverTypes[0] !== 'address' && this.knownTypes.has(receiverTypes[0]);
+      const callKind = namedMember ? 'member' : site.callKind;
+      const failure = namedMember && site.failure === 'returns-status' ? 'propagates' : site.failure;
+      let creationTargets = [];
+      if (site.isNew) {
+        this.importContext ||= new (require('./source-imports').ImportContext)(this);
+        for (const file of this.importContext.files(fn.file)) {
+          const doc = this.document(this.relative(file)), clean = lexicalCode(doc.text);
+          for (const owner of this.runner.flowboardContracts(clean)) if (owner.name === site.name &&
+            /^\s*(?:abstract\s+)?contract\b/.test(clean.slice(owner.start))) creationTargets.push({
+              file: this.relative(file), contract: owner.name, line: clean.slice(0, owner.start).split('\n').length,
+              sourceHash: crypto.createHash('sha256').update(doc.text).digest('hex') });
+        }
+      }
+      links.push({ id: site.id, span: site.span, nameSpan: site.nameSpan, argumentSpans: site.argumentSpans, options: site.options, callKind, failure, creationTargets, internalLibrary, declarations,
+        receiverExpression: site.receiverExpression, receiverSpan: site.receiverSpan, sourceExpression: site.sourceExpression,
+        name, receiver: site.receiverExpression || 'internal', arguments: site.arguments,
+        implicitReceiver: !!target && libraryCandidates.has(this.key(target)), receiverTypes, argCount: site.argCount, isSuper: site.recv === 'super', expression: `${site.receiverExpression ? site.receiverExpression + '.' : site.isNew ? 'new ' : ''}${site.name}(…)`, line, candidates,
         relationship: established ? 'call' : 'hypothesis', resolution: established ? 'direct-internal' : candidates.length > 1 ? 'ambiguous' : candidates.length ? 'declaration-candidate' : 'unresolved' });
     }
     this.links.set(key, links); return links;

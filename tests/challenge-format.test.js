@@ -14,7 +14,7 @@ function example() {
     claims: [{ id: 'c1', allegation: 'Rejected calls retain changes.', actor: 'Caller', entry: 'function', implementation: 'Guard::finish(bool)', conditions: ['accepted is false'], requiredFacts: ['No revert'], supportsIf: 'The call completes.', contradictsIf: 'The call reverts.', status: 'contradicted', reason: 'The require reverts.', evidence: ['guard'], unknowns: [], nextQuestion: '' }],
     evidence: [evidence], transitions: [], questions: [],
     causal: { scope: 'The false-accepted invocation, source only.', summary: 'The guard rejects this invocation.', outcome: 'refuted', obligations,
-      events: [{ id: 'event', invocationId: 'call1', transaction: 'tx1', phase: 'guard', claimId: 'c1', evidenceId: 'guard', title: 'Reject the call', role: 'Decisive guard', actor: 'Caller', caller: 'msg.sender', receiver: 'Guard', conditions: ['accepted is false'], what: evidence.note, why: 'The alleged committed change cannot survive this revert.', inputs: [], changes: [], effect: 'rolled-back', paragraphId: '', phrase: '' }], relationships: [], order: ['event'], checks: [] },
+      events: [{ id: 'event', invocationId: 'call1', transaction: 'tx1', phase: 'guard', claimId: 'c1', evidenceId: 'guard', callSiteId: '', title: 'Reject the call', role: 'Decisive guard', actor: 'Caller', caller: 'msg.sender', receiver: 'Guard', conditions: ['accepted is false'], what: evidence.note, why: 'The alleged committed change cannot survive this revert.', inputs: [], changes: [], effect: 'rolled-back', paragraphId: '', phrase: '' }], relationships: [], order: ['event'], checks: [] },
     conclusion: { status: 'insufficient-evidence', scopedStatus: 'contradicted-in-scope', text: 'This rejected call cannot commit.', limitations: [] },
     walkthrough: { steps: [], assessment: { result: 'invalid', why: 'The guard rejects the stated condition.', supportingEvidence: '', opposingEvidence: 'guard' } } };
   return draft;
@@ -24,6 +24,16 @@ function delta(draft) {
     causal: Object.fromEntries(Object.keys(format.schemaFor(schema).properties.causal.properties).map(key => [key, key === 'checks' ? [...draft.causal.obligations.map(item => item.id), 'event'].map(target => ({ target, reason: 'The false condition reaches require and reverts the invocation.', evidence: ['guard'], documentation: [] })) : null])),
     explanationReviews: [{ evidenceId: 'guard', result: 'kept', reason: 'The require statement rejects the false condition.', checkedSourceIds: ['function'] }] };
 }
+test('the stored outline is derived from the checked causal order instead of a competing model-authored outline', () => {
+  const draft = example(), output = format.earlier(draft, schema);
+  assert.equal(schema.properties.walkthrough.properties.steps, undefined);
+  const accepted = engine.accept(output, draft, draft.sources);
+  assert.deepEqual(accepted.walkthrough.steps, [{ evidenceId: 'guard', title: 'Reject the call', paragraphId: '', phrase: '' }]);
+  output.walkthrough.steps = [{ evidenceId: 'guard', title: 'A conflicting legacy heading', paragraphId: '', phrase: '' }];
+  assert.deepEqual(engine.accept(output, draft, draft.sources).walkthrough.steps, accepted.walkthrough.steps);
+  assert.equal(accepted.walkthrough.assessment.result, 'invalid');
+  assert.equal(accepted.causal.obligations.length, 8, 'Presentation projection does not remove analytical obligations.');
+});
 test('a compact challenge retains exact text but still needs all fresh reasoning checks', () => {
   const draft = example(), previous = format.earlier(draft, schema), update = delta(draft);
   const expanded = format.expand(update, previous, schema);

@@ -66,7 +66,7 @@ test('normal investigation advances generation, bounded source checks and challe
   assert.equal(result.challengeChanges[0].after, 'contradicted');
   assert.ok(result.actions.some(action => action.kind === 'callers'));
   assert.ok(result.actions.findIndex(action => action.kind === 'callers') < result.actions.findIndex(action => action.kind === 'code-completion'), 'Explicit questions take priority over generic helper completion within the same bound.');
-  assert.equal(result.actions.at(-1).outcome, 'context-already-available', 'An unchanged follow-up is recorded but does not trigger another provider request.');
+  assert.ok(result.actions.some(action => action.acquisitionKey && action.outcome === 'context-already-available'), 'An unchanged follow-up is recorded once, then its receipt prevents identical searches.');
 });
 test('the normal engine applies a compact challenge while retaining the unresolved scope and exact source check', { skip: !native }, async t => {
   const context = await fixture(t), inputs = [];
@@ -149,6 +149,20 @@ test('saved investigation revisions reject competing writes and tampered source 
   const packet = engine.modelSources(draft.sources);
   assert.ok(packet[0].code.startsWith('8 | '));
   assert.equal(packet[0].sourceHash, undefined, 'Compiler/source hashes are not repeated on every model-visible reference.');
+});
+test('model source packets remove only redundant call aliases and keep exact occurrence and binding evidence', () => {
+  const span = { start: 10, end: 19, line: 2, endLine: 2, column: 1, endColumn: 10 };
+  const call = { id: 'call-exact', span, nameSpan: span, receiverSpan: span,
+    argumentSpans: [{ index: 0, name: null, expression: 'amount', span }], options: [{ name: 'value', expression: 'msg.value', span }],
+    callKind: 'member', receiverExpression: 'target', sourceExpression: 'target.f{value:msg.value}(amount)', arguments: 'amount', receiver: 'target', line: 2,
+    declarations: [{ file: 'src/Other.sol', line: 3 }], creationTargets: [], failure: 'propagates', internalLibrary: false,
+    relationship: 'hypothesis', resolution: 'declaration-candidate', targets: [], receiverTypes: ['IOther'], implicitReceiver: false };
+  const unit = { id: 'source', name: 'Example::f', source: { file: 'src/Example.sol', line: 1, endLine: 3 },
+    code: 'function f() external {\n target.f{value:msg.value}(amount);\n}', relatedCalls: [call], readThrough: 0 };
+  const before = JSON.stringify(unit), packet = engine.modelSources([unit])[0].relatedCalls[0];
+  for (const field of ['id', 'span', 'nameSpan', 'receiverSpan', 'argumentSpans', 'options', 'receiverExpression', 'declarations', 'failure', 'resolution']) assert.deepEqual(packet[field], call[field]);
+  for (const field of ['arguments', 'sourceExpression', 'receiver', 'line']) assert.equal(packet[field], undefined);
+  assert.equal(JSON.stringify(unit), before, 'Canonical call/source records still retain every original field.');
 });
 test('researcher correction invalidates only its dependent scope and predictions without validating itself', { skip: !native }, async t => {
   const context = await fixture(t), units = engine.makeContext(context.catalog, context.request).units;

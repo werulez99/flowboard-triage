@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },

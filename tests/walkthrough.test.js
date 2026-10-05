@@ -95,6 +95,37 @@ test('shared data and unresolved relationships never turn into execution arrows'
   assert.match(walk.relationship(a, b, [], cardFor), /has not been established/);
   assert.match(walk.relationship(a, b, [{ from: 'b', to: 'a', kind: 'call' }], cardFor), /Local::read → Local::close/);
 });
+test('state watch retains only inspected changes from the same invocation, transaction, claim and receiver', () => {
+  const event = { invocationId: 'first', transaction: 'tx1', receiver: 'StoreA', claimId: 'c1', effect: 'intermediate' };
+  const change = (name, after) => ({ name, before: 'previous value', after, units: 'items', evidence: ['checked-write'] });
+  const route = { steps: [
+    { ...event, id: 'write', title: 'First write', changes: [change('count', 'old + amount')] },
+    { ...event, id: 'other-invocation', invocationId: 'second', changes: [change('count', 'different invocation')] },
+    { ...event, id: 'other-transaction', transaction: 'tx2', changes: [change('count', 'later transaction')] },
+    { ...event, id: 'other-receiver', receiver: 'StoreB', changes: [change('count', 'different storage')] },
+    { ...event, id: 'other-claim', claimId: 'c2', changes: [change('count', 'alternative scenario')] },
+    { ...event, id: 'guard', effect: 'condition', changes: [] },
+    { ...event, id: 'future', changes: [change('count', 'future write')] }
+  ] };
+  assert.deepEqual(walk.watchedChanges(route, 5).map(value => [value.after, value.effect, value.eventId]), [['old + amount', 'intermediate', 'write']]);
+  route.steps[5] = { ...event, id: 'rollback', effect: 'rolled-back', changes: [change('count', 'old + amount')] };
+  assert.equal(walk.watchedChanges(route, 5)[0].effect, 'rolled-back', 'A listed value is explicitly not persisted, never silently promoted to final state.');
+});
+test('parameter links use checked occurrence/index metadata, including interface names and implicit receivers', () => {
+  const source = { id: 'caller', relatedCalls: [{ id:'call1', callKind:'member', argumentSpans:[
+    {name:'accepted',index:0,expression:'false',span:{start:30,end:35}}, {name:'unused',index:1,expression:'true',span:{start:10,end:14}}],
+    declarations:[{parameters:['unused','accepted']}] }] };
+  const destination={ id:'callee', parameterSpans:[{name:'renamed',index:1,span:{start:12,end:19}}] };
+  const from={id:'entry',unit:source}, step={id:'receive',unit:destination,invocationId:'b',transaction:'tx'}, input={name:'renamed'};
+  const route={steps:[from,step],draft:{causal:{relationships:[{from:'entry',to:'receive',kind:'call',callSiteId:'call1'}]}}};
+  assert.deepEqual(walk.inputLinks(route,step,input).argument.span,{start:30,end:35});
+  assert.deepEqual(walk.inputLinks(route,step,input).parameter.span,{start:12,end:19});
+  source.relatedCalls[0].declarations.push({parameters:['ambiguous']});
+  assert.equal(walk.inputLinks(route,step,input).argument,undefined,'Ambiguous parameter names do not locate a guessed occurrence.');
+  const site=source.relatedCalls[0]; site.implicitReceiver=true; site.receiverExpression='account'; site.receiverSpan={start:1,end:8};
+  destination.parameterSpans[0].index=0;
+  assert.deepEqual(walk.inputLinks(route,step,input).argument.span,{start:1,end:8});
+});
 test('local rule lookup is bounded, source-hashed and excludes reports, instructions and symlinks', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-docs-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'docs'));

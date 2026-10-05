@@ -15,7 +15,7 @@
     const root = node('section', '', 'inv-workbench'); root.setAttribute('aria-label', 'Saved investigation draft');
     if (draft.preparation || !draft.property || !draft.conclusion || !draft.snapshot) {
       root.classList.add('inv-preparation'); root.setAttribute('aria-label', 'Preparation status');
-      root.append(node('h3', 'Walkthrough not published'), node('p', draft.preparation?.reason || 'The report is still being checked. Original code and your notes remain available.'));
+      root.append(node('h3', 'Walkthrough not ready'), node('p', draft.preparation?.reason || 'This finding is still being checked. Original code and your notes remain available.'));
       if (retry) root.append(button('Open preparation', retry));
       return root;
     }

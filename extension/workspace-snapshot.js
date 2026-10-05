@@ -75,9 +75,15 @@ function compatible(catalog, draft) {
   for (const file of Object.keys(current.files)) if (!Object.hasOwn(old.files, file) && expression?.test(require('./solidity-text').lexicalCode(catalog.document(file).text))) return false;
   return old.discovery === discovery(catalog, draft);
 }
-function relevantDirty(root, file, reportName) {
-  if (typeof file !== 'string' || !contained(root, path.resolve(file))) return false;
+function dirtyScope(root, file, reportName) {
+  if (typeof file !== 'string' || !contained(path.resolve(root), path.resolve(file))) return null;
   const relative = path.relative(root, file).split(path.sep).join('/');
-  return file.endsWith('.sol') || relative === reportName || require('./source').configurationFiles.includes(relative) || /^(?:README\.md|SPECIFICATION\.md|(?:docs|specification)\/.*\.md|\.flowboard\/(?:report\.json|findings\/[^/]+\.json))$/.test(relative);
+  if (file.endsWith('.sol')) return { kind: 'source' };
+  if (relative === reportName || relative === '.flowboard/report.json') return { kind: 'report' };
+  if (require('./source').configurationFiles.includes(relative)) return { kind: 'configuration' };
+  if (/^(?:README\.md|SPECIFICATION\.md|(?:docs|specification)\/.*\.md)$/.test(relative)) return { kind: 'documentation' };
+  const finding = /^\.flowboard\/findings\/([A-Za-z0-9._-]{1,100})\.json$/.exec(relative);
+  return finding ? { kind: 'finding', findingId: finding[1] } : null;
 }
-module.exports = { validate, docs, compiler, membership, relevantDirty, dependencies, compatible, metrics };
+function relevantDirty(root, file, reportName) { return !!dirtyScope(root, file, reportName); }
+module.exports = { validate, docs, compiler, membership, relevantDirty, dirtyScope, dependencies, compatible, metrics };

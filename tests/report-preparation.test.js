@@ -27,7 +27,7 @@ function response(input) {
     conclusion: { status: 'contradicted-in-scope', text: note, limitations: [] },
     walkthrough: { steps: [{ evidenceId: 'guard', title: 'The guard rejects false', paragraphId: '', phrase: '' }], assessment: { result: 'invalid', why: note, supportingEvidence: '', opposingEvidence: 'guard' } },
     causal: { scope: 'The supplied Gate.finish(false) source behavior; no executed test.', summary: note, outcome: 'refuted', obligations,
-      events: [{ id: 'event', invocationId: 'finish-1', transaction: 'tx1', phase: 'guard', claimId: 'c1', evidenceId: 'guard', title: 'False does not pass the guard', role: 'Decisive contradiction',
+      events: [{ id: 'event', invocationId: 'finish-1', transaction: 'tx1', phase: 'guard', claimId: 'c1', evidenceId: 'guard', callSiteId: '', title: 'False does not pass the guard', role: 'Decisive contradiction',
         actor: 'Caller', caller: 'msg.sender', receiver: 'Gate', conditions: ['accepted is false'], what: note, why: 'The reported normal completion is prevented by this guard.', inputs: [], changes: [], effect: 'rolled-back', paragraphId: '', phrase: '' }], relationships: [], order: ['event'], checks: input.phase === 'challenge' ? checks : [] }
   };
 }
@@ -51,6 +51,123 @@ test('phase group is accounted as context; ambiguous sections block instead of d
   const ambiguous = parseReport('# Unclassified concern\nSomething important has no ID or finding fields.\n\n' + reportText(1), { manifest: true });
   assert.equal(ambiguous.manifest.ambiguities.length, 1);
 });
+test('a checked finding is immediately readable while a sibling is still checking and another fails', { skip: !native }, async t => {
+  let release, entered = false;
+  const held = new Promise(resolve => { release = resolve; });
+  const f = await fixture(t, 4, async input => {
+    if (input.finding.id === 'I-2' && input.phase === 'challenge') { entered = true; await held; }
+    if (input.finding.id === 'I-4') return {};
+    const value = response(input);
+    if (input.finding.id === 'I-3' && !input.checkOnly) {
+      value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The deployment configuration is unavailable.'];
+      value.causal.outcome = 'blocked'; value.causal.obligations[0].state = 'open';
+      value.conclusion.limitations = ['The deployment configuration is unavailable.'];
+    }
+    return value;
+  });
+  const pending = f.runner.ensure();
+  try {
+    const deadline = Date.now() + 5000;
+    while (!(entered && f.runner.state?.jobs['I-1']?.publishable) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(entered && f.runner.state.jobs['I-1'].publishable, 'A finishes its own checks while B waits at challenge.');
+    const ready = engine.read(f.root, 'I-1');
+    assert.equal(f.runner.published(ready), true, 'A sibling must never be the reading gate for an accepted finding.');
+    assert.equal(policy.expose(ready, { findingId: ready.findingId, findingReady: f.runner.published(ready) }).phase, 'ready');
+    assert.equal(f.runner.status().published, false, 'Report completion remains a separate aggregate.');
+  } finally { release(); await pending; }
+  assert.equal(f.runner.state.jobs['I-3'].state, 'blocked');
+  assert.equal(f.runner.state.jobs['I-4'].state, 'failed');
+  for (const id of ['I-1', 'I-2']) assert.ok(f.runner.published(engine.read(f.root, id)));
+  const requests = f.calls.length;
+  await f.runner.control('pause'); await f.runner.ensure();
+  const reopened = new ReportPreparation(f.root, f.options); t.after(() => reopened.dispose());
+  await reopened.ensure();
+  for (const id of ['I-1', 'I-2']) assert.ok(reopened.published(engine.read(f.root, id)), 'Pause and host restart preserve accepted compatible guides.');
+  assert.equal(f.calls.length, requests, 'Reopening or pausing accepted work makes zero provider requests.');
+});
+test('pausing at the final accepted stage cannot hide that guide on reopen', { skip: !native }, async t => {
+  const f = await fixture(t, 1);
+  const changed = f.options.changed;
+  f.options.changed = status => { changed(status); if (status.ready === 1 && status.mode === 'running') return f.runner.control('pause'); };
+  await f.runner.ensure();
+  assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
+  await f.runner.ensure();
+  assert.ok(f.runner.published(engine.read(f.root, 'I-1')), 'Revalidation precedes the paused-mode early exit.');
+  assert.equal(f.calls.length, 2);
+});
+test('a missed finding-input watcher cannot reuse a completed aggregate after a researcher correction', { skip: !native }, async t => {
+  const f = await fixture(t, 2); await f.runner.ensure();
+  const a = engine.read(f.root, 'I-1'), b = engine.read(f.root, 'I-2'), acceptedA = f.runner.artifact('I-1');
+  const { report, entries } = reconcile(f.root), catalog = await f.options.catalog();
+  const corrected = structuredClone(f.runner.request(entries.find(entry => entry.id === 'I-2'), catalog, report));
+  corrected.finding.expectedBehavior = 'Researcher correction: only true accepted inputs are expected to return normally.';
+  corrected.finding.status = 'invalid';
+  corrected.finding.triage.decisionReason = 'The original false-input normal-return allegation fails at the require.';
+  corrected.finding.triage.evidence.push({ id: 'human-guard', stance: 'contradicts', source: b.evidence[0].source, note: 'The require rejects the reported false input.' });
+  require('../extension/store').writeDraft(f.root, 'I-2', corrected);
+  // No watcher callback, no source change, and the old aggregate is complete.
+  // Reopening must still reconcile content, without spending a new request.
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 8 });
+  await f.runner.ensure();
+  assert.equal(f.runner.published(a), true); assert.equal(f.runner.artifact('I-1'), acceptedA);
+  assert.equal(f.runner.published(b), false, 'The old B explanation has a different expected behavior input.');
+  assert.equal(f.calls.length, 4);
+  assert.equal(require('../extension/store').readDraft(f.root, 'I-2').finding.status, 'invalid', 'Human judgment is preserved, not replaced by preparation state.');
+});
+test('a full saved native canvas opens, removal frees a slot, and the checked guide recovers without AI', { skip: !native }, async t => {
+  const source = code.replace('\n}\n', '\n    function unrelated() external pure { }\n}\n');
+  const f = await fixture(t, 1, undefined, reportText(1), source); await f.runner.ensure();
+  const host = await require('../scripts/workflow-host').start({ workspace: f.root, report: path.join(f.root, 'report.md') });
+  t.after(() => host.close());
+  const call = async (route, value) => (await fetch(host.origin + route, { headers: { 'X-Workflow-Token': host.secret, 'Content-Type': 'application/json' }, ...(value ? { method: 'POST', body: JSON.stringify(value) } : {}) })).json();
+  const wait = async predicate => {
+    const until = Date.now() + 3000;
+    while (Date.now() < until) { const state = await call('/state'); if (predicate(state)) return state; await new Promise(resolve => setTimeout(resolve, 10)); }
+    const state = await call('/state'); assert.fail(`Native host did not reach expected state: ${state.errors.join('; ')}`);
+  };
+  const send = message => call('/message', message);
+  const open = async token => {
+    await send({ type: 'triage:select', issueId: 'I-1', token });
+    const state = await wait(state => state.lastLoad?.issueId === 'I-1' && state.lastLoad.token !== token);
+    await send({ type: 'triage:rendered', issueId: 'I-1', token: state.lastLoad.token }); return state.lastLoad;
+  };
+  await send({ type: 'triage:ready' }); const first = await open();
+  assert.equal(first.investigationDraft.phase, 'ready');
+  const state = structuredClone(first.state), template = state.cards[0];
+  state.cards = Array.from({ length: 200 }, (_, i) => ({ ...template, id: `exploration-${i}`, name: 'unrelated', startLine: 7, endLine: 7, code: '    function unrelated() external pure { }', x: i * 800, y: 0 }));
+  state.edges = []; state.notes = [{ id: 'human-note', text: 'Keep my research', x: 10, y: 10 }];
+  await send({ type: 'triage:persist', issueId: 'I-1', token: first.token, state });
+  await wait(state => state.snapshots['I-1']?.state.cards.length === 200);
+  const reopened = await open(first.token);
+  assert.equal(reopened.state.cards.length, 200, JSON.stringify({ warnings: reopened.warnings, error: reopened.error, errors: (await call('/state')).errors })); assert.equal(reopened.state.notes[0].text, 'Keep my research');
+  assert.equal(reopened.guideAvailability.ready, false); assert.match(reopened.guideAvailability.reason, /200/);
+  assert.equal(reopened.investigationDraft.phase, 'ready', 'Materialization capacity is not failed semantic evidence.');
+  const reduced = structuredClone(reopened.state); reduced.cards.pop();
+  await send({ type: 'triage:persist', issueId: 'I-1', token: reopened.token, state: reduced });
+  await wait(state => state.snapshots['I-1']?.state.cards.length === 199);
+  const draft = reopened.investigationDraft;
+  await send({ type: 'triage:investigationFocus', issueId: 'I-1', token: reopened.token, evidenceId: 'guard', investigationRevision: draft.revision });
+  const until = Date.now() + 3000; let focus;
+  while (!focus && Date.now() < until) { focus = (await call('/events')).messages.findLast(message => message.type === 'triage:investigationFocus'); if (!focus) await new Promise(resolve => setTimeout(resolve, 10)); }
+  assert.ok(focus, 'The host materializes and focuses the exact missing function after a removal.');
+  assert.equal(focus.source.line, 5); assert.equal(focus.guideAvailability.ready, true);
+  const recovered = await call('/state');
+  assert.deepEqual(recovered.errors, []);
+  assert.equal(f.calls.length, 2, 'Canvas recovery and reopening spend zero new provider calls.');
+});
+test('editing one imported finding preserves another accepted artifact and cumulative allowance', { skip: !native }, async t => {
+  const f = await fixture(t, 2); await f.runner.ensure(); await f.runner.control('pause');
+  const first = engine.read(f.root, 'I-1'), digest = f.runner.artifact('I-1'), requests = f.calls.length;
+  const changed = reportText(2).replace('### I-2: Gate.finish', '### I-2: Different condition for Gate.finish');
+  fs.writeFileSync(path.join(f.root, 'report.md'), changed);
+  await importReport(path.join(f.root, 'report.md'), f.root, native, { deferMapping: true });
+  f.runner.invalidate('Finding text changed', { kind: 'report' });
+  assert.ok(f.runner.published(first), 'An unrelated report section does not revoke A.');
+  await f.runner.control('pause'); await f.runner.ensure();
+  assert.equal(f.runner.artifact('I-1'), digest);
+  assert.equal(f.runner.published(engine.read(f.root, 'I-2')), false);
+  assert.equal(f.calls.length, requests); assert.equal(f.runner.state.resources.requests, requests);
+});
 test('a unique full path can reconcile citation case, but colliding files cannot', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-case-path-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'src')); const a = path.join(root, 'src/Gate.sol'), b = path.join(root, 'Src/GATE.sol');
@@ -60,7 +177,7 @@ test('a unique full path can reconcile citation case, but colliding files cannot
   fs.mkdirSync(path.join(root, 'Src'));
   fs.writeFileSync(b, code); assert.equal(mapFile(root, 'SRC/Gate.sol', [a,b]), null);
 });
-test('cold import prepares all findings without a selected board; private ready artifacts cross one atomic report barrier', { skip: !native }, async t => {
+test('cold import prepares all findings and publishes each accepted artifact independently', { skip: !native }, async t => {
   const { root, runner, calls, updates } = await fixture(t);
   await runner.ensure();
   for (const id of ['I-1', 'I-2', 'I-3']) assert.deepEqual(calls.filter(call => call[0] === id).map(call => call[1]), ['generate', 'challenge']);
@@ -68,7 +185,7 @@ test('cold import prepares all findings without a selected board; private ready 
   assert.equal(runner.status().costUSD, null, 'Unavailable cost is not reported as zero dollars.');
   assert.ok(updates.some(status => status.ready === 1 && status.published === false));
   const draft = engine.read(root, 'I-1'); assert.ok(runner.published(draft));
-  assert.equal(policy.expose(draft, { ...runner.status(), published: false, stopped: [] }).causal, undefined, 'A ready subset cannot leak through the old explanation route.');
+  assert.ok(policy.expose(draft, { findingId: draft.findingId, findingReady: true, published: false }).causal, 'Aggregate incompleteness is not a reading gate.');
   await runner.ensure(); assert.equal(calls.length, 6, 'Identical reopen/reimport reuses all compatible work.');
   assert.equal(reconcile(root).entries.length, 3);
 });
@@ -86,7 +203,7 @@ test('a timed-out challenge resumes the accepted generation, while unrelated job
   assert.ok(resumed.actions.some(action => action.kind === 'checkpoint-resume'));
   assert.equal(resumed.runs.filter(run => run.phase === 'challenge').length, 2);
 });
-test('one failed explanation withholds the report, preserves other private artifacts and has a finite stop', { skip: !native }, async t => {
+test('one failed explanation prevents report completion but not other accepted guides and has a finite stop', { skip: !native }, async t => {
   const f = await fixture(t, 3, input => {
     const value = response(input); if (input.finding.id === 'I-2') return {};
     return value;
@@ -115,7 +232,7 @@ test('cancellation ignores a late provider response and preserves researcher fil
   assert.equal(f.runner.status().ready, 0); assert.equal(fs.readFileSync(note, 'utf8'), 'Keep my research.');
   assert.equal(engine.read(f.root, 'I-1').claims.length, 0);
 });
-test('source changes revoke the entire published report and unchanged human records survive', { skip: !native }, async t => {
+test('changed shared source revokes affected guides and unchanged human records survive', { skip: !native }, async t => {
   const f = await fixture(t, 2); await f.runner.ensure(); assert.equal(f.runner.status().published, true);
   f.runner.invalidate('Code changed'); assert.equal(f.runner.status().published, false);
   fs.appendFileSync(path.join(f.root, 'src/Gate.sol'), '\n// changed saved snapshot\n');
@@ -332,6 +449,7 @@ test('a long function keeps its full local body and reads its tail before a subs
       assert.ok(input.sources.some(unit => unit.code.includes(`${guardLine} |         require(accepted, "rejected");`)), 'The decisive tail guard was actually supplied.');
       result.evidence[0].line = result.evidence[0].endLine = guardLine;
       result.explanationReviews[0].result = 'added';
+      delete result.walkthrough.steps; // Current response schema derives this from causal order.
       return { mode: 'review-patch-v1', updates: Object.entries(result).filter(([key]) => key !== 'explanationReviews').map(([key, value]) => ({ path: '/' + key, valueJSON: JSON.stringify(value) })), explanationReviews: result.explanationReviews, checks: result.causal.checks };
     }
     assert.ok(!input.sources.some(unit => unit.code.includes('require(accepted')), 'The first packet has not read the decisive guard.');
@@ -379,4 +497,39 @@ test('progress events do not reconcile workspace content or deserialize another 
     return { value: response(input), audit: { phase: input.phase, outcome: 'completed' } };
   };
   await f.runner.ensure(); assert.equal(observed, 0); assert.equal(f.runner.status().published, true);
+});
+test('four attempted unknowns do not starve a fifth available local question', { skip: !native }, async t => {
+  let sawFifth = false;
+  const source = code + '\ncontract AdditionalContext { function boundary() external pure returns (uint256) { return 32; } }\n';
+  const f = await fixture(t, 1, input => {
+    const value = response(input);
+    if (input.phase === 'generate') assert.equal(input.sources.some(unit => unit.name === 'AdditionalContext::boundary'), false, 'The unrelated definition is not an initial discovery anchor.');
+    else sawFifth = input.sources.some(unit => unit.name === 'AdditionalContext::boundary');
+    value.questions = Array.from({ length: 4 }, (_, i) => ({ id: `external-${i}`, claimId: 'c1', text: `Deployment fact ${i} is unavailable.`, action: 'missing-context', target: '', why: 'Requires independently supplied deployment evidence.' }));
+    value.questions.push({ id: 'local-fifth', claimId: 'c1', text: 'Read the local boundary declaration.', action: 'symbol', target: 'AdditionalContext::boundary', why: 'This local definition is available after the four unresolved external questions.' });
+    value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['Deployment evidence remains unavailable.'];
+    value.causal.outcome = 'blocked'; value.causal.obligations[0].state = 'open'; value.conclusion.limitations = ['Deployment evidence remains unavailable.'];
+    return value;
+  }, reportText(1), source);
+  await f.runner.ensure();
+  assert.ok(sawFifth, 'The challenge receives the fifth question\'s actual local code.');
+  const draft = engine.read(f.root, 'I-1');
+  assert.equal(draft.phase, 'blocked'); assert.equal(f.runner.artifact('I-1'), null);
+  assert.ok(draft.actions.some(action => action.sourceIds.some(id => draft.sources.find(unit => unit.id === id)?.name === 'AdditionalContext::boundary')));
+  const receipts = draft.actions.filter(action => action.acquisitionKey);
+  for (let i = 0; i < 4; i++) assert.ok(receipts.filter(action => action.questionId === `external-${i}`).length <= 1, 'No-progress receipts prevent identical repeated local searches.');
+});
+test('a compatible privately checked v4 artifact without execution handoffs migrates locally', { skip: !native }, async t => {
+  const f = await fixture(t, 1); await f.runner.ensure();
+  const saved = engine.read(f.root, 'I-1');
+  saved.snapshot.policy = 'checked-explanation-v4'; saved.publication.policy = 'checked-explanation-v4';
+  delete saved.causal.events[0].callSiteId;
+  saved.publication.digest = policy.digest(saved); saved.revision++; engine.write(f.root, saved);
+  await f.runner.control('pause');
+  const old = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json'); old.version = 1; old.publication = null; p.atomicJson(f.root, '.flowboard/report-preparation.json', old);
+  const restarted = new ReportPreparation(f.root, f.options); t.after(() => restarted.dispose());
+  await restarted.ensure();
+  const current = engine.read(f.root, 'I-1');
+  assert.equal(current.migration.from, 'checked-explanation-v4'); assert.equal(current.publication.policy, policy.POLICY);
+  assert.ok(restarted.published(current)); assert.equal(f.calls.length, 2, 'Local policy migration makes no provider request.');
 });

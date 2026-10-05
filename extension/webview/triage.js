@@ -21,12 +21,35 @@
   let guideDetour = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true;
   let reportPreparation = null;
+  let guideAvailability = null;
   let preparationExpanded = false;
   const guidePositions = new Map();
   const checkpoints = new Map();
   const disclosureState = new Map();
   const scrollPositions = new Map();
   const pendingEvidence = new Map();
+  const preparationLabel = state => ({ completed: 'Ready', ready: 'Ready', queued: 'Queued', running: 'Checking', 'retry-scheduled': 'Queued for another check',
+    'waiting-for-provider-capacity': 'Waiting for capacity', blocked: 'Blocked', failed: 'Failed', stale: 'Code changed', paused: 'Paused', cancelled: 'Cancelled' }[state] || 'Not prepared');
+  const preparationJob = id => reportPreparation?.jobs?.find(job => job.id === id);
+  const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' : preparationLabel(job?.state);
+  const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
+  function updatePreparationRows() {
+    for (const row of drawer.querySelectorAll('[data-finding-id]')) {
+      const job = preparationJob(row.dataset.findingId), badge = row.querySelector('.triage-preparation-badge'), action = row.querySelector('.triage-ready-action');
+      if (badge) { badge.textContent = jobLabel(job); badge.dataset.state = job?.publishable ? 'ready' : job?.state || 'not-started'; badge.title = job?.reason || ''; }
+      if (action) action.hidden = !job?.publishable;
+      const reason = row.querySelector('.triage-job-reason');
+      if (reason) { reason.textContent = job?.reason || ''; reason.hidden = !job?.reason || !['blocked', 'failed', 'paused', 'stale'].includes(job.state); }
+      if (queueMode.startsWith('preparation:')) row.hidden = queueMode === 'preparation:ready' ? !job?.publishable : job?.state !== queueMode.slice(12);
+    }
+    const counts = drawer.querySelector('.triage-preparation-counts');
+    if (counts) counts.textContent = preparationCounts();
+  }
+  function preparationCounts() {
+    const jobs = reportPreparation?.jobs || [];
+    const ready = jobs.filter(job => job.publishable).length, working = jobs.filter(job => ['running', 'queued', 'retry-scheduled', 'waiting-for-provider-capacity'].includes(job.state)).length;
+    return jobs.length ? `${ready} ready · ${working} preparing · ${jobs.filter(job => job.state === 'blocked').length} blocked · ${jobs.filter(job => job.state === 'failed').length} failed` : 'Preparation is separate from your saved review result.';
+  }
   const statusLabel = FlowboardReading.issue;
   const bar = document.createElement('div'); bar.id = 'triage-bar';
   const drawer = document.createElement('aside'); drawer.className = 'triage-drawer'; drawer.setAttribute('aria-label', 'Finding triage');
@@ -35,6 +58,11 @@
   const guideControls = element('nav', 'guide-controls'); guideControls.setAttribute('aria-label', 'Guided review'); guideControls.hidden = true;
   const guideAside = element('aside', 'guide-aside'); guideAside.setAttribute('aria-label', 'Current review step'); guideAside.hidden = true;
   document.body.append(guideControls, guideAside);
+  function measureGuideControls() {
+    if (guideControls.hidden) return;
+    document.body.style.setProperty('--guide-controls-bottom', `${Math.ceil(guideControls.getBoundingClientRect().bottom)}px`);
+  }
+  new ResizeObserver(measureGuideControls).observe(guideControls);
   const preparationSurface = element('section', 'guide-preparation'); preparationSurface.hidden = true;
   preparationSurface.setAttribute('aria-label', 'Walkthrough preparation'); document.body.append(preparationSurface);
   const guideAnchor = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); guideAnchor.classList.add('guide-anchor'); guideAnchor.setAttribute('aria-hidden', 'true'); document.body.append(guideAnchor);
@@ -107,11 +135,17 @@
     });
   });
   function preparationContent(parent) {
-    if (reportPreparation && !reportPreparation.published) {
+    if (guideAvailability?.ready === false) {
+      parent.append(element('h2', '', 'Your saved board is available'), element('p', '', guideAvailability.reason || 'The walkthrough needs another function card.'),
+        element('p', 'triage-muted', 'Remove an exploration card, then start the walkthrough again. Your notes, layout and checked review are preserved; this does not request another AI review.'),
+        button('Explore code', () => { guideIntent = 'explore'; renderPreparation(); show('flow'); }), button('Start walkthrough', guideStart));
+      return;
+    }
+    if (reportPreparation) {
       const progress = reportPreparation, running = progress.mode === 'running';
       parent.append(element('h2', '', running ? 'Preparing report' : 'Preparation incomplete'),
         element('p', '', `${progress.ready} of ${progress.total} walkthroughs ready · ${progress.reportName}`),
-        element('p', '', progress.reason || (!running && progress.stopped?.[0]?.reason) || 'Guides stay private until every finding in this report passes its checks. The original code remains available.'),
+        element('p', '', preparationJob(active)?.reason || progress.reason || 'Ready walkthroughs are available immediately. Other findings continue preparing in the background.'),
         element('small', 'triage-muted', `${progress.requests} of ${progress.requestLimit} model requests used${progress.ambiguities ? ` · ${progress.ambiguities} report sections need classification` : ''}`));
       for (const job of progress.active || []) parent.append(element('p', '', `${job.id} · ${job.stage || 'Locating code'}`));
       const controls = element('div', 'guide-preparation-actions');
@@ -123,7 +157,7 @@
       if (progress.plan) details.append(element('p', '', `${progress.plan.eligible} queued findings · about ${progress.plan.estimatedRequests} further requests before repairs · ${progress.plan.remainingAllowance} requests left.`),
         element('p', 'triage-muted', progress.plan.basis));
       if (progress.plan?.estimatedRequests > progress.plan?.remainingAllowance) details.append(element('p', 'triage-warning', 'The current allowance is unlikely to finish this report. No extra requests are authorized automatically.'));
-      if (progress.concurrency) details.append(element('p', 'triage-muted', `Workers: ${progress.concurrency.configured} configured, ${progress.concurrency.achieved} used together. Provider dispatch is limited to two across local hosts.`));
+      if (progress.concurrency) details.append(element('p', 'triage-muted', `${progress.concurrency.configured} configured workers · ${progress.active?.length || 0} active tasks · ${(progress.jobs || []).filter(job => job.state === 'waiting-for-provider-capacity').length} waiting for provider capacity. Task count is not provider concurrency.`));
       for (const job of progress.stopped || []) details.append(element('p', '', `${job.id} · ${job.stage || job.state}: ${job.reason || job.state}`));
       parent.append(details); return;
     }
@@ -144,14 +178,15 @@
     parent.append(element('p', 'triage-muted', 'No generated guide has been published. Your saved notes and judgment are unchanged.'));
   }
   function renderPreparation() {
-    const waiting = !!preparing || guideIntent === 'waiting' && (!!reportPreparation && !reportPreparation.published || !!active && (sourceStale || !FlowboardWalkthrough.build(investigationDraft, report)));
+    const waiting = !!preparing || guideIntent === 'waiting' && !!active && (sourceStale || !FlowboardWalkthrough.build(investigationDraft, report) || guideAvailability?.ready === false);
     preparationSurface.hidden = !waiting; document.body.classList.toggle('guide-preparing', waiting);
     const scroll = preparationSurface.scrollTop;
     const openDetails = [...preparationSurface.querySelectorAll('details')].map(node => node.open);
     preparationSurface.replaceChildren(); preparationSurface.classList.toggle('expanded', preparationExpanded);
     if (waiting) {
       const progress = reportPreparation, state = preparationState || investigationDraft?.preparation;
-      const title = preparing ? 'Opening finding' : progress ? `${progress.mode === 'running' ? 'Preparing report' : 'Preparation incomplete'} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
+      const job = preparationJob(active);
+      const title = preparing ? 'Opening finding' : guideAvailability?.ready === false ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
       const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
       row.append(heading, expand, button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
@@ -159,8 +194,8 @@
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
-      const stopped = progress?.stopped?.find(job => job.id === active) || progress?.stopped?.[0];
-      const reason = progress?.reason || (!progress?.active?.length && stopped?.reason) || state?.reason;
+      const stopped = progress?.stopped?.find(job => job.id === active);
+      const reason = guideAvailability?.ready === false ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
       if (preparationExpanded && !preparing) {
         const body = element('div', 'guide-status-details'); preparationContent(body); preparationSurface.append(body);
@@ -177,6 +212,34 @@
     const contextInset = Math.min(48, Math.max(8, box.height / 4));
     if (rect.top < box.top + 24 || rect.bottom > box.bottom - 24) scroller.scrollTop += (rect.top - box.top - contextInset) / scale;
     placeGuideAnchor();
+  }
+  function highlightCallOccurrence() {
+    for (const row of flowboard.querySelectorAll('[data-call-site-id]')) delete row.dataset.callSiteId;
+    if (globalThis.CSS?.highlights) CSS.highlights.delete('flowboard-call-occurrence');
+    if (!guide || !['guided', 'detour'].includes(guideMode) || sourceStale) return;
+    const step = guideMode === 'detour' ? detourStep() : guide.steps[guideIndex], site = step.unit?.relatedCalls?.find(item => item.id === step.callSiteId), span = step.span || site?.span;
+    const card = cards.get(selectedCard);
+    if (!span || !card || hints[card.id]?.sourceHash !== step.unit.source.sourceHash) return;
+    const ranges = [];
+    for (let line = span.line; line <= span.endLine; line++) {
+      const row = card.codeEl.querySelector(`[data-source-line="${line}"]`); if (!row) continue;
+      const expected = step.unit.code.replace(/\r\n/g, '\n').split('\n')[line - step.unit.source.line];
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT, { acceptNode: node => node.parentElement.closest('button,.triage-note-marker,.triage-line-number') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+      const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+      if (nodes.map(node => node.data).join('') !== expected) continue;
+      const start = line === span.line ? span.column : 0, end = line === span.endLine ? span.endColumn : expected.length;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || start < 0 || end > expected.length) continue;
+      let offset = 0, startNode, endNode, startOffset, endOffset;
+      for (const node of nodes) {
+        if (!startNode && start < offset + node.length) { startNode = node; startOffset = start - offset; }
+        if (!endNode && end <= offset + node.length) { endNode = node; endOffset = end - offset; }
+        offset += node.length;
+      }
+      if (!startNode || !endNode) continue;
+      const range = document.createRange(); range.setStart(startNode, startOffset); range.setEnd(endNode, endOffset); ranges.push(range);
+      row.dataset.callSiteId = site?.id || step.id;
+    }
+    if (ranges.length && globalThis.CSS?.highlights && globalThis.Highlight) CSS.highlights.set('flowboard-call-occurrence', new Highlight(...ranges));
   }
   const nativeToolbar = document.getElementById('toolbar');
   const nativeUndoButton = document.getElementById('undo-btn');
@@ -248,9 +311,69 @@
     if (!guideReturn) guideReturn = guideCapture();
     guideMode = 'explore'; guideNavigation = null; renderGuide(); schedulePersist();
   }
+  function beginGuideDetour(identity) {
+    if (!guide || sourceStale || guideMode === 'closed') return false;
+    if (!guideReturn) guideReturn = guideCapture();
+    guideMode = 'detour'; guideIntent = 'explore'; guideNavigation = null; guidePending = false;
+    guideDetour = identity || null;
+    return true;
+  }
+  function detourStep() {
+    if (guideMode !== 'detour') return null;
+    if (guideDetour?.startsWith('input:')) {
+      let reference; try { reference = JSON.parse(guideDetour.slice(6)); } catch { /* Old or invalid local presentation state is not guessed. */ }
+      const event = Array.isArray(reference) && guide.steps.find(step => step.id === reference[0]), input = event?.inputs?.find(item => item.name === reference[1]);
+      const link = input && FlowboardWalkthrough.inputLinks(guide, event, input)[reference[2]];
+      if (link) {
+        const source = { ...link.unit.source, line: link.span.line, endLine: link.span.endLine };
+        return { id: guideDetour, title: reference[2] === 'argument' ? 'Read the caller argument' : 'Read the callee parameter', unit: link.unit, span: link.span, inputReference: true,
+          claimId: event.claimId, what: `${link.text}. ${input.origin} (${input.units}).`, transitions: [],
+          evidence: { id: guideDetour, claimId: event.claimId, sourceId: link.unit.id, source, stance: 'context', note: input.origin } };
+      }
+    }
+    const manual = profile().evidence.find(item => item.id === guideDetour);
+    const entry = guide.draft.evidence.find(item => item.id === guideDetour) || manual;
+    if (entry) {
+      const candidates = guide.steps.filter(step => step.evidence?.id === entry.id);
+      // A shared source note can describe several invocations. Do not borrow
+      // a caller/state from an arbitrary occurrence just because code matches.
+      const event = candidates.length === 1 ? candidates[0] : null;
+      return event || { id: `detour-${entry.id}`, title: manual ? 'Researcher note' : 'Inspect this evidence', evidence: entry,
+        unit: guide.draft.sources.find(unit => unit.id === entry.sourceId), claimId: entry.claimId,
+        claim: guide.draft.claims.find(item => item.id === entry.claimId), what: entry.note, transitions: [] };
+    }
+    if (guideDetour === 'new-note') {
+      const card = cards.get(evidenceInput.cardId), info = card && hints[card.id];
+      return { id: 'new-note', title: 'Add your code note', kind: 'manual-note', source: info && { file: info.file, sourceHash: info.sourceHash, line: evidenceInput.line, endLine: evidenceInput.line },
+        text: 'Your note is separate from the checked explanation. Return keeps the unfinished text and restores the review step.' };
+    }
+    return { id: 'evidence-detour', title: 'Evidence detour', kind: 'detour', text: 'Inspecting a separate code or documentation reference. The numbered review is paused; Return restores its exact position.' };
+  }
+  function navigateNote(item, card) {
+    const detour = beginGuideDetour(item.id);
+    checkedLocation = { ...item.source }; selectedCard = card.id;
+    if (detour) renderGuide();
+    redrawEdges(); schedulePersist();
+  }
+  function navigateInput(event, input, kind) {
+    const link = FlowboardWalkthrough.inputLinks(guide, event, input)[kind]; if (!link) return;
+    beginGuideDetour('input:' + JSON.stringify([event.id, input.name, kind]));
+    const card = cards.get(guideCard(link.unit));
+    if (card) {
+      const changed = card.id !== selectedCard;
+      selectedCard = card.id; checkedLocation = detourStep().evidence.source;
+      renderGuide(); redrawEdges(); if (changed) focusReadable(card); guideReveal(checkedLocation.line); schedulePersist();
+    } else {
+      guideNavigation = crypto.randomUUID(); guidePending = true;
+      send('triage:investigationFocus', { sourceId: link.unit.id, claimId: event.claimId, navigationId: guideNavigation, materialize: true });
+      renderGuide();
+    }
+  }
   function guideStart() {
     guideIntent = 'waiting'; renderPreparation();
     if (sourceStale || readOnly) return false;
+    if (guideAvailability?.ready === false && cards.size >= (guideAvailability.limit || 200)) return false;
+    guideAvailability = null;
     const prepared = FlowboardWalkthrough.build(investigationDraft, report);
     if (!prepared) return false;
     if (guide?.key === prepared.key) { guideRestore(); return true; }
@@ -284,11 +407,18 @@
   }
   function guideEvidence(entry, editor = false) {
     if (!guide || sourceStale) return;
-    if (!guideReturn) guideReturn = guideCapture();
-    guideMode = 'detour'; guideNavigation = crypto.randomUUID();
+    beginGuideDetour(entry.id); guideNavigation = crypto.randomUUID();
     const unit = guide.draft.sources.find(source => source.id === entry.sourceId);
     send('triage:investigationFocus', { evidenceId: entry.id, claimId: entry.claimId, navigationId: guideNavigation, editor, materialize: !!unit && !guideCard(unit) });
     renderGuide(); schedulePersist();
+  }
+  function evidenceActions(parent, ids, label = 'Where this comes from') {
+    for (const id of [...new Set(ids || [])]) {
+      const entry = guide?.draft.evidence.find(item => item.id === id);
+      if (!entry) continue;
+      const action = button(`${label} · ${entry.source.file}:${entry.source.line}`, () => guideEvidence(entry));
+      action.dataset.evidenceId = id; parent.append(action);
+    }
   }
   function guideReport(parent, step) {
     const detail = element('details', 'guide-report'); detail.open = true;
@@ -308,7 +438,7 @@
     parent.append(detail);
   }
   function renderOpinion(parent, draft = investigationDraft) {
-    if (draft?.phase !== 'ready' || draft?.preparation || reportPreparation && !reportPreparation.published) return;
+    if (!readyDraft(draft)) return;
     const assessment = FlowboardWalkthrough.assessment(draft, sourceStale);
     const opinion = element('div', 'guide-opinion');
     const part = (heading, key) => { const node = element('section', 'guide-ai-part'); node.dataset.part = key; node.append(element('h3', '', heading)); opinion.append(node); return node; };
@@ -325,8 +455,7 @@
       for (const id of draft.property.documentation || []) {
         const item = draft.documentation?.excerpts.find(item => item.id === id); if (!item) continue;
         scope.append(button(`${item.source.file}:${item.source.line} · Read expected rule`, () => {
-          if (guide && !guideReturn) guideReturn = guideCapture();
-          if (guide) { guideMode = 'detour'; renderGuide(); }
+          if (beginGuideDetour(`documentation:${id}`)) renderGuide();
           send('triage:investigationDocumentation', { documentationId: id });
         }));
       }
@@ -349,6 +478,7 @@
     const open = !!guide && guideMode !== 'closed' && !sourceStale;
     document.body.classList.toggle('guide-open', open); guideControls.hidden = guideAside.hidden = !open;
     document.body.classList.toggle('guide-reading', open && ['guided', 'detour'].includes(guideMode) && !sourceStale);
+    document.body.classList.toggle('guide-note-editing', open && guideMode === 'detour' && drawerTab === 'review' && drawer.classList.contains('visible'));
     document.body.classList.toggle('guide-wrap', guideWrap);
     for (const card of cards.values()) card.el.classList.toggle('guide-active-card', card.id === selectedCard);
     document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(680, flowboard.clientWidth - 48))}px`);
@@ -356,13 +486,8 @@
     guideControls.replaceChildren(); guideAside.replaceChildren();
     document.querySelectorAll('.guide-handoff').forEach(node => node.remove());
     if (!open) return;
-    let step = guide.steps[guideIndex];
-    if (guideMode === 'detour' && guideDetour) {
-      const entry = guide.draft.evidence.find(item => item.id === guideDetour);
-      if (entry) step = guide.steps.find(item => item.evidence?.id === entry.id) || { id: `detour-${entry.id}`, kind: 'code', title: 'Inspect this evidence', evidence: entry,
-        unit: guide.draft.sources.find(item => item.id === entry.sourceId), claimId: entry.claimId, claim: guide.draft.claims.find(item => item.id === entry.claimId), transitions: [] };
-    }
-    guideAside.append(element('header', 'guide-caption', `Step ${guideIndex + 1} · ${step.title}`));
+    const step = detourStep() || guide.steps[guideIndex];
+    guideAside.append(element('header', 'guide-caption', `${guideMode === 'detour' ? 'Detour from step' : 'Step'} ${guideIndex + 1} · ${step.title}`));
     const counter = element('strong', '', `Step ${guideIndex + 1} of ${guide.steps.length}`); counter.setAttribute('aria-live', 'polite');
     const back = button('Previous step', () => guideGo(guideIndex - 1)), next = button('Next step', () => guideGo(guideIndex + 1));
     back.disabled = guideIndex === 0 || sourceStale || !!preparing; next.disabled = guideIndex === guide.steps.length - 1 || sourceStale || !!preparing;
@@ -373,9 +498,11 @@
     extras.append(button('Restart', () => guideGo(0)), button('Readable size', () => { const card = cards.get(selectedCard); if (card) focusReadable(card); }), button(guideWrap ? 'Turn wrapping off' : 'Wrap code', () => { guideWrap = !guideWrap; renderGuide(); schedulePersist(); }),
       button(guideOpinion ? 'Hide assessment' : 'Show assessment', () => { guideOpinion = !guideOpinion; renderGuide(); schedulePersist(); }));
     guideControls.append(extras);
+    guideControls.append(button('Step outline', () => { disclosureState.set('guide-outline', true); const outline = guideAside.querySelector('.guide-outline'); if (outline) { outline.open = true; guideAside.scrollTop += outline.getBoundingClientRect().top - guideAside.getBoundingClientRect().top - 12; } }));
     if (focusedControl) ([...guideControls.querySelectorAll('button')].find(item => item.textContent === focusedControl && !item.disabled) || next.disabled && back || next).focus({ preventScroll: true });
+    measureGuideControls();
     guideAside.append(element('small', 'triage-muted', `${issueIdentifier()} · Checked against saved code, not an executed trace`));
-    const mechanism = element('details', 'guide-mechanism'); mechanism.append(element('summary', '', 'Finding explanation'), element('p', '', guide.summary)); guideAside.append(mechanism);
+    const mechanism = element('details', 'guide-mechanism'); mechanism.append(element('summary', '', 'Finding explanation'), element('p', '', guide.summary));
     const outline = element('details', 'guide-outline'); outline.open = disclosureState.get('guide-outline') === true;
     outline.append(element('summary', '', 'Step outline'));
     const order = element('ol');
@@ -384,7 +511,7 @@
       if (i === guideIndex) { link.setAttribute('aria-current', 'step'); li.className = 'current'; }
       li.append(link); order.append(li);
     }
-    outline.append(order); outline.ontoggle = () => disclosureState.set('guide-outline', outline.open); guideAside.append(outline);
+    outline.append(order); outline.ontoggle = () => disclosureState.set('guide-outline', outline.open);
     if (sourceStale) {
       guideAside.append(element('p', 'triage-warning', 'Code or report changed. Refresh before using these steps.'), button('Refresh code', () => { persistNow(); send('triage:refresh'); })); return;
     }
@@ -392,35 +519,67 @@
     if (guideMode !== 'guided') guideAside.append(element('p', 'guide-paused', guideMode === 'detour' ? 'Evidence detour. Return restores your step and reading position.' : 'Exploring freely. Your step is saved.'));
     const note = element('section', 'guide-annotation'); note.dataset.stepId = step.id;
     note.append(element('h2', '', step.title));
+    if (guideMode === 'guided' && step.role && !guide.steps.slice(0, guideIndex).some(prior => prior.unit?.id === step.unit?.id)) note.append(element('p', 'guide-function-role', step.role));
     if (guidePending) { const loading = element('p', 'triage-muted', 'Opening the checked code…'); loading.setAttribute('role', 'status'); note.append(loading); }
+    let statement;
     if (step.claim) {
-      const statement = element('details', 'guide-statement'); statement.append(element('summary', '', `Statement ${step.claimId} · ${FlowboardReading.statement(step.claim.status)}`), element('p', '', step.claim.allegation));
+      statement = element('details', 'guide-statement'); statement.append(element('summary', '', `Statement ${step.claimId} · ${FlowboardReading.statement(step.claim.status)}`), element('p', '', step.claim.allegation));
       const conditions = [step.claim.actor && `Actor: ${step.claim.actor}`, ...step.claim.conditions].filter(Boolean);
-      for (const text of conditions) statement.append(element('p', '', text)); note.append(statement);
+      for (const text of conditions) statement.append(element('p', '', text));
     }
     if (step.evidence) {
       const entry = step.evidence;
-      note.append(element('p', `guide-stance ${entry.stance}`, `${entry.stance === 'supports' ? 'Supports this statement' : entry.stance === 'contradicts' ? 'Challenges this statement' : 'Code context'} · ${step.claimId}`));
       note.append(button(`Code line ${entry.source.line}${entry.source.endLine !== entry.source.line ? '–' + entry.source.endLine : ''}`, () => guideReveal(entry.source.line), 'guide-line-link'),
+        element('h3', '', 'What happens here'),
         element('p', 'guide-explanation', step.what || entry.note));
       if (step.why) note.append(element('h3', '', 'Why it matters'), element('p', '', step.why));
+      note.append(element('p', `guide-stance ${entry.stance}`, `${entry.stance === 'supports' ? 'Supports this statement' : entry.stance === 'contradicts' ? 'Challenges this statement' : 'Code context'}${step.claimId ? ' · ' + step.claimId : ' · Researcher note'}`));
+      if (statement) note.append(statement);
       if (step.caller || step.actor) note.append(element('p', 'guide-caller', `Who: ${step.actor || step.caller}${step.caller && step.caller !== step.actor ? ' · Caller: ' + step.caller : ''}${step.receiver ? ' → ' + step.receiver : ''}`));
       if (step.conditions?.length) note.append(element('p', 'guide-condition', `When: ${step.conditions.join('; ')}`));
       if (step.transaction || step.invocationId) note.append(element('p', 'guide-frame', `${step.transaction || 'Source context'} · ${step.phase || 'Reading step'} · ${step.invocationId || ''}`));
+      if (step.handoff?.dispatch && step.handoff.dispatch.kind !== 'not-applicable') {
+        const dispatch = step.handoff.dispatch;
+        const detail = element('details', 'guide-execution-context'); detail.append(element('summary', '', 'Caller and execution context'),
+          element('p', '', `Receiver expression: ${dispatch.receiver}`),
+          element('p', '', `Implementation: ${guide.draft.sources.find(unit => unit.id === dispatch.implementation)?.name || dispatch.implementation}`));
+        const context = { same: 'Internal call: the execution address and EVM msg.sender stay the same.', call: 'External call: the callee executes in its own address context.', delegatecall: 'Delegate call: implementation code executes in the caller’s address context.', staticcall: 'Static call: the callee cannot write state.', creation: 'Contract creation starts a constructor context.' }[dispatch.context];
+        if (context) detail.append(element('p', '', context));
+        const failure = { propagates: 'Failure propagates to the caller on this checked route.', caught: 'The caller catches this failure; check its handler before claiming a full transaction rollback.', 'returns-status': 'The call reports success or failure as a value. Check how the caller uses it.' }[dispatch.failure];
+        if (failure) detail.append(element('p', '', failure));
+        evidenceActions(detail, dispatch.evidence); note.append(detail);
+      }
       if (step.inputs?.length || step.changes?.length || step.effect) {
         const values = element('details', 'guide-values'); values.open = true; values.append(element('summary', '', 'Inputs and changes · source interpretation'));
-        for (const input of step.inputs || []) values.append(element('p', '', `${input.name}: ${input.expression} (${input.units}). From ${input.origin}.`));
-        if (step.changes?.length) {
-          const table = element('table'), header = element('tr');
-          for (const label of ['Value', 'Before', 'Operation / after']) header.append(element('th', '', label)); table.append(header);
-          for (const change of step.changes) { const row = element('tr'); for (const value of [`${change.name} (${change.units})`, change.before, `${change.operation} → ${change.after}`]) row.append(element('td', '', value)); table.append(row); }
+        if (step.inputs?.length) {
+          const table = element('div', 'guide-parameter-table');
+          for (const input of step.inputs) {
+            const row = element('div', 'guide-input-row'), links = element('div', 'guide-input-evidence');
+            for (const [label, value] of [['Caller expression', input.expression], ['Callee parameter', input.name]]) {
+              const cell = element('div'); cell.append(element('strong', 'guide-value-label', label), element('code', '', value)); row.append(cell);
+            }
+            const meaning = element('div', 'guide-input-meaning'); meaning.append(element('strong', 'guide-value-label', 'Meaning / units'), element('span', '', `${input.origin} · ${input.units}`)); row.append(meaning);
+            const anchors = FlowboardWalkthrough.inputLinks(guide, step, input);
+            if (anchors.argument) links.append(button('Read caller argument', () => navigateInput(step, input, 'argument')));
+            if (anchors.parameter) links.append(button('Read callee parameter', () => navigateInput(step, input, 'parameter')));
+            evidenceActions(links, input.evidence, 'Read origin'); row.append(links); table.append(row);
+          }
           values.append(table);
         }
-        values.append(element('p', 'triage-muted', ({intermediate: 'Intermediate effects; a later revert rolls these back.', committed: 'Predicted successful transaction outcome, not an executed observation.', 'rolled-back': 'The transaction reverts; these changes do not persist.', condition: 'This step evaluates a condition. It does not change storage.', read: 'This step reads context; no write is claimed.', return: 'This value is returned to the caller.'})[step.effect]));
+        if (step.changes?.length) {
+          const table = element('table'), header = element('tr');
+          for (const label of ['Value', 'Before', 'Operation / after', 'Evidence']) header.append(element('th', '', label)); table.append(header);
+          for (const change of step.changes) {
+            const row = element('tr'); for (const value of [`${change.name} (${change.units})`, change.before, `${change.operation} → ${change.after}`]) row.append(element('td', '', value));
+            const links = element('td'); evidenceActions(links, change.evidence); row.append(links); table.append(row);
+          }
+          values.append(table);
+        }
+        values.append(element('p', 'triage-muted', ({intermediate: 'Intermediate effects; reverting this invocation rolls back its writes.', committed: 'Predicted successful transaction outcome, not an executed observation.', 'rolled-back': 'This invocation reverts. Writes within the reverted call do not persist.', condition: 'This step checks the stated condition. See the checked operations for any side effects.', read: 'This step reads context; no write is claimed.', return: 'Control returns to the caller. A return alone does not transfer funds or change the execution address.'})[step.effect]));
         note.append(values);
       }
-      const source = button(`${entry.source.file}:${entry.source.line} · Open in editor`, () => guideEvidence(entry, true), 'guide-file-link'); note.append(source);
-      if (guideIndex) note.append(element('p', 'guide-relationship', FlowboardWalkthrough.relationship(guide.steps[guideIndex - 1], step, connections, guideCard)));
+      const source = button(`${entry.source.file}:${entry.source.line} · Open in editor`, () => step.inputReference ? send('triage:openReference', { file: entry.source.file, line: entry.source.line }) : guide.draft.evidence.some(item => item.id === entry.id) ? guideEvidence(entry, true) : inspectEvidence(entry), 'guide-file-link'); note.append(source);
+      if (guideIndex && guideMode === 'guided') note.append(element('p', 'guide-relationship', FlowboardWalkthrough.relationship(guide.steps[guideIndex - 1], step, connections, guideCard)));
       const transitions = step.transitions;
       if (transitions.length) {
         const state = element('details', 'guide-state'); state.append(element('summary', '', 'State change · code interpretation'));
@@ -428,9 +587,24 @@
         note.append(state);
       }
       guideReport(note, step);
+    } else if (step.kind === 'detour' || step.kind === 'manual-note') {
+      note.append(element('p', '', step.text));
+      if (step.source) note.append(element('p', 'guide-line-link', `${step.source.file}:${step.source.line}`));
     } else if (step.kind === 'gap') note.append(element('p', 'triage-warning', step.text), button('Read statement details', () => { guidePause(); show('claims'); }));
     else note.append(element('p', '', 'Compare the evidence on both sides. These steps do not decide your final judgment.'), button('Read report', () => { guidePause(); show('report'); }));
-    guideAside.append(note);
+    guideAside.append(note, outline, mechanism);
+    const watched = guideMode === 'guided' ? FlowboardWalkthrough.watchedChanges(guide, guideIndex) : [];
+    if (watched.length) {
+      const watch = element('details', 'guide-state-watch'); watch.append(element('summary', '', 'Values in this invocation'),
+        element('p', 'triage-muted', 'Last shown changes in this invocation only. Code interpretation, not an executed trace.'));
+      for (const change of watched) {
+        const row = element('div', 'guide-watched-value');
+        row.append(element('strong', '', change.name), element('p', '', `${change.after} (${change.units})`),
+          element('small', 'triage-muted', `${change.effect === 'rolled-back' ? 'Rolled back · not persisted' : change.effect === 'committed' ? 'Predicted successful outcome' : 'Provisional change'} · ${change.title}`));
+        evidenceActions(row, change.evidence); watch.append(row);
+      }
+      guideAside.append(watch);
+    }
     const card = cards.get(selectedCard), nextStep = guide.steps[guideIndex + 1];
     if (card && guideMode === 'guided') {
       const handoff = element('section', 'guide-handoff');
@@ -495,9 +669,9 @@
     send(copy ? 'triage:copyBrief' : 'triage:save', { patch, editVersion });
   }
   function renderClaims() {
-    if (reportPreparation && !reportPreparation.published) {
+    if (reportPreparation && !readyDraft(investigationDraft)) {
       const status = element('section', 'inv-preparation'); status.append(element('h3', '', 'Walkthrough not published'),
-        element('p', '', reportPreparation.reason || 'The report is still being checked. Your notes and original code remain available.'),
+        element('p', '', preparationJob(active)?.reason || 'This finding is still being checked. Ready findings, your notes and original code remain available.'),
         button('Open preparation', () => { guideIntent = 'waiting'; renderPreparation(); })); drawer.append(status);
     }
     if (investigationDraft && cards.has(selectedCard)) {
@@ -509,7 +683,7 @@
       navigationBar.append(title, back, forward, button('Function header', () => focusReadable(card)), button('Explore callers / callees', () => inspectCard(card)));
       drawer.append(navigationBar);
     }
-    if (investigationDraft && (!reportPreparation || reportPreparation.published) && typeof FlowboardInvestigation !== 'undefined') {
+    if (investigationDraft && typeof FlowboardInvestigation !== 'undefined') {
       drawer.append(FlowboardInvestigation.render({ draft: investigationDraft, selected: activeInvestigationClaim,
         disabled: readOnly || sourceStale, correction: investigationCorrection, changed: () => schedulePersist(),
         select: id => {
@@ -550,7 +724,7 @@
   }
   function send(type, payload = {}) {
     if (type === 'triage:investigationFocus' && guide && guideMode !== 'closed' && !payload.navigationId) {
-      if (!guideReturn) guideReturn = guideCapture(); guideMode = 'detour'; guideNavigation = crypto.randomUUID();
+      beginGuideDetour(payload.evidenceId); guideNavigation = crypto.randomUUID();
       payload = { ...payload, navigationId: guideNavigation }; renderGuide();
     }
     if (type === 'triage:investigationFocus' && payload.navigationId && guide) payload = { ...payload, investigationRevision: guide.draft.revision };
@@ -558,6 +732,7 @@
   }
   function show(tab) {
     if (guideMode === 'guided') guidePause();
+    else { guideIntent = 'explore'; renderPreparation(); }
     drawerTab = tab; drawer.dataset.tab = tab; drawer.classList.add('visible'); document.body.classList.add('triage-drawer-open'); renderDrawer(); redrawEdges();
     schedulePersist();
   }
@@ -597,6 +772,8 @@
     }
   }
   function toggle(tab) {
+    if (guideMode === 'guided') guidePause();
+    else { guideIntent = 'explore'; renderPreparation(); }
     drawerTab = tab; const same = drawer.dataset.tab === tab && drawer.classList.contains('visible');
     drawer.classList.toggle('visible', !same); drawer.dataset.tab = tab;
     document.body.classList.toggle('triage-drawer-open', !same); renderDrawer(); redrawEdges();
@@ -712,10 +889,20 @@
       evidenceInput = {};
     }
     evidenceInput = { ...evidenceInput, cardId: card.id, line, stance: evidenceInput.stance || 'context' };
+    beginGuideDetour('new-note');
+    guideIntent = 'explore';
+    selectedCard = card.id; checkedLocation = { file: info.file, sourceHash: info.sourceHash, line, endLine: line };
     drawerTab = 'review'; drawer.dataset.tab = 'review'; drawer.classList.add('visible'); document.body.classList.add('triage-drawer-open');
-    renderDrawer(); drawer.querySelector('#triage-evidence-note')?.focus();
+    renderDrawer(); renderGuide(); redrawEdges();
+    if (guideMode === 'detour') { focusReadable(card); guideReveal(line); }
+    const field = drawer.querySelector('#triage-evidence-note');
+    if (field) {
+      drawer.scrollTop += field.getBoundingClientRect().top - drawer.getBoundingClientRect().top - Math.min(120, drawer.clientHeight / 3);
+      field.focus({ preventScroll: true });
+    }
+    schedulePersist();
   }
-  function inspectEvidence(item) { send('triage:inspectEvidence', { evidence: item }); }
+  function inspectEvidence(item) { if (beginGuideDetour(item.id)) renderGuide(); send('triage:inspectEvidence', { evidence: item }); }
   function renderDrawer() {
     if (renderedTab) scrollPositions.set(renderedTab, drawer.scrollTop);
     renderDrawerContent(); renderedTab = drawerTab;
@@ -734,7 +921,7 @@
       item.setAttribute('role', 'tab'); item.setAttribute('aria-selected', String(tab === drawerTab)); tabs.append(item);
       item.onkeydown = event => { if (['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); const nodes = [...tabs.children], index = nodes.indexOf(item), next = nodes[(index + (event.key === 'ArrowLeft' ? nodes.length - 1 : 1)) % nodes.length]; const name = next.textContent; next.click(); [...drawer.querySelectorAll('[role="tab"]')].find(node => node.textContent === name)?.focus(); } };
     }
-    const close = button('×', () => { drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); redrawEdges(); bar.querySelector('button')?.focus(); });
+    const close = button('×', () => { drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); renderGuide(); redrawEdges(); bar.querySelector('button')?.focus(); });
     close.setAttribute('aria-label', 'Close review panel'); close.title = 'Return to code (Escape)'; tabs.append(close);
     drawer.append(tabs);
     if (sourceStale) {
@@ -787,18 +974,24 @@
       for (const [id, label] of [['all', 'All findings'], ['attention', 'Needs attention'], ['unreviewed', 'Not checked'], ['unmapped', 'No matching code'], ['confirmed', 'Confirmed bug'], ['invalid', 'Not a bug'], ['design-decision', 'By design'], ['already-fixed', 'Already fixed']]) {
         const option = element('option', '', `${label} (${FlowboardReview.queue(library, '', id).length})`); option.value = id; modes.append(option);
       }
+      for (const [state, label] of [['ready', 'Ready walkthroughs'], ['queued', 'Queued'], ['running', 'Checking'], ['waiting-for-provider-capacity', 'Waiting for capacity'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['stale', 'Code changed']]) {
+        const option = element('option', '', label); option.value = `preparation:${state}`; modes.append(option);
+      }
       modes.value = queueMode; modes.onchange = () => { queueMode = modes.value; renderDrawer(); }; drawer.append(modes);
-      const visible = FlowboardReview.queue(library, filter, queueMode);
-      drawer.append(element('p', 'triage-muted', `${visible.length} of ${library.length} findings · queue reflects saved reviews`));
+      const visible = FlowboardReview.queue(library, filter, queueMode.startsWith('preparation:') ? 'all' : queueMode);
+      drawer.append(element('p', 'triage-muted triage-preparation-counts', preparationCounts()));
       if (library.some(issue => issue.mappingPending)) drawer.append(element('p', 'triage-muted', reportPreparation ? 'Report preparation runs in the background. Choose a finding to explore its code; saved reviews are kept.' : 'Choose a finding to read its code. Your saved reviews are kept.'));
       const list = element('div', 'triage-list');
       for (const issue of visible) {
         const item = button(`${issue.displayId || issue.id} · ${issue.title}`, () => select(issue.id), issue.id === active ? 'current' : '');
-        item.append(element('small', '', `${issue.severity} · ${statusLabel(issue.status)}${issue.unresolved ? ` · ${issue.unresolved} unresolved` : ''}${issue.reviewGaps ? ` · ${issue.reviewGaps} review gaps` : ''}${issue.staleEvidence ? ' · old evidence' : ''}`)); list.append(item);
+        item.dataset.findingId = issue.id;
+        item.append(element('small', '', `Reported severity: ${issue.severity} · Your result: ${issue.status === 'unreviewed' ? 'Not reviewed' : statusLabel(issue.status)}${issue.staleEvidence ? ' · old evidence' : ''}`),
+          element('span', 'triage-preparation-badge'), element('span', 'triage-ready-action', 'Open walkthrough'), element('small', 'triage-job-reason'));
+        list.append(item);
       }
       if (library.length && !visible.length) list.append(element('p', 'triage-muted', 'No matching findings. Clear the search or change the queue filter.'));
       if (!library.length) list.append(element('p', 'triage-muted', 'Import a .txt/.md report using Flowboard Triage: Import Report. Individual finding requests also work.'));
-      drawer.append(list); return;
+      drawer.append(list); updatePreparationRows(); return;
     }
     const context = element('details', 'triage-source-details'); context.open = readOnly;
     context.append(element('summary', '', `Code details${warnings.length ? ' · check warnings' : ''}`));
@@ -834,8 +1027,14 @@
         matched++;
         const item = button(`${card.data.contract ? card.data.contract + '::' : ''}${card.name}`, () => inspectCard(card), 'triage-flow-item');
         item.append(element('small', '', info?.range || `${card.data.file || 'Unknown file'}:${card.data.startLine || '?'}`));
-        if (info?.description) item.append(element('p', 'triage-muted', info.description));
-        if (info?.mapping) item.append(element('small', 'triage-mapping', `${mappingLabel(info.mapping.method)} · not checked`));
+        const checkedSteps = readyDraft(investigationDraft) ? FlowboardWalkthrough.build(investigationDraft, report)?.steps.filter(step => guideCard(step.unit) === card.id) || [] : [];
+        if (checkedSteps.length) {
+          for (const step of checkedSteps) item.append(element('p', 'triage-muted', `${step.claimId} · ${step.role || step.why}`));
+          item.append(element('small', 'triage-mapping', 'Checked for these statements only'));
+        } else {
+          if (info?.description) item.append(element('p', 'triage-muted', info.description));
+          if (info?.mapping) item.append(element('small', 'triage-mapping', `${mappingLabel(info.mapping.method)} · Exploration code`));
+        }
         overview.append(item);
         if (info?.guards?.length) {
           const guards = element('details', 'triage-guards'); guards.append(element('summary', '', 'Conditions and branches'));
@@ -1081,7 +1280,7 @@
     const actions = element('div', 'triage-report-actions');
     const read = button('Read code', () => readCode(), 'primary'); read.disabled = !target.cardId && !target.source;
     actions.append(read, button('Read report', () => show('report'))); start.append(actions);
-    if (investigationDraft?.phase === 'ready' && !investigationDraft.preparation && (!reportPreparation || reportPreparation.published)) {
+    if (readyDraft(investigationDraft)) {
       const opinion = FlowboardWalkthrough.assessment(investigationDraft, sourceStale);
       start.append(element('p', 'triage-muted', `Preliminary AI assessment: ${opinion.label}. Your saved judgment is separate.`));
     }
@@ -1109,7 +1308,7 @@
     if (ready.outdated) explanation.append(element('p', 'triage-warning', 'Code has changed. Check the older notes again.'));
     for (const note of FlowboardReview.quality(value)) explanation.append(element('p', 'triage-warning', note));
     explanation.append(button('Report statements and evidence', () => show('claims')));
-    if (investigationDraft?.phase === 'ready' && !investigationDraft.preparation && (!reportPreparation || reportPreparation.published)) {
+    if (readyDraft(investigationDraft)) {
       const generated = fold('Automatic review', 'automatic');
       generated.append(element('p', 'triage-muted', 'A draft to check, separate from your review result.'), element('p', '', investigationDraft.conclusion.text), button('Read review and opposing evidence', () => show('claims')));
     }
@@ -1250,6 +1449,7 @@
       }
       if (info.context) card.el.querySelector('.card-title').textContent = 'Code details';
     }
+    highlightCallOccurrence();
   }
   function categorySelect(value, label) {
     const select = element('select'); select.setAttribute('aria-label', label);
@@ -1283,13 +1483,17 @@
     rememberDisclosure(explanation, `${card.id}:explanations`);
     const links = element('nav', 'triage-note-links'); links.setAttribute('aria-label', `Code notes for ${card.name}`);
     const openNote = (item, note) => {
-      checkedLocation = { ...item.source }; selectedCard = card.id; explanation.open = true; note.open = true;
-      // Opening a note must not move the camera or reflow the function above it.
-      for (const row of rows) { const line = Number(row.dataset.sourceLine); row.classList.toggle('triage-claim-line', line >= item.source.line && line <= (item.source.endLine || item.source.line)); }
-      note.querySelector('summary').focus({ preventScroll: true }); schedulePersist();
+      navigateNote(item, card);
+      explanation.open = true; note.open = true;
+      // The same original card remains in place. A code note is an explicit
+      // detour, never a silent change of the current numbered step's anchor.
+      if (guideMode === 'detour') guideReveal(item.source.line);
+      else note.querySelector('summary').focus({ preventScroll: true });
     };
     if (!mapped) explanation.append(element('p', 'triage-inline-unplaced', 'These lines cannot be shown here. Open the exact location in the editor.'));
-    if (entries.some(item => item.origin === 'model-interpretation')) explanation.append(element('p', 'triage-muted', 'AI draft: the quoted code was checked. The explanation still needs your review.'));
+    const generatedNotes = entries.filter(item => item.origin === 'model-interpretation');
+    if (generatedNotes.length) explanation.append(element('p', 'triage-muted', generatedNotes.every(item => ['kept', 'repaired', 'added'].includes(item.explanationReview?.result)) ?
+      'AI explanation checked against the linked code. This is not an executed test or your final judgment.' : 'Unchecked AI draft. A matching code quotation does not check its explanation.'));
     for (const item of entries) {
       const kind = FlowboardInline.category(item), note = element('details', `triage-inline-note ${kind}`);
       note.dataset.evidenceId = item.id;
@@ -1312,7 +1516,7 @@
       const actions = element('div', 'triage-inline-actions');
       actions.append(button('Read code', () => { openNote(item, note); focusSourceLine(card, item.source.line); }), element('span', 'triage-note-file', `${item.source.file}:${item.source.line}${through !== item.source.line ? '–' + through : ''}`));
       if (automated) actions.append(button('Open in editor', () => send('triage:investigationFocus', { evidenceId: item.id, editor: true })), button('Read statement', () => { activeInvestigationClaim = item.claimId; show('claims'); }));
-      else actions.append(button('Open in editor', () => inspectEvidence(item)), button('Edit note', () => { editingEvidence = item.id; evidenceFilter = 'all'; show('review'); drawer.querySelector('[aria-label="Edit evidence explanation"]')?.focus(); })); note.append(actions);
+      else actions.append(button('Open in editor', () => inspectEvidence(item)), button('Edit note', () => { navigateNote(item, card); editingEvidence = item.id; evidenceFilter = 'all'; show('review'); renderGuide(); drawer.querySelector('[aria-label="Edit evidence explanation"]')?.focus({ preventScroll: true }); })); note.append(actions);
       const row = byLine.get(item.source.line);
       if (row) {
         const marker = button('Note', () => openNote(item, note), 'triage-note-marker'); marker.setAttribute('aria-label', `Read note at ${info.file}:${item.source.line}`); row.append(marker);
@@ -1450,16 +1654,11 @@
   window.addEventListener('message', event => {
     const message = event.data;
     if (message?.type === 'triage:reportPreparation') {
-      const wasPublished = reportPreparation?.published || investigationDraft?.phase === 'ready';
       reportPreparation = message.report || null;
-      if (reportPreparation && !reportPreparation.published) revokeGeneratedGuidance();
-      // Status events do not own the reading/editing DOM. On revocation remove
-      // generated sections only; keep the researcher's text, caret and notes.
-      renderPreparation();
-      if (wasPublished && !reportPreparation?.published) {
-        renderGuide(); redrawEdges();
-        if (!drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
-      }
+      // Aggregate status never grants or revokes a selected finding artifact.
+      // Its host-validated investigation event owns that atomic transition.
+      // Update small row badges only, preserving note nodes/caret and camera.
+      renderPreparation(); updatePreparationRows();
       return;
     }
     if (message?.type === 'triage:load') {
@@ -1469,6 +1668,7 @@
       active = message.issueId; token = message.token; finding = message.finding; library = message.library || [];
       preparing = null;
       guideIntent = 'waiting'; preparationState = message.preparation || null; guidePositions.clear();
+      guideAvailability = message.guideAvailability || null;
       globalThis.__flowboardTriageSession = { issueId: active, token };
       draftFingerprint = message.draftFingerprint || message.fingerprint || '';
       sourceFingerprint = message.fingerprint || '';
@@ -1526,10 +1726,12 @@
         guide = preparedGuide; guideIndex = savedGuide.index; guideMode = savedGuide.mode; guideOpinion = savedGuide.opinion;
         guideReturn = savedGuide.return;
         guideIntent = savedGuide.mode === 'guided' ? 'guided' : 'explore'; guideWrap = savedGuide.position?.wrap !== false;
-        guideDetour = guide.draft.evidence.some(item => item.id === savedGuide.detour) ? savedGuide.detour : null;
+        guideDetour = guide.draft.evidence.some(item => item.id === savedGuide.detour) || profile().evidence.some(item => item.id === savedGuide.detour) || savedGuide.detour === 'new-note' && evidenceInput.cardId || savedGuide.detour?.startsWith('input:') ? savedGuide.detour : null;
         // Restore only a reference still contained by this exact saved review.
         const position = savedGuide.position, source = position?.checkedLocation;
-        if (source && guide.draft.evidence.some(entry => JSON.stringify(entry.source) === JSON.stringify(source))) checkedLocation = source;
+        if (source && [...guide.draft.evidence, ...profile().evidence].some(entry => JSON.stringify(entry.source) === JSON.stringify(source))) checkedLocation = source;
+        else if (source && guideDetour === 'new-note' && source.file === hints[evidenceInput.cardId]?.file && source.sourceHash === hints[evidenceInput.cardId]?.sourceHash && source.line === evidenceInput.line) checkedLocation = source;
+        else if (source && guideDetour?.startsWith('input:') && JSON.stringify(detourStep()?.evidence?.source) === JSON.stringify(source)) checkedLocation = source;
         if (position && cards.has(position.selectedCard)) selectedCard = position.selectedCard;
       }
       if (!guide && cards.has(selectedCard) && navigation.length && drawerTab === 'brief') guideIntent = 'explore';
@@ -1545,7 +1747,7 @@
       }
       else if (view && localMatches && saved.camera) { ({ scale, panX, panY } = saved.camera); applyTransform(); }
       persistNow(); send('triage:rendered');
-      if (!guide && preparedGuide && guideIntent === 'waiting') guideStart();
+      if (!guide && preparedGuide && guideIntent === 'waiting' && guideAvailability?.ready !== false) guideStart();
       else if (guide && guideMode === 'guided') {
         renderGuide(); redrawEdges();
         if (cards.has(selectedCard)) cards.get(selectedCard).codeEl.parentElement.scrollTop = savedGuide?.position?.codeScroll || 0;
@@ -1557,10 +1759,12 @@
     } else if (message?.type === 'triage:limit' && message.token === token) { currentFlowRootId = null; flowPending.clear(); }
     else if (message?.type === 'triage:cancelExpansion' && message.token === token) { flowPending.delete(message.id); if (!flowPending.size) currentFlowRootId = null; }
     else if (message?.type === 'triage:sourceStale' && message.issueId === active && message.token === token) {
-      sourceStale = true; historicalAssessment = null; readOnly = true; pendingEvidence.clear();
+      sourceStale = true; historicalAssessment = { status: reviewEdits.status || finding.status || 'unreviewed' }; readOnly = true; pendingEvidence.clear();
       const next = profile(); FlowboardClaims.invalidate(next); reviewEdits.triage = next;
       for (const check of next.checks) check.state = 'unchecked';
-      reviewEdits.status = 'insufficient-evidence'; reviewEdits.confidence = 'low'; dirtyReview = true; editVersion++;
+      // Changed code invalidates code checks, not the researcher's own verdict
+      // or confidence. Display it as historical rather than editing it for them.
+      dirtyReview = true; editVersion++;
       // Leave the camera and cards exactly where the researcher was reading.
       guideNavigation = null; revokeGeneratedGuidance(); renderGuide(); renderPreparation(); renderBar();
       if (!drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
@@ -1577,25 +1781,31 @@
     else if (message?.type === 'triage:investigation' && message.issueId === active && message.token === token && message.draft?.findingId === active) {
       if (sourceStale || message.draft.revision < (investigationDraft?.revision || 0)) return;
       investigationDraft = message.draft;
+      guideAvailability = message.guideAvailability || null;
+      if (!readyDraft(investigationDraft) && guide) { revokeGeneratedGuidance(); renderGuide(); redrawEdges(); }
       preparationState = null; renderPreparation();
       // Never replace source cards/camera or insert new inline notes while the
       // researcher is reading. The next explicit source/claim selection adopts
       // the new annotation snapshot. Preserve in-progress text fields as well.
       if (!drawer.querySelector('input:focus,textarea:focus,select:focus') && ['claims', 'brief'].includes(drawerTab)) renderDrawer();
-      if (!guide && guideIntent === 'waiting' && FlowboardWalkthrough.build(investigationDraft, report)) guideStart();
-      else if (guide) renderGuide();
+      if (!guide && guideIntent === 'waiting' && guideAvailability?.ready !== false && FlowboardWalkthrough.build(investigationDraft, report)) guideStart();
+      else if (guide && guide.key !== FlowboardWalkthrough.build(investigationDraft, report)?.key) renderGuide();
     }
     else if (message?.type === 'triage:investigationFocus' && message.issueId === active && message.token === token && !sourceStale) {
       if (preparing || guideNavigation && message.navigationId !== guideNavigation || message.navigationId && message.navigationId !== guideNavigation) return;
       const card = cards.get(message.cardId); if (!card) return;
+      if (message.guideAvailability) guideAvailability = message.guideAvailability;
       if (message.navigationId && guide) {
         guidePending = false;
-        if (guideMode === 'detour') guideDetour = message.evidenceId;
+        if (guideMode === 'detour' && !guideDetour?.startsWith('input:')) guideDetour = message.evidenceId;
         const sameFunction = selectedCard === card.id;
-        selectedCard = card.id; checkedLocation = message.source; activeInvestigationClaim = message.claimId;
+        selectedCard = card.id;
+        const inputAnchor = guideMode === 'detour' && guideDetour?.startsWith('input:') ? detourStep() : null;
+        checkedLocation = inputAnchor?.unit?.source?.file === message.source.file && inputAnchor?.unit?.source?.sourceHash === message.source.sourceHash ? inputAnchor.evidence.source : message.source;
+        activeInvestigationClaim = message.claimId;
         visibleInvestigation = structuredClone(guide.draft); activeClaim = null; claimFocus = false; spotlight = false;
         redrawEdges(); renderGuide();
-        if (document.body.classList.contains('guide-reading')) { if (!sameFunction) focusReadable(card); guideReveal(message.source.line); }
+        if (document.body.classList.contains('guide-reading')) { if (!sameFunction) focusReadable(card); guideReveal(checkedLocation.line); }
         else if (!sameFunction) focusSourceLine(card, message.source.line);
         else {
           const row = card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`), bounds = row?.getBoundingClientRect(), viewport = flowboard.getBoundingClientRect();
@@ -1632,7 +1842,7 @@
       for (const card of cards.values()) card.el.classList.remove('triage-evidence-focus');
       const source = message.evidence.source;
       const card = source && [...cards.values()].find(card => hints[card.id]?.file === source.file && source.line >= hints[card.id].line && source.line <= hints[card.id].endLine);
-      if (card) { checkedLocation = source; card.el.classList.add('triage-evidence-focus'); focusSourceLine(card, source.line); redrawEdges(); }
+      if (card) { navigateNote(message.evidence, card); card.el.classList.add('triage-evidence-focus'); focusSourceLine(card, source.line); redrawEdges(); }
       if (drawerTab === 'review') renderDrawer();
     }
     else if (message?.type === 'triage:reviewSaved' && message.issueId === active && message.token === token) {
@@ -1661,7 +1871,7 @@
       event.preventDefault(); event.stopImmediatePropagation(); guideGo(guideIndex + (event.key === 'ArrowLeft' ? -1 : 1)); return;
     }
     if (event.key === 'Escape' && drawer.classList.contains('visible')) {
-      event.preventDefault(); drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); redrawEdges(); bar.querySelector('button')?.focus();
+      event.preventDefault(); drawer.classList.remove('visible'); document.body.classList.remove('triage-drawer-open'); renderGuide(); redrawEdges(); bar.querySelector('button')?.focus();
     } else if (event.altKey && !event.ctrlKey && !event.metaKey && ['1', '2', '3', '4', '5', '6', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault(); event.stopImmediatePropagation();
       if (event.key.startsWith('Arrow')) moveHistory(event.key === 'ArrowLeft' ? -1 : 1);

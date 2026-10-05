@@ -44,7 +44,8 @@ function functionParts(code, name) {
   if (marker === clean.length) return null;
   const end = clean[marker] === '{' ? matching(clean, marker, '{', '}') : marker;
   if (end < 0) return null;
-  return { header: clean.slice(start, marker), rawHeader: code.slice(start, marker), bodyStart: marker + 1,
+  return { start, parametersStart: paren + 1, parametersEnd: endParams,
+    header: clean.slice(start, marker), rawHeader: code.slice(start, marker), bodyStart: marker + 1,
     body: clean[marker] === '{' ? clean.slice(marker + 1, end) : '',
     rawBody: clean[marker] === '{' ? code.slice(marker + 1, end) : '', clean, declaration: clean.slice(start, end + 1) };
 }

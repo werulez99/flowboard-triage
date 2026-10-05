@@ -465,6 +465,7 @@ body:not(.triage-drawer-open) #triage-status.triage-warning { display:block; pos
 .card-code .triage-line-number { width:5.4em; font-size:13px; padding-right:16px; box-sizing:border-box; }
 .triage-note-marker { position:absolute; left:0; top:2px; color:var(--triage-link); font:12px/1.5 var(--vscode-font-family,system-ui,sans-serif); background:var(--bg); border:0; padding:0; text-decoration:underline; cursor:pointer; }
 .card-code .triage-claim-line { background:var(--triage-selected); box-shadow:inset 3px 0 var(--triage-focus); }
+::highlight(flowboard-call-occurrence) { background:var(--triage-focus); color:var(--bg); text-decoration:underline; }
 .card.triage-selected-source { outline-color:var(--triage-focus); }
 body.vscode-light .edge-line.triage-hypothesis,body.vscode-high-contrast-light .edge-line.triage-hypothesis { stroke:#886114; }
 body.vscode-light .edge-line.triage-state,body.vscode-high-contrast-light .edge-line.triage-state { stroke:#76528f; }
@@ -538,18 +539,6 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-result.invalid { color:var(--triage-counter); }
 .guide-paused { border-left:2px solid var(--triage-focus); padding-left:8px; }
 .edge-line.triage-guide-edge { stroke-width:3px; }
-@media(max-width:800px) {
-  .guide-controls { padding:6px 8px; gap:4px; flex-wrap:wrap; font-size:12px; min-height:76px; }
-  .guide-controls button { padding:4px 6px; }
-  .guide-aside { top:auto; left:0; bottom:0; width:100%; height:224px; border-left:0; border-top:1px solid var(--border); padding:12px 16px; }
-  .guide-open #flowboard { top:128px; right:0; bottom:224px; }
-  .guide-open .triage-drawer { top:128px; bottom:224px; }
-  .guide-open .triage-reading-location { top:130px; max-width:calc(100vw - 48px); }
-  .guide-open #triage-legend,.guide-open #minimap { display:none; }
-  .guide-aside > small { display:none; }
-  .guide-annotation { margin:0 0 16px; }
-  .guide-annotation h2 { font-size:16px; }
-}
 @media(prefers-reduced-motion:reduce) { .guide-open * { scroll-behavior:auto!important; transition:none!important; } }
 
 /* Guided mode stays on the native world/camera. The dock never replaces it. */
@@ -592,6 +581,18 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-values { margin:12px 0; border:1px solid var(--border); border-radius:4px; padding:8px; font-size:13px; }
 .guide-values table { border-collapse:collapse; width:100%; font-size:12px; }
 .guide-values td,.guide-values th { border-bottom:1px solid var(--border); padding:8px 4px; text-align:left; vertical-align:top; }
+.guide-values { overflow-x:auto; }
+.guide-values td button { font-size:12px; padding:4px; min-width:80px; }
+.guide-input-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin:8px 0 12px; }
+.guide-input-meaning,.guide-input-evidence { grid-column:1/-1; }
+.guide-value-label { display:block; color:var(--triage-muted); font-size:12px; margin-bottom:4px; }
+.guide-input-row code { font-size:13px; white-space:pre-wrap; }
+.guide-input-evidence button { font-size:12px; }
+.guide-function-role { color:var(--triage-muted); font-size:13px; }
+.guide-state-watch { margin:0 0 16px; padding:12px; border:1px solid var(--border); border-radius:4px; background:var(--triage-note-bg); }
+.guide-watched-value { margin-top:12px; }
+.guide-watched-value p { margin:4px 0; }
+.guide-watched-value small { display:block; }
 .guide-relationship { background:var(--card-bg); padding:12px; border-left:3px solid var(--triage-focus); }
 .guide-reading #flowboard { left:0; top:108px; overflow:hidden; }
 .guide-reading .card:not(.guide-active-card) { opacity:.65; }
@@ -615,21 +616,50 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-handoff p { margin:4px 0 0; }
 .guide-conclusion-action { margin-top:8px; padding:6px 8px; border:1px solid var(--triage-control); border-radius:4px; background:var(--card-bg); color:var(--triage-link); cursor:pointer; font:inherit; }
 .guide-conclusion-action:focus-visible { outline:2px solid var(--triage-focus); outline-offset:2px; }
-@media(max-width:1050px) { .guide-aside { width:350px; } .guide-open #flowboard { right:350px; } .guide-current-title { display:none; } }
-@media(max-width:800px) { .guide-preparing:not(.guide-open) #flowboard { top:52px; bottom:176px; } .guide-status-row { flex-wrap:wrap; } }
-@media(max-width:760px) {
-  .guide-controls { top:48px; gap:4px; min-height:76px; flex-wrap:wrap; font-size:12px; }
-  .guide-aside { top:auto; bottom:0; left:0; right:0; width:100%; height:36vh; padding:12px 16px; }
+/* One responsive contract: the controls are measured, and each mode reserves
+   either a side dock OR a bottom dock. No mixed reservations at 761–800px. */
+body { --guide-side-width:410px; --guide-bottom-height:0px; --guide-controls-bottom:108px; }
+.guide-controls { top:52px; }
+.guide-aside { top:var(--guide-controls-bottom); width:var(--guide-side-width); }
+.guide-open #flowboard,.guide-reading #flowboard { top:var(--guide-controls-bottom); right:var(--guide-side-width); bottom:var(--guide-bottom-height); }
+.guide-open .triage-drawer { top:var(--guide-controls-bottom); bottom:var(--guide-bottom-height); }
+.guide-open .triage-reading-location { top:calc(var(--guide-controls-bottom) + 4px); }
+.guide-reading .card.guide-active-card { max-height:calc(100vh - var(--guide-controls-bottom) - var(--guide-bottom-height) - 48px); }
+.guide-reading .guide-active-card .card-code { flex:1 1 auto; min-height:64px; max-height:calc(100vh - var(--guide-controls-bottom) - var(--guide-bottom-height) - 242px); }
+.guide-note-editing .guide-aside { display:none; }
+body.guide-note-editing.triage-drawer-open #flowboard { left:var(--triage-drawer-width); right:0; }
+.triage-list .triage-preparation-badge { display:inline-block; margin:8px 8px 0 0; padding:2px 6px; border:1px solid var(--border); border-radius:4px; font-size:12px; }
+.triage-preparation-badge[data-state="ready"] { color:var(--triage-support); }
+.triage-list .triage-ready-action { display:inline-block; margin-top:8px; color:var(--triage-link); text-decoration:underline; font-size:12px; }
+.triage-list .triage-ready-action[hidden],.triage-list button[hidden],.triage-list .triage-job-reason[hidden] { display:none; }
+.triage-job-reason { margin-top:8px; }
+@media(min-width:801px) and (max-width:1050px) {
+  body { --guide-side-width:350px; }
+  .guide-current-title { display:none; }
+}
+@media(max-width:800px) {
+  body { --guide-side-width:0px; --guide-bottom-height:36vh; }
+  .guide-controls { padding:6px 8px; gap:4px; min-height:76px; flex-wrap:wrap; font-size:12px; }
+  .guide-controls button { padding:4px 6px; }
+  .guide-current-title { display:none; }
+  .guide-aside { top:auto; bottom:0; left:0; right:0; width:100%; height:var(--guide-bottom-height); padding:12px 16px; border-left:0; border-top:1px solid var(--border); }
   .guide-caption { display:block; position:sticky; top:-12px; padding:8px 0; background:var(--card-bg); border-bottom:1px solid var(--border); z-index:1; font-weight:600; font-size:14px; }
-  .guide-open #flowboard,.guide-reading #flowboard { top:132px; right:0; bottom:36vh; }
-  .guide-reading .card.guide-active-card { max-height:calc(64vh - 180px); }
-  .guide-reading .guide-active-card .card-code { max-height:calc(64vh - 302px); min-height:110px; padding:8px; }
+  .guide-open .triage-reading-location { max-width:calc(100vw - 48px); }
+  .guide-open #triage-legend,.guide-open #minimap { display:none; }
+  .guide-aside > small { display:none; }
+  .guide-annotation { margin:0 0 16px; }
+  .guide-annotation h2 { font-size:16px; }
+  .guide-reading .guide-active-card .card-code { padding:8px; }
   .guide-reading .guide-active-card .triage-explanations { max-height:40px; padding:8px 12px; }
   .guide-reading .guide-active-card .card-meta { white-space:nowrap; overflow:auto; overflow-wrap:normal; }
   .guide-reading .card-header { padding:8px 12px; }
   .guide-outline ol { max-height:72px; }
   .guide-reading .guide-handoff { max-height:44px; box-sizing:border-box; padding:8px 12px; font-size:12px; }
   .guide-preparation { top:auto; bottom:0; right:0; width:100%; max-height:42vh; padding:16px; }
+  .guide-preparing:not(.guide-open) #flowboard { top:52px; bottom:176px; }
+  .guide-status-row { flex-wrap:wrap; }
+  .guide-note-editing .triage-drawer { top:auto; bottom:0; left:0; right:0; width:100%; height:var(--guide-bottom-height); }
+  body.guide-note-editing.triage-drawer-open #flowboard { left:0; right:0; }
   .guide-anchor { display:none; }
 }
 .triage-brief-block > strong, .triage-brief-block > small { display: block; margin: 8px 0; }

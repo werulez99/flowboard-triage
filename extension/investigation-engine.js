@@ -21,11 +21,12 @@ const MAX_BYTES = limits.storageBytes;
 const isTest = file => /(?:^|\/)(?:test|tests)\//.test(file) || /\.t\.sol$/.test(file);
 const now = () => new Date().toISOString();
 const fileFor = id => `.flowboard/investigations/${p.identifier(id, 'finding ID') || id}.json`;
+const findingInputHash = (request, issue) => hash([request.finding.title, request.finding.summary, request.finding.expectedBehavior, request.finding.preconditions, issue?.reportText || '']);
 function snapshot(catalog, request, issue) {
   const generation = workspaceSnapshot.validate(catalog);
   return { version: 1, policy: guidePolicy.POLICY, project: generation.project, sourceDigest: generation.sourceDigest, sourceCount: Object.keys(generation.files).length,
     configuration: generation.configuration,
-    reportHash: hash([request.finding.title, request.finding.summary, request.finding.expectedBehavior, request.finding.preconditions, issue?.reportText || '']),
+    reportHash: findingInputHash(request, issue),
     revision: generation.revision,
     documentation: generation.documentation.digest };
 }
@@ -35,6 +36,7 @@ function compatible(draft, catalog, request, issue) {
   return sameSnapshot(old, next) || !!old && old.policy === next.policy && old.project === next.project && old.reportHash === next.reportHash && workspaceSnapshot.compatible(catalog, draft);
 }
 function revalidate(draft, catalog, request, issue) {
+  if (draft?.snapshot?.policy !== guidePolicy.POLICY && migrateChecked(draft, catalog, request, issue)) return true;
   if (!compatible(draft, catalog, request, issue)) return false;
   validateCurrent(catalog, draft);
   const next = snapshot(catalog, request, issue);
@@ -45,6 +47,31 @@ function revalidate(draft, catalog, request, issue) {
     draft.revision++; write(catalog.root, draft);
   }
   return true;
+}
+function migrateChecked(draft, catalog, request, issue) {
+  // A policy version is not a new semantic review. Only old complete, sealed
+  // artifacts with no execution handoff can be revalidated locally. Legacy
+  // call/return interpretations lack the new occurrence/dispatch review and
+  // must not acquire that attestation merely by changing a version string.
+  if (draft?.snapshot?.policy !== 'checked-explanation-v4' || guidePolicy.POLICY === draft.snapshot.policy ||
+    draft.phase !== 'ready' || draft.publication?.policy !== draft.snapshot.policy || draft.publication.digest !== guidePolicy.digest(draft) ||
+    !draft.causal || draft.causal.relationships.some(link => ['call', 'callback', 'return'].includes(link.kind))) return false;
+  const next = snapshot(catalog, request, issue), prior = { ...draft.snapshot, policy: next.policy };
+  if (!sameSnapshot(prior, next) && !(prior.project === next.project && prior.reportHash === next.reportHash && workspaceSnapshot.compatible(catalog, draft))) return false;
+  validateCurrent(catalog, draft);
+  const candidate = structuredClone(draft); candidate.snapshot = next;
+  for (const event of candidate.causal.events) event.callSiteId ||= '';
+  for (const link of candidate.causal.relationships) {
+    link.callSiteId ||= '';
+    link.dispatch ||= { kind: 'not-applicable', receiver: '', implementation: '', evidence: [], context: 'none', failure: 'not-applicable' };
+  }
+  candidate.publication = guidePolicy.gate(candidate);
+  if (!candidate.publication.ready) return false;
+  candidate.dependencies = workspaceSnapshot.dependencies(catalog, candidate);
+  candidate.publication.digest = guidePolicy.digest(candidate);
+  candidate.migration = { from: draft.snapshot.policy, to: next.policy, at: now(),
+    reason: 'Revalidated unchanged source and the complete current gate. No call, callback or return interpretation was migrated.' };
+  candidate.revision++; write(catalog.root, candidate); Object.assign(draft, candidate); return true;
 }
 function write(root, draft) {
   let existing;
@@ -140,7 +167,7 @@ function modelSources(units, packetLimit = 110000) {
     if (!excerpt.length) continue;
     remaining -= used;
     const firstLine = unit.source.line + offset, lastLine = firstLine + excerpt.length - 1;
-    packet.push({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind,
+    packet.push({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind, parameterSpans: unit.parameterSpans || [],
     contextKind: unit.contextKind || null,
     file: unit.source.file, line: firstLine, endLine: lastLine, complete: offset === 0 && lastLine === unit.source.endLine, reason: unit.reason,
     ...(offset || lastLine !== unit.source.endLine ? { localReading: { functionLine: unit.source.line, functionEndLine: unit.source.endLine,
@@ -148,7 +175,11 @@ function modelSources(units, packetLimit = 110000) {
     // Code already supplies the full expression. Repeating its text, receiver
     // spelling and deep dependency paths at every call consumed most of the
     // model packet. Preserve resolution meaning and use exact supplied IDs.
-    relatedCalls: (unit.relatedCalls || []).map(call => ({ line: call.line, receiver: call.receiver, arguments: call.arguments, implicitReceiver: call.implicitReceiver, receiverTypes: call.receiverTypes,
+    relatedCalls: (unit.relatedCalls || []).map(call => ({ id: call.id, span: call.span, nameSpan: call.nameSpan, receiverSpan: call.receiverSpan,
+      argumentSpans: call.argumentSpans, options: call.options, callKind: call.callKind,
+      receiverExpression: call.receiverExpression,
+      creationTargets: call.creationTargets, declarations: call.declarations, failure: call.failure, internalLibrary: call.internalLibrary,
+      implicitReceiver: call.implicitReceiver, receiverTypes: call.receiverTypes,
       relationship: call.relationship, resolution: call.resolution,
       targets: call.targets.map(target => unitAt(target.file, target.line) || { file: target.file, line: target.line, contract: target.contract, signature: target.signature }) })),
     // Number every original line so the model need not reconstruct offsets.
@@ -184,7 +215,12 @@ function makeContext(catalog, request, issue) {
       signature: catalog.hints(fn).identity.signature, kind: isTest(file) ? 'test-source' : 'production-source',
       source: { file, line: fn.startLine, endLine: fn.startLine + lines.length - 1, sourceHash: hash(doc.text) },
       declarationEndLine: fn.endLine, complete: lines.length === fn.endLine - fn.startLine + 1, reason, code, readThrough: fn.startLine - 1,
-      relatedCalls: fn.kind === 'context' ? [] : catalog.callLinks(fn).map(site => ({ line: site.line, expression: site.expression, receiver: site.receiver, arguments: site.arguments, implicitReceiver: site.implicitReceiver, receiverTypes: site.receiverTypes,
+      parameterSpans: fn.kind === 'context' ? [] : require('./call-bindings').parameterSpans(code, fn.name, fn.startLine),
+      relatedCalls: fn.kind === 'context' && !fn.symbol && fn.contextKind !== 'state' ? [] : catalog.callLinks(fn).map(site => ({ id: site.id, span: site.span, nameSpan: site.nameSpan, receiverSpan: site.receiverSpan,
+        argumentSpans: site.argumentSpans, options: site.options, callKind: site.callKind,
+        receiverExpression: site.receiverExpression, sourceExpression: site.sourceExpression,
+        creationTargets: site.creationTargets, declarations: site.declarations, failure: site.failure, internalLibrary: site.internalLibrary,
+        line: site.line, expression: site.expression, receiver: site.receiver, arguments: site.arguments, implicitReceiver: site.implicitReceiver, receiverTypes: site.receiverTypes,
         relationship: site.relationship, resolution: site.resolution, targets: site.candidates.slice(0, 8).map(target => ({ file: catalog.relative(target.file), line: target.startLine, signature: catalog.hints(target).identity.signature, contract: target.contract })) })),
       structure: compiler.available ? compiler.facts(file, fn.startLine, fn.name) : null };
     units.push(unit); functions.set(id, fn); unread.delete(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return id;
@@ -412,7 +448,7 @@ function makeContext(catalog, request, issue) {
 function accept(output, draft, units) {
   if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > limits.claims || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
   for (const key of ['claims', 'evidence', 'transitions', 'questions']) capacity.assertLength(output[key] || [], limits[key], key);
-  if (output.walkthrough) capacity.assertLength(output.walkthrough.steps, limits.steps, 'walkthrough steps');
+  if (output.walkthrough?.steps !== undefined) capacity.assertLength(output.walkthrough.steps, limits.steps, 'walkthrough steps');
   if (output.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(output.causal[key], limits[key], key);
   const known = new Map(units.map(unit => [unit.id, unit])), ids = new Set();
   const claims = output.claims.map(claim => {
@@ -462,7 +498,14 @@ function accept(output, draft, units) {
   const questions = (output.questions || []).filter(item => ids.has(item.claimId)).map(item => ({
     id: text(item.id, 100), claimId: item.claimId, text: text(item.text), action: ['inspect', 'callers', 'symbol', 'references'].includes(item.action) ? item.action : 'missing-context', target: text(item.target, 1000), why: text(item.why) }));
   const presentation = output.walkthrough;
-  const prepared = presentation ? { steps: (Array.isArray(presentation.steps) ? presentation.steps : []).filter(step => evidenceIds.has(step.evidenceId)).map(step => ({
+  // The checked causal order already supplies this exact presentation. Asking
+  // the model for a second outline wastes output and can produce a conflicting
+  // order. Keep legacy storage/playback compatible without a second AI rewrite.
+  const steps = Array.isArray(output.causal?.order) && Array.isArray(output.causal.events) ? output.causal.order.flatMap(id => {
+    const event = output.causal.events.find(item => item.id === id);
+    return event ? [{ evidenceId: event.evidenceId, title: event.title, paragraphId: event.paragraphId, phrase: event.phrase }] : [];
+  }) : Array.isArray(presentation?.steps) ? presentation.steps : [];
+  const prepared = presentation ? { steps: steps.filter(step => evidenceIds.has(step.evidenceId)).map(step => ({
     evidenceId: step.evidenceId, title: text(step.title, 180), paragraphId: text(step.paragraphId, 100), phrase: text(step.phrase, 2000)
   })), assessment: {
     result: ['valid', 'invalid'].includes(presentation.assessment?.result) ? presentation.assessment.result : 'unclear',
@@ -517,7 +560,7 @@ function checkExplanations(output, previous, next, units) {
   next.explanationReviews = accepted;
   return next;
 }
-async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, yieldAfterStage = false }) {
+async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false }) {
   delete draft.yielded;
   const ensure = () => { if (signal?.aborted || !current()) throw Object.assign(new Error('Investigation superseded; partial work is preserved.'), { code: 'INVESTIGATION_SUPERSEDED' }); catalog.assertFresh(); };
   const save = async () => {
@@ -580,8 +623,17 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       const deferred = context.prioritize(result);
       if (deferred.length) draft.actions.push({ id: `prioritize-${crypto.randomUUID()}`, kind: 'context-priority', outcome: 'candidates-deferred', sourceIds: [], performedAt: now(),
         result: `Reserved follow-up room by deferring unreferenced discovery candidates, not evidence: ${deferred.join('; ')}. These definitions remain in the local index.` });
-      for (const question of result.questions.slice(0, 4)) {
-        const action = context.act(question, result.claims.find(claim => claim.id === question.claimId));
+      // The response already has a shared bounded question capacity. A fixed
+      // prefix starves a fifth material local question behind four external
+      // unknowns. Visit every question once and retain exact acquisition
+      // receipts, not another model summary of the same unanswered question.
+      for (const question of result.questions) {
+        ensure();
+        const claim = result.claims.find(item => item.id === question.claimId);
+        const key = hash([question, claim?.entry, draft.snapshot.sourceDigest, draft.snapshot.configuration]);
+        const previous = [...draft.actions].reverse().find(action => action.acquisitionKey === key);
+        if (previous && ['no-additional-context', 'context-already-available', 'blocked'].includes(previous.outcome) && previous.sourceIds.every(id => context.units.some(unit => unit.id === id))) continue;
+        const action = { ...context.act(question, claim), acquisitionKey: key };
         draft.actions.push(action);
         if (['source-returned', 'reading-limit'].includes(action.outcome) && action.sourceIds.some(id => !alreadyRead.has(id))) progress = true;
       }
@@ -594,13 +646,25 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
       else if (phase === 'challenge') data.repairOnly = true;
       const call = async input => {
-        const release = invoke === runProvider ? await require('./provider-slots').acquire(provider, signal) : () => {};
+        const transport = invoke === runProvider || invoke.isProviderTransport === true;
+        const health = require('./provider-health'), healthOptions = { ...providerResources, executable };
+        if (transport) health.check(provider, healthOptions);
+        const release = transport ? await require('./provider-slots').acquire(provider, signal, { ...providerResources, onProgress }) : () => {};
         let reservation;
         try {
+          if (transport) health.check(provider, healthOptions);
           ensure(); reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)) });
-          const result = await invoke(input, { provider, executable, budget, signal, onProgress }); await onResult?.(result.audit || {}, reservation); return result;
-        } catch (error) { if (error.audit) await onResult?.(error.audit, reservation); throw error; }
-        finally { release(); }
+          const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity });
+          if (transport) await health.record(provider, result.audit, healthOptions);
+          await onResult?.(result.audit || {}, reservation); return result;
+        } catch (error) {
+          if (error.audit) {
+            if (transport) await health.record(provider, error.audit, healthOptions);
+            await onResult?.(error.audit, reservation);
+          }
+          throw error;
+        }
+        finally { release(); await onDispatchEnd?.(reservation); }
       };
       let response = await call(data); ensure(); workspaceSnapshot.validate(catalog, { force: true });
       const recordReading = () => { for (const supplied of data.sources) {
@@ -638,15 +702,15 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         draft.runs.push({ ...response.audit, resultAccepted: false, repair: true });
         accepted = validate(response.value);
       }
-      recordReading(); draft.runs.at(-1).resultAccepted = true; return accepted;
+      recordReading(); draft.runs.at(-1).resultAccepted = true;
+      draft.runs.at(-1).hostAcceptedAt = now();
+      await onAccepted?.(draft.runs.at(-1)); return accepted;
     };
     if (!resumeChallenge) {
     const parsed = await obtain('generate');
     if (parsed.walkthrough) parsed.walkthrough.reportText = issue?.reportText || request.finding.summary || '';
     Object.assign(draft, parsed); draft.sources = context.units; draft.phase = 'checking-source'; await save();
-    for (const question of draft.questions.slice(0, 4)) {
-      ensure(); draft.actions.push(context.act(question, draft.claims.find(claim => claim.id === question.claimId)));
-    }
+    readQuestions(draft);
     ensure(); const completion = context.complete(draft); draft.actions.push(completion);
     draft.checkpoint = { stage: 'challenge', newContext: completion.sourceIds.length > 0 || draft.actions.some(action => action.kind !== 'source-preparation' && action.outcome === 'source-returned'), at: now() };
     draft.readingLimits = [...context.unread].slice(0, 40);
@@ -715,7 +779,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     await save(); return draft;
   } catch (error) {
     if (error.code === 'INVESTIGATION_SUPERSEDED' || signal?.aborted || !current()) return draft;
-    draft.phase = 'blocked'; draft.failureKind = ['REPORT_PAUSED', 'PROVIDER_CAPACITY'].includes(error.code) ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : error.code === 'LOCAL_READING_LIMIT' ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
+    draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' : ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE'].includes(error.code) ? 'provider-health' : error.code === 'REPORT_PAUSED' ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : error.code === 'LOCAL_READING_LIMIT' ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
     if (error.audit) draft.runs.push(error.audit);
     // A failed provider/schema/challenge must not erase a usable earlier draft.
     try { await save(); } catch { /* never overwrite a changed source context */ }
@@ -728,4 +792,4 @@ function create({ findingId, request, issue, catalog }) {
     claims: [], evidence: [], transitions: [], questions: [], sources: [], actions: [], experiments: [], corrections: [], runs: [],
     conclusion: { status: 'insufficient-evidence', text: 'Preparation has not yet established source-based conclusions.', humanReviewed: false, origin: 'preparation' } };
 }
-module.exports = { snapshot, sameSnapshot, compatible, revalidate, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest };
+module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest };

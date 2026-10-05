@@ -35,3 +35,5 @@ jobs:
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/workflow_browser.py --output /tmp/flowboard-triage-workflow.png
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/workflow_browser.py --complex --width 1366 --height 768 --output /tmp/flowboard-triage-complex.png
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/usability_browser.py --output-prefix /tmp/flowboard-triage-usability
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/native_walkthrough_browser.py --output /tmp/flowboard-triage-native-walkthrough
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/mixed_preparation_browser.py --output /tmp/flowboard-triage-mixed-preparation

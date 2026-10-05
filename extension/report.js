@@ -175,6 +175,14 @@ async function importReport(reportPath, root, extensionPath, options = {}) {
   let previous = null;
   try { previous = p.readWorkspaceJson(root, '.flowboard/report.json', 12 * 1024 * 1024); } catch { /* first import */ }
   const namespace = previous && previous.reportHash !== reportHash ? `r-${reportHash.slice(0, 8)}-` : previous?.reportNamespace || '';
+  // A report revision is not a new finding when its exact, uniquely identified
+  // original section is unchanged. Retain that identity and its saved work;
+  // changed/ambiguous sections receive new IDs and cannot borrow an old guide.
+  const issueIdentities = Object.fromEntries(issues.map(issue => {
+    const matches = (previous?.issues || []).filter(old => old.displayId === issue.displayId && old.title === issue.title && old.reportText === issue.body);
+    const identity = matches.length === 1 ? matches[0].id : namespace + issue.id;
+    p.identifier(identity, 'imported finding ID'); return [issue.id, identity];
+  }));
   if (previous?.reportHash && previous.reportHash !== reportHash) p.atomicJson(root, `.flowboard/reports/${previous.reportHash}.json`, previous);
   const git = p.gitState(root);
   // The editor imports the report first. Mapping every issue before showing
@@ -187,10 +195,10 @@ async function importReport(reportPath, root, extensionPath, options = {}) {
     catalog = new SourceCatalog(root, runner, result);
   }
   const bundle = { version: 1, importedAt: new Date().toISOString(), sourceRevision: git.head,
-    reportRevision: options.reportRevision || null, reportNamespace: namespace,
+    reportRevision: options.reportRevision || null, reportNamespace: namespace, issueIdentities,
     reportName: path.basename(reportPath), reportHash, originalReport: text, reconciliation: manifest,
-    issues: issues.map(issue => catalog ? draftIssue({ ...issue, id: namespace + issue.id }, root, catalog.runner, catalog.result, git.head, catalog) : {
-      id: namespace + issue.id, displayId: issue.displayId, title: issue.title, severity: issue.fields.severity || 'Unspecified',
+    issues: issues.map(issue => catalog ? draftIssue({ ...issue, id: issueIdentities[issue.id] }, root, catalog.runner, catalog.result, git.head, catalog) : {
+      id: issueIdentities[issue.id], displayId: issue.displayId, title: issue.title, severity: issue.fields.severity || 'Unspecified',
       reportText: issue.body, reportSpan: issue.reportSpan, status: 'unreviewed', mappingPending: true, request: null,
       unresolved: [], warnings: [...issue.warnings], citationCount: issue.locations.length
     }) };

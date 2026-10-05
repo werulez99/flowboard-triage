@@ -38,18 +38,24 @@ async function start(options = {}) {
   const extension = productionExtension;
   const readOnly = !!options.workspace;
   const configuration = { semanticProvider: options.provider || 'none' };
+  if (options.mixedFixture) {
+    if (readOnly || options.invoke || options.qualityCase || options.qualityBatch || options.qualityResponses || options.qualityRecording) throw new Error('Mixed preparation is an isolated controlled fictional fixture.');
+    configuration.semanticProvider = 'codex'; options.reportPreparation = true;
+  }
   if (readOnly && (options.complex || options.reading || options.qualityCase || options.qualityBatch)) throw new Error('Choose an existing workspace or a fictional fixture, not both.');
   if (options.qualityCase && !/^(d[1-7]|h[1-3]|l1)$/.test(options.qualityCase)) throw new Error('Unknown fictional quality case.');
   if (options.qualityRecording && (!options.qualityCase || readOnly || configuration.semanticProvider !== 'none')) throw new Error('Recorded quality UI checks require a fresh fictional case and no provider calls.');
   const qualityFolder = options.qualityCase && path.join(__dirname, 'fixtures/quality-cases', options.qualityCase);
   const root = readOnly ? fs.realpathSync(options.workspace) : fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-workflow-'));
   if (!readOnly) {
-    if (options.qualityBatch) {
+    if (options.mixedFixture) {
+      fs.cpSync(path.join(__dirname, 'fixtures/mixed-preparation/project'), root, { recursive: true });
+    } else if (options.qualityBatch) {
       const base = path.join(__dirname, 'fixtures/quality-cases');
       for (const name of ['d3', 'd7']) fs.cpSync(path.join(base, name, 'project'), root, { recursive: true });
       fs.writeFileSync(path.join(root, 'report.md'), fs.readFileSync(path.join(base, 'd3/report.md'), 'utf8') + '\n\n' + fs.readFileSync(path.join(base, 'd7/report.md'), 'utf8').replace('[I-01]', '[I-02]'));
     } else fs.cpSync(qualityFolder ? path.join(qualityFolder, 'project') : path.resolve(__dirname, options.reading ? 'fixtures/reading-project' : options.complex ? '../examples/complex-project' : '../examples/project'), root, { recursive: true });
-    await importReport(options.qualityBatch ? path.join(root, 'report.md') : qualityFolder ? path.join(qualityFolder, 'report.md') : path.join(__dirname, options.reading ? 'fixtures/reading-report.md' : options.complex ? 'fixtures/complex-report.md' : 'fixtures/workflow-report.md'), root, upstream, { deferMapping: !!options.deferMapping });
+    await importReport(options.mixedFixture ? path.join(__dirname, 'fixtures/mixed-preparation/report.md') : options.qualityBatch ? path.join(root, 'report.md') : qualityFolder ? path.join(qualityFolder, 'report.md') : path.join(__dirname, options.reading ? 'fixtures/reading-report.md' : options.complex ? 'fixtures/complex-report.md' : 'fixtures/workflow-report.md'), root, upstream, { deferMapping: !!options.deferMapping });
     if (options.qualityRecording) {
       const recorded = JSON.parse(fs.readFileSync(options.qualityRecording, 'utf8'));
       if (recorded.case !== options.qualityCase || recorded.draft?.phase !== 'ready') throw new Error('Recording does not match the selected fictional case.');
@@ -95,6 +101,21 @@ async function start(options = {}) {
   // Observe the real provider without replacing its inputs or responses. Only
   // fictional quality cases expose these records; no private workspace capture.
   const providerCalls = [];
+  let releaseMixed, mixedHeld = false;
+  const mixedWait = options.mixedFixture && new Promise(resolve => { releaseMixed = resolve; });
+  const mixedInvoke = options.mixedFixture ? async (input, settings) => {
+    const record = { input: structuredClone(input), fixture: 'controlled-mixed-preparation' }; providerCalls.push(record);
+    if (input.finding.id === 'I-2' && input.phase === 'challenge') {
+      mixedHeld = true;
+      await Promise.race([mixedWait, new Promise((_, reject) => {
+        if (settings?.signal?.aborted) reject(new Error('Controlled challenge cancelled.'));
+        else settings?.signal?.addEventListener('abort', () => reject(new Error('Controlled challenge cancelled.')), { once: true });
+      })]);
+      mixedHeld = false;
+    }
+    const result = { value: require('./fixtures/mixed-ready-output').response(input), audit: { provider: 'controlled-mixed-fixture', phase: input.phase, outcome: 'completed' } };
+    record.result = structuredClone(result); return result;
+  } : undefined;
   let replay;
   if (options.qualityResponses) {
     if (!options.qualityCase || readOnly) throw new Error('Response playback is restricted to fictional cases.');
@@ -122,22 +143,26 @@ async function start(options = {}) {
       providerCalls.push({ input, result }); return result;
     };
   }
-  const invoke = options.invoke || replay || (options.qualityCase || options.qualityBatch ? async (input, settings) => {
+  const invoke = mixedInvoke || options.invoke || replay || (options.qualityCase || options.qualityBatch ? async (input, settings) => {
     const record = { input: structuredClone(input) }; providerCalls.push(record);
     try { const result = await require(path.join(productionExtension, 'semantic-provider')).runProvider(input, settings); record.result = structuredClone(result); return result; }
     catch (error) { record.error = error.message; record.audit = error.audit; throw error; }
   } : undefined);
+  // Observing the real adapter must not bypass its shared capacity/health
+  // boundary. Controlled and recorded responses are deliberately unmarked.
+  if (invoke && !options.invoke && !replay && !mixedInvoke) invoke.isProviderTransport = true;
   const TriageBoard = boardClass(storage, invoke);
-  let reportPreparation;
+  let reportPreparation, coordinatorOptions;
   if (options.reportPreparation) {
     if (readOnly) throw new Error('Persistent report preparation requires a fresh fictional harness project. Use prepare-report.js for an explicitly requested real report run.');
     let cached;
     const Coordinator = require(path.join(productionExtension, 'report-preparation')).ReportPreparation;
-    reportPreparation = new Coordinator(root, {
+    coordinatorOptions = {
       configuration: () => ({ provider: configuration.semanticProvider, requestLimit: options.requestLimit || 12 }),
       catalog: async () => { if (!cached) { const result = await analyze(upstream, root, { mode: 'source' }); cached = new SourceCatalog(root, result.runner, result.result); } return cached; },
       invoke, changed: () => board?.reportProgress(), log: text => logs.push(text)
-    });
+    };
+    reportPreparation = new Coordinator(root, coordinatorOptions);
   }
   function record(error) { errors.push(error.message || String(error)); }
   async function select(id) {
@@ -226,7 +251,7 @@ async function start(options = {}) {
     if (request.method === 'GET' && address.pathname === '/state') {
       const snapshots = {};
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
-      return json({ readOnly, productionExtension, productionVersion, reportPreparation: reportPreparation?.status(), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
+      return json({ readOnly, productionExtension, productionVersion, reportPreparation: reportPreparation?.status(), ...(options.mixedFixture ? { mixedHeld } : {}), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
         investigation: board.models.get(board.activeId)?.investigationDraft || null,
         privatePreparationDraft: reportPreparation && board.activeId ? require(path.join(productionExtension, 'investigation-engine')).read(root, board.activeId) : null,
         debug: { nativeToken: board.native.triageToken, nativeFinding: board.native.triageFindingId, callbacks: panel.callbacks.length, disposed: board.disposed, trusted: api.workspace.isTrusted },
@@ -247,6 +272,13 @@ async function start(options = {}) {
         for (const callback of panel.callbacks) Promise.resolve(callback(message)).catch(record);
       } else if (message.name === 'reopen') {
         await selection; panel.dispose(); pending.length = 0; createBoard();
+      } else if (message.name === 'release-mixed' && options.mixedFixture) {
+        releaseMixed();
+      } else if (message.name === 'restart-mixed-coordinator' && options.mixedFixture) {
+        await selection; reportPreparation.dispose(); await reportPreparation.loop;
+        panel.dispose(); pending.length = 0;
+        reportPreparation = new (require(path.join(productionExtension, 'report-preparation')).ReportPreparation)(root, coordinatorOptions);
+        createBoard();
       } else if (message.name === 'library') {
         await board.showLibrary();
       } else if (message.name === 'source-change' && !readOnly) {
@@ -267,6 +299,7 @@ async function start(options = {}) {
   origin = `http://127.0.0.1:${server.address().port}`;
   createBoard();
   return { origin, secret, root, readOnly, productionExtension, productionVersion, close: async () => {
+    releaseMixed?.();
     reportPreparation?.dispose(); if (reportPreparation?.loop) await reportPreparation.loop;
     panel.dispose(); await new Promise(resolve => server.close(resolve));
     // root is either a validated fresh mkdtemp directory or a read-only input.
@@ -285,6 +318,7 @@ if (require.main === module) {
     reportPreparation: process.argv.includes('--report-preparation'),
     requestLimit: process.argv.includes('--request-limit') ? Number(process.argv[process.argv.indexOf('--request-limit') + 1]) : 12,
     qualityBatch: process.argv.includes('--quality-batch'),
+    mixedFixture: process.argv.includes('--mixed-fixture'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,
     qualityCase: qualityIndex < 0 ? null : process.argv[qualityIndex + 1],

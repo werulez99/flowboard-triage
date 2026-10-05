@@ -54,6 +54,12 @@ test('dirty dependency policy covers code/report/config but ignores unrelated sc
   for (const file of ['src/C.sol','report.md','README.md','docs/rules.md','foundry.toml','foundry.lock','pnpm-lock.yaml','.flowboard/report.json']) assert.equal(snapshots.relevantDirty(root, path.join(root, file), 'report.md'), true, file);
   for (const file of ['scratch.md','notes.txt','package.json','scratch.json']) assert.equal(snapshots.relevantDirty(root, path.join(root, file), 'report.md'), false, file);
   assert.equal(snapshots.relevantDirty(root, path.join(root, '../other/C.sol'), 'report.md'), false);
+  assert.deepEqual(snapshots.dirtyScope(root, path.join(root, '.flowboard/findings/I-2.json'), 'report.md'), { kind: 'finding', findingId: 'I-2' });
+  assert.deepEqual(snapshots.dirtyScope(root, path.join(root, '.flowboard/report.json'), 'report.md'), { kind: 'report' });
+  assert.deepEqual(snapshots.dirtyScope(root, path.join(root, 'foundry.toml'), 'report.md'), { kind: 'configuration' });
+  assert.deepEqual(snapshots.dirtyScope(root, path.join(root, 'docs/rules.md'), 'report.md'), { kind: 'documentation' });
+  assert.equal(snapshots.dirtyScope(root, path.join(root, '.flowboard/findings/../other.json'), 'report.md'), null);
+  assert.equal(snapshots.dirtyScope(root, path.join(root, '../other/.flowboard/findings/I-2.json'), 'report.md'), null);
 });
 test('call bindings preserve parameter position, named arguments, library receiver and literal contents', () => {
   const { boundArgument, expression } = require('../extension/call-bindings');

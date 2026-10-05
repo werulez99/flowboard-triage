@@ -102,5 +102,40 @@
     const from = edge.from === a ? previous.unit.name : next.unit.name, to = edge.to === b ? next.unit.name : previous.unit.name;
     return `${edge.kind === 'call' ? `Call: ${from} → ${to}` : edge.kind === 'state-dependency' ? 'Shared data, not a call' : 'Possible connection; implementation or conditions need checking'}. ${edge.reason || ''}`;
   }
-  return { paragraphs, reportLink, originalLines, exact, assessment, build, relationship };
+  function watchedChanges(route, index) {
+    const step = route?.steps[index];
+    if (!step?.invocationId || !step.transaction) return [];
+    const values = new Map();
+    // Reading order is not a trace. These are explicitly recorded changes
+    // already inspected within one invocation, never merged across branches,
+    // transactions, receivers, or repeated invocations of the same function.
+    for (const event of route.steps.slice(0, index + 1)) {
+      if (event.invocationId !== step.invocationId || event.transaction !== step.transaction || event.claimId !== step.claimId || event.receiver !== step.receiver) continue;
+      for (const change of event.changes || []) values.set(change.name, { ...change, eventId: event.id, title: event.title, effect: event.effect });
+    }
+    return [...values.values()];
+  }
+  function inputLinks(route, step, input) {
+    if (!route || !step || !input) return {};
+    const parameter = (step.unit.parameterSpans || []).filter(item => item.name === input.name);
+    const result = parameter.length === 1 && parameter[0].span ? { parameter: { unit: step.unit, span: parameter[0].span, text: parameter[0].name } } : {};
+    const incoming = route.draft.causal.relationships.filter(link => ['call', 'callback'].includes(link.kind) && route.steps.some(event => event.id === link.to && event.invocationId === step.invocationId && event.transaction === step.transaction));
+    if (incoming.length !== 1) return result;
+    const caller = route.steps.find(event => event.id === incoming[0].from), site = caller?.unit.relatedCalls?.find(item => item.id === incoming[0].callSiteId);
+    if (!site) return result;
+    let argument;
+    if (input.name === 'msg.value') argument = site.options?.find(item => item.name === 'value');
+    else if (parameter.length === 1) {
+      const index = parameter[0].index;
+      if (site.implicitReceiver && index === 0) argument = { span: site.receiverSpan, expression: site.receiverExpression };
+      else if (site.argumentSpans?.some(item => item.name != null)) {
+        const name = site.declarations?.length === 1 ? site.declarations[0].parameters[index] : site.callKind === 'internal' ? input.name : null;
+        const named = name ? site.argumentSpans.filter(item => item.name === name) : [];
+        if (named.length === 1) argument = named[0];
+      } else argument = site.argumentSpans?.find(item => item.index === index - (site.implicitReceiver ? 1 : 0));
+    }
+    if (argument?.span) result.argument = { unit: caller.unit, span: argument.span, text: argument.expression };
+    return result;
+  }
+  return { paragraphs, reportLink, originalLines, exact, assessment, build, relationship, watchedChanges, inputLinks };
 });
