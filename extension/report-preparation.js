@@ -243,6 +243,21 @@ class ReportPreparation {
     const currentIds = new Set(entries.map(entry => entry.id));
     for (const id of Object.keys(this.state.jobs)) if (!currentIds.has(id)) { delete this.state.jobs[id]; this.accepted.delete(id); }
     this.state.resources.receipts ||= {};
+    // Only a trusted host execution plan can add a separate evaluation window.
+    // This hook is absent from ordinary editor/report input. It runs with report
+    // ownership, before selected admission, and cannot erase lifetime receipts.
+    const addition = this.options.evaluationContinuation?.(this.state);
+    if (addition) {
+      this.state.evaluationContinuations ||= {};
+      if (!this.state.evaluationContinuations[addition.id]) {
+        if (addition.baselineRequests !== this.state.resources.requests || !Number.isSafeInteger(addition.maximumRequests) || addition.maximumRequests < 1 ||
+            Object.entries(addition.findings).some(([id, value]) => !this.state.jobs[id] || value.baselineRequests !== this.state.jobs[id].requests || value.attempts !== 1))
+          throw new Error('Evaluation continuation accounting changed before owned admission.');
+        this.state.evaluationContinuations[addition.id] = addition;
+        this.state.resources.limit = addition.baselineRequests + addition.maximumRequests;
+        for (const [id, value] of Object.entries(addition.findings)) this.state.jobs[id].requestLimit = value.baselineRequests + value.attempts;
+      }
+    }
     this.state.concurrency = { configured: concurrency, providerCapacity: batch.capacity(config.providerCapacity), achieved: this.state.concurrency?.achieved || 0 };
     this.state.ambiguities = reconciliation.ambiguities;
     for (const entry of entries) {
@@ -323,6 +338,7 @@ class ReportPreparation {
         const entry = entries.find(item => item.id === id), job = this.state.jobs[id];
         if (!entry || !job) { this.options.log?.('Selected continuation was discarded because its finding left the report.'); continue; }
         if (job.publishable || this.tasks.has(id)) continue;
+        if (this.options.phaseRemaining?.(id) === false) { job.reason = 'The explicitly authorized evaluation phases are exhausted. Retained work is unchanged; no further request is permitted.'; this.save(); continue; }
         const remaining = this.state.resources.limit - this.state.resources.requests;
         if (remaining <= 0) {
           job.reason = `Shared report allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). This finding was not resumed; no allowance was added.`;
@@ -335,7 +351,7 @@ class ReportPreparation {
           if (this.disposed || !this.ownsLock() || intent.revision !== this.controlRevision || intent.epoch !== this.epoch ||
               this.admitting.get(id) !== intent || this.state.jobs[id] !== job || this.tasks.has(id) || job.publishable ||
               this.options.dirty?.(id) || this.options.configuration().provider !== config.provider ||
-              this.options.configuration().executable !== config.executable || !store.readReport(this.root).issues.some(item => item.id === id)) continue;
+              this.options.configuration().executable !== config.executable || this.options.phaseRemaining?.(id) === false || !store.readReport(this.root).issues.some(item => item.id === id)) continue;
         } finally { if (this.admitting.get(id) === intent) this.admitting.delete(id); }
         const available = this.state.resources.limit - this.state.resources.requests;
         if (available <= 0) { job.reason = 'Shared report allowance exhausted during admission; no request was reserved.'; this.save(); continue; }
@@ -604,7 +620,14 @@ class ReportPreparation {
     const validation = draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
       (draft.publication?.details || []).filter(item => ['structural', 'capability'].includes(item.kind)).map(item => ({ code: item.kind === 'capability' ? 'ANALYSIS_CAPABILITY' : 'CAUSAL_BINDING_OR_COVERAGE', target: item.target, message: item.reason, action: item.action }));
     job.validationProblems = validation.map(({ code, target, evidenceId, oldClaimId, proposedClaimId, message, action }) => ({ code, target, evidenceId, oldClaimId, proposedClaimId, message, action }));
-    job.missingInputs = (draft.questions || []).filter(item => item.action === 'missing-context').map(({ id, claimId, text, why }) => ({ id, claimId, text, why }));
+    job.missingInputs = (draft.questions || []).map(({ id, claimId, text, why, action }) => {
+      const receipt = [...(draft.actions || [])].reverse().find(item => item.questionId === id);
+      const sources = (receipt?.sourceIds || []).map(sourceId => draft.sources.find(unit => unit.id === sourceId)).filter(Boolean);
+      return { id, claimId, text, why, action,
+        acquisition: receipt ? { outcome: receipt.outcome, result: receipt.result,
+          sources: sources.map(unit => ({ id: unit.id, name: unit.name, file: unit.source.file, line: unit.source.line, endLine: unit.source.endLine,
+            suppliedThrough: unit.readThrough ?? unit.source.line - 1 })) } : null };
+    });
   }
   async control(action) {
     if (action === 'resume' || action === 'retry') return this.ensure({ retry: true });

@@ -472,6 +472,15 @@ try:
             selected_job = next((j for j in (state.get('reportPreparation') or {}).get('jobs', []) if j['id'] == args.finding), None)
             if selected_job and selected_job.get('reason'):
                 assert selected_job['reason'] in status_text
+            questions = (selected_job or {}).get('missingInputs', [])
+            if questions:
+                page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
+                status_text = page.locator('.guide-preparation').inner_text()
+                assert 'What still needs checking' in status_text
+                assert questions[0]['text'] in status_text
+                assert 'paid responses are retained' in status_text
+                result['checks'].append('The real incomplete question and retained-work distinction are visible; acquired source is not shown as reviewed.')
+                page.screenshot(path=str(out / 'incomplete-details.png'))
             result['checks'].append('Incomplete explanation is withheld, with an explicit preparation status.')
         result['pageErrors'] = errors
         assert not errors, errors

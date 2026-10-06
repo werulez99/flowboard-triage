@@ -194,9 +194,19 @@
       for (const job of progress.active || []) parent.append(element('p', '', `${job.id} · ${job.stage || 'Locating code'}`));
       appendAdmission(parent);
       if (selectedJob?.missingInputs?.length) {
+        const first = selectedJob.missingInputs[0];
+        parent.append(element('h3', '', 'What still needs checking'), element('p', '', `${first.claimId} · ${first.text}`),
+          element('small', 'triage-muted', first.why), element('p', 'triage-muted', 'The accepted draft and paid responses are retained. Local source acquisition is not a completed semantic review.'));
         const needed = element('details'); needed.append(element('summary', '', 'Evidence needed before this finding can finish'));
-        for (const item of selectedJob.missingInputs) needed.append(element('p', '', `${item.claimId}: ${item.text}`), element('small', 'triage-muted', item.why));
-        needed.append(element('p', 'triage-muted', 'Provide the named source or observation first. Continuing unchanged cannot establish an unavailable external fact.'));
+        for (const item of selectedJob.missingInputs) {
+          needed.append(element('p', '', `${item.claimId} / ${item.id}: ${item.text}`), element('small', 'triage-muted', item.why));
+          if (item.acquisition) {
+            needed.append(element('p', 'triage-muted', `Local acquisition: ${item.acquisition.outcome}. ${item.acquisition.result}`));
+            for (const source of item.acquisition.sources || []) needed.append(element('small', 'triage-muted', `${source.file}:${source.line}-${source.endLine} · ${source.name} · ${source.suppliedThrough < source.endLine ? 'not fully supplied to a completed response' : 'previously supplied; the unresolved conclusion still needs review'}`));
+          }
+        }
+        needed.append(element('p', 'triage-muted', selectedJob.reason?.includes('packet') ? 'Complete and measure the full review packet before any new request; do not remove required evidence to fit.' :
+          'Supply missing local code or the named external observation first. New code then needs substantive review within an explicitly applicable allowance. Continuing unchanged cannot establish an unavailable fact.'));
         parent.append(needed);
       }
       if (selectedJob?.validationProblems?.length) {

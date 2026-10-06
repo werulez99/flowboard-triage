@@ -91,8 +91,9 @@ const responseInstruction = input => input.checkOnly ? challengeFormat.checkInst
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 256 * 1024;
-function requestMetrics(input) {
-  const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
+function measureRequest(input) {
+  const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : '') +
+    (input.sourceContextFormat === require('./packet-context').VERSION ? '\n' + require('./packet-context').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
   const sections = { report: 0, source: 0, previousDraft: 0, metadata: 0 };
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue;
@@ -102,11 +103,21 @@ function requestMetrics(input) {
   sections.envelope = Buffer.byteLength(payload) - Object.values(sections).reduce((sum, size) => sum + size, 0);
   sections.instructions = Buffer.byteLength(system); sections.schema = Buffer.byteLength(encodedSchema);
   const requestBytes = Buffer.byteLength(payload) + sections.instructions + sections.schema + 128; // maximum adapter framing
-  if (requestBytes > MAX_REQUEST_BYTES) throw Object.assign(new Error(`The complete review packet is ${requestBytes} bytes, above the ${MAX_REQUEST_BYTES}-byte local limit (data, instructions and schema). No code or claim was truncated. Narrow the current evidence acquisition or use checked stages before dispatch.`), { code: 'LOCAL_PACKET_LIMIT', requestBytes, limit: MAX_REQUEST_BYTES });
-  return { payload, system, encodedSchema, inputBytes: Buffer.byteLength(payload), inputSections: sections, requestBytes,
+  const fields = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, Buffer.byteLength(JSON.stringify(value))]));
+  const sourceUnits = (input.sources || []).map(unit => ({ id: unit.id, bytes: Buffer.byteLength(JSON.stringify(unit)),
+    fields: Object.fromEntries(Object.entries(unit).map(([key, value]) => [key, Buffer.byteLength(JSON.stringify(value))])) }));
+  return { payload, system, encodedSchema, inputBytes: Buffer.byteLength(payload), inputSections: sections, inputFields: fields, sourceUnits, requestBytes,
+    dispatchable: requestBytes <= MAX_REQUEST_BYTES, limit: MAX_REQUEST_BYTES,
     instructionHash: crypto.createHash('sha256').update(system).digest('hex'), schemaHash: crypto.createHash('sha256').update(encodedSchema).digest('hex'),
     inputHash: crypto.createHash('sha256').update(payload).digest('hex'),
-    sourcePacketHash: crypto.createHash('sha256').update(JSON.stringify({ sources: input.sources || [], compiler: input.compiler || null, documentation: input.documentation || [] })).digest('hex') };
+    sourcePacketHash: crypto.createHash('sha256').update(JSON.stringify({ sources: input.sources || [], compiler: input.compiler || null, documentation: input.documentation || [],
+      ...(input.sourceContextFormat ? { sourceContextFormat: input.sourceContextFormat, sourceMetadata: input.sourceMetadata } : {}) })).digest('hex') };
+}
+function requestMetrics(input) {
+  const metrics = measureRequest(input);
+  if (!metrics.dispatchable) throw Object.assign(new Error(`The complete review packet is ${metrics.requestBytes} bytes, above the ${MAX_REQUEST_BYTES}-byte local limit (data, instructions and schema). No code or claim was truncated. Complete local packet preparation before dispatch.`),
+    { code: 'LOCAL_PACKET_LIMIT', requestBytes: metrics.requestBytes, limit: MAX_REQUEST_BYTES, metrics });
+  return metrics;
 }
 function failure(message, kind, code) { return Object.assign(new Error(message), { failureKind: kind, code: code || `PROVIDER_${kind.toUpperCase().replaceAll('-', '_')}` }); }
 const diagnosticEventTypes = new Set(['thread.started', 'turn.started', 'turn.completed', 'turn.failed', 'item.started', 'item.updated', 'item.completed', 'error', 'warning', 'notification']);
@@ -450,4 +461,4 @@ async function runSchemaProbe(options = {}) {
 }
 function runProvider(input, options) { return options.provider === 'codex' ? runCodex(input, options) : runClaude(input, options); }
 module.exports = { schema, instruction, runClaude, runCodex, runSchemaProbe, runResponseContractDiagnostic, responseContractDiagnosticPacket,
-  runProvider, codexDisabled, requestMetrics, responseSchema, MAX_OUTPUT_BYTES, MAX_REQUEST_BYTES };
+  runProvider, codexDisabled, requestMetrics, measureRequest, responseSchema, MAX_OUTPUT_BYTES, MAX_REQUEST_BYTES };

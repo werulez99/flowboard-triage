@@ -1,5 +1,88 @@
 # Bounded fresh quality pilot (0.19.12)
 
+## Local continuation follow-up (0.19.13)
+
+No new provider requests were made in this follow-up. The historical four
+responses / four of five attempts / zero new published guides below remain the
+measured live result, not an unmeasured category or a renewed allowance.
+
+Ordinary challenge and completed-materially-blocked checkpoints now revisit
+their accepted questions before a **new** challenge. Exact paid pending-response
+recovery comes first, with its original input; it is not replaced by acquisition.
+Resolver-versioned receipts retain suppression for unchanged inputs but do not
+reuse an old negative result after resolver capabilities change. Follow-up and
+repair counters persist. Code acquisition never stamps new lines read or checked.
+Explicit comments, scoped state, inherited entry/guard definitions and full
+receiving-source surveys use the existing catalog. Exact enclosing bytes can
+satisfy a dependency without allocating another redundant source fragment.
+Unreferenced discovery candidates may be deferred; accepted evidence, claim,
+causal and binding references remain pinned. No deployed target is inferred.
+
+An isolated challenge now receives the complete selected canonical sources,
+not only an earlier reading cursor's tail. Pure measurement returns the complete
+packet and section/hash diagnostics even when it exceeds the unchanged 262,144
+byte transport cap; normal transport still rejects before admission. The
+`source-context-v1` request representation interns repeated structural metadata
+inside the same request. Expansion reconstructs exact IDs, spans, candidate
+definitions and values. Source text and the accepted semantic object are not
+summarized. This changes request identities, not policy v9 or saved guide review
+attestations, and cannot inherit an old exact-packet approval.
+
+| Offline boundary | First complete candidate | Second complete candidate |
+| --- | ---: | ---: |
+| Historical paid/blocked observation | 303,923-byte rejected challenge | 186,362-byte dispatched challenge |
+| Reconstructed pre-completion candidate | 304,290 bytes | Not claimed to reproduce the paid bytes |
+| Newly source-completed proposed bound | 228,617 bytes / 34 units | 214,136 bytes / 39 units |
+| Same new context without metadata sharing | 264,346 bytes | 255,764 bytes |
+
+New figures are UTF-8 serialized input + actual instructions/schema + the
+adapter's conservative 128-byte framing allowance, **not observed live stdin**.
+Private metrics retain disjoint input fields, per-source metadata, packet hashes
+and full content. The reconstruction is labeled reconstructed: historical action
+UUIDs/timestamps are not claimed identical. All accepted semantic references
+survive in both candidates. Source completion changes material supplied context;
+it does not retrospectively review it. The second candidate still has an
+unidentified reported receiver and expected-rule/materiality question. Fitting
+bytes alone does not make that case eligible for another paid request.
+
+One final local capture observed 47.877 s indexing and 9.755 / 14.919 s per-case
+preparation. Another capture overlapped an owned browser status reconciliation
+and correctly failed its saved-record-equality assertion; it is not a clean
+read-only result. The final capture and admission verification were separate
+and preserved saved records. These are local observations under host contention,
+not a speedup, model latency, or a representative batch estimate.
+
+Expanded native status now shows the exact outstanding question, dependent
+claim, reason, retained work and acquisition coverage separately from the budget
+or packet stop. Incomplete causal annotations remain withheld. Source acquisition
+and fresh semantic review are visibly different actions.
+
+A small trusted continuation hook pins the parent manifest/ledger, production
+receipt/count baseline, retained compiled base and first packet. An inactive
+plan never changes the retained allowance. Only a separately approved exact
+execution can add its bounded window under normal report ownership; lifetime
+counts and historical receipts remain. A real coordinator/runner/guard control
+starts at four old attempts, permits exactly two local challenge callbacks and
+refuses further dispatch. The private proposed operation is narrower: one
+challenge, inactive, with the other incomplete case excluded pending its precise
+source-reference/materiality input. No permission is transferred from the old
+unused phase. There is no new semantic completion or fresh native guide result.
+
+The first canonical attempt had 475 passes / 1 failure: a legacy long-function
+test expected tail-only challenge input. The corrected assertion requires the
+entire function, initial lines and decisive tail guard together. The corrected
+supported WSL/Node 20 sequential gate passed 476 tests, zero failed/skipped.
+Twenty focused acquisition/packet controls passed. The real incomplete native
+status passed two groups; the installed retained guide passed thirteen groups,
+seven events and three full functions with zero provider requests. These are
+simulated editor IO/native-browser observations, not active Cursor playback or
+fresh model review. Installed content matched 62 files (generated extension
+manifest metadata normalized), with original native 1.2.0. No desktop control
+was available; save work, Reload Window, Diagnose Setup and inspect Output to
+establish the actually active build. An old 0.19.6 activation log is not proof
+of the current window's version. Existing warm-open latency remains backlog;
+no new performance matrix or account-capacity claim was made.
+
 This is a development-branch observation, not a GitHub Release, a throughput
 benchmark, or evidence that arbitrary imported findings receive correct guides.
 Private report/source/reference/response/receipt files are not package inputs.

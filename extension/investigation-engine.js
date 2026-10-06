@@ -218,13 +218,13 @@ function validateCurrent(catalog, draft) {
 }
 function text(value, max = 2000) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
 function list(value, max = 12) { return Array.isArray(value) ? value.slice(0, max).map(item => text(item)).filter(Boolean) : []; }
-function modelSources(units, packetLimit = 110000) {
+function modelSources(units, packetLimit = 110000, completeReview = false) {
   const position = source => source ? `${source.file}:${source.line}-${source.endLine}` : null;
   const unitAt = (file, line) => units.find(unit => unit.source.file === file && unit.source.line === line)?.id;
   const packet = []; let remaining = packetLimit;
   for (const unit of [...units].sort((a, b) => Number(b.readThrough < b.source.endLine) - Number(a.readThrough < a.source.endLine))) {
     const lines = unit.code.split('\n');
-    const offset = unit.readThrough && unit.readThrough < unit.source.endLine ? unit.readThrough - unit.source.line + 1 : 0;
+    const offset = !completeReview && unit.readThrough && unit.readThrough < unit.source.endLine ? unit.readThrough - unit.source.line + 1 : 0;
     const excerpt = []; let used = 0;
     for (let at = offset; at < lines.length; at++) {
       if (used + lines[at].length + 1 > remaining) break;
@@ -260,20 +260,30 @@ function modelSources(units, packetLimit = 110000) {
   }
   return packet;
 }
+// Negative lookup receipts are valid only for this resolver contract. This is
+// not semantic policy and never invalidates an accepted explanation/review.
+const ACQUISITION_VERSION = 'local-context-v4-scoped-coverage';
 function makeContext(catalog, request, issue) {
   const compiler = workspaceSnapshot.compiler(catalog), engine = search(catalog);
   const units = [], functions = new Map(); let budget = 110000, sourceLimit = 28;
-  const unread = new Set();
+  const unread = new Set(), completionFunctions = new Map();
   const add = (fn, reason) => {
     if (!fn) return null;
     const file = catalog.relative(fn.file), key = catalog.key(fn), id = `s-${hash(key).slice(0, 12)}`;
     const retainedIdentity = units.find(unit => functions.has(unit.id) && catalog.key(functions.get(unit.id)) === key);
     if (retainedIdentity) return retainedIdentity.id;
     if (functions.has(id)) return id;
-    if (units.length >= sourceLimit) { unread.add(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return null; }
     const doc = catalog.document(file), lines = doc.lines.slice(fn.startLine - 1, fn.endLine);
     if (!lines.length) { unread.add(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return null; }
     const code = lines.join('\n');
+    const covering = units.find(unit => require('./source-coverage').contains({ source: { file, line: fn.startLine, endLine: fn.endLine, sourceHash: hash(doc.text) }, code }, unit));
+    if (covering) {
+      if (fn.kind !== 'context') completionFunctions.set(key, fn);
+      return covering.id; // exact acquired bytes; never a semantic check or a read attestation
+    }
+    if (units.length >= sourceLimit) {
+      unread.add(`${fn.contract || ''}::${fn.name} at ${file}:${fn.startLine}`); return null;
+    }
     if (code.length > limits.sourceCharacters) throw Object.assign(new Error(`Local reading limit: ${file}:${fn.startLine}-${fn.endLine} exceeds the canonical function capacity. The implementation is present, not missing.`), { code: 'LOCAL_READING_LIMIT' });
     budget -= code.length;
     const unit = { id, name: `${fn.contract ? fn.contract + '::' : ''}${fn.name}`, contract: fn.contract || null,
@@ -323,7 +333,7 @@ function makeContext(catalog, request, issue) {
       const contracts = [...new Set(anchors.map(fn => fn.contract).filter(Boolean))];
       if (contracts.length && !contracts.some(contract => new RegExp(`\\b${escaped(contract)}\\b`).test(lexicalCode(doc.text)))) continue;
       const nearby = catalog.functions.filter(fn => fn.file === file && /^test/.test(fn.name) &&
-        doc.lines.slice(Math.max(0, fn.startLine - 161), fn.startLine).join('\n').includes(displayId)).slice(0, 3);
+        [...doc.lines.slice(Math.max(0, fn.startLine - 161), fn.startLine).join('\n').matchAll(/\b[A-Z]{1,5}-\d+\b/g)].at(-1)?.[0] === displayId).slice(0, 3);
       const local = nearby.length ? nearby : engine.rank(query, new Set([file])).candidates.map(candidate => candidate.fn).filter(fn => /^test/.test(fn.name)).slice(0, 2);
       for (const fn of local) add(fn, `Existing test source near ${displayId}. Inspect assertions and setup; it has not run.`);
       if (units.filter(unit => unit.kind === 'test-source').length >= 6) break;
@@ -380,14 +390,23 @@ function makeContext(catalog, request, issue) {
     return { id:`prime-${crypto.randomUUID()}`, kind:'source-preparation', outcome:units.length > before.size ? 'source-returned' : 'context-already-available', performedAt:now(),
       sourceIds:units.filter(unit => !before.has(unit.id)).map(unit => unit.id), result:'Read report-named local declarations, used constants and unambiguous named internal helpers before generation. Other material dependencies still require follow-up.' };
   };
-  const complete = draft => {
+  const complete = (draft, { finishQuestions = false } = {}) => {
     const before = new Set(units.map(unit => unit.id)), visited = new Set();
     // Finish the explicitly requested functions before following any helper's
     // helpers. Depth-first library expansion used to consume all forty slots
     // on bit getters before reaching settlement or the other claimed route.
-    const queue = [...new Set([...(draft.actions || []).filter(action => ['inspect', 'symbol', 'callers', 'references'].includes(action.kind)).flatMap(action => action.sourceIds), ...draft.claims.map(claim => claim.entry), ...draft.evidence.map(item => item.sourceId)])]
+    const latest = new Map();
+    for (const action of [...(draft.actions || [])].reverse()) if (action.questionId && !latest.has(action.questionId)) latest.set(action.questionId, action);
+    const executableNotes = new Set((draft.causal?.events || []).filter(event => event.effect !== 'context').map(event => event.evidenceId));
+    // Analytical counterevidence can quote a different implementation precisely
+    // to reject its applicability. Retain that full quotation, but do not crawl
+    // all its dependency trees as though it were an executed material route.
+    const materialEvidence = draft.causal?.events?.length ? draft.evidence.filter(item => executableNotes.has(item.id)) : draft.evidence;
+    const queue = [...new Set([...draft.claims.map(claim => claim.entry), ...materialEvidence.map(item => item.sourceId),
+      ...[...latest.values()].filter(action => ['inspect', 'symbol', 'callers', 'references'].includes(action.kind)).flatMap(action => action.sourceIds)])]
       .map(id => ({ fn: functions.get(id), depth: 0 }));
-    const limit = sourceLimit; sourceLimit = Math.max(units.length, 32); // leave eight slots for explicit challenge questions
+    queue.push(...[...completionFunctions.values()].map(fn=>({fn,depth:0})));
+    const limit = sourceLimit; sourceLimit = finishQuestions ? limit : Math.max(units.length, 32); // leave room until explicit questions have been revisited
     let remaining = 24;
     while (queue.length && remaining > 0) {
       const { fn, depth } = queue.shift();
@@ -396,6 +415,14 @@ function makeContext(catalog, request, issue) {
       visited.add(catalog.key(fn));
       for (const modifier of catalog.modifiersFor(fn)) if (modifier.file) {
         const guard = catalog.modifierAt(catalog.relative(modifier.file), modifier.startLine, modifier.name);
+        // New guard surveys need their storage/helper definitions too. One
+        // bounded complete defining file avoids spending the source-unit cap
+        // on repeated fragments. Retained IDs are never replaced.
+        if (finishQuestions && guard && !units.some(unit => functions.get(unit.id) && catalog.key(functions.get(unit.id)) === catalog.key(guard))) {
+          const doc = catalog.document(catalog.relative(guard.file));
+          if (doc.text.length <= limits.sourceCharacters) add({ name: 'Complete guard source', kind: 'context', contextKind: 'excerpt', file: guard.file,
+            startLine: 1, endLine: doc.lineCount, contract: null, calls: [], memberCalls: [], modifiers: [] }, 'Complete defining source for this newly required guard and its internal storage/helpers; no execution or review is inferred.');
+        }
         if (guard && add(guard, `${fn.contract}::${fn.name} applies ${guard.name}. Read this guard and its helpers before judging reachability.`)) queue.push({ fn: guard, depth: depth + 1 });
       }
       for (const declaration of declarationsFor(fn)) {
@@ -414,7 +441,7 @@ function makeContext(catalog, request, issue) {
       for (const site of catalog.callLinks(fn)) if (site.candidates.length === 1) {
         const target = site.candidates[0];
         const library = target.contract && new RegExp(`\\blibrary\\s+${escaped(target.contract)}\\b`).test(lexicalCode(catalog.document(catalog.relative(target.file)).text));
-        if (site.relationship !== 'call' && !library) continue;
+        if (site.relationship !== 'call' && !library && site.receiverExpression) continue;
         // A reached library is read in full. Further library details are
         // available by explicit question rather than recursively filling the
         // packet with every arithmetic/bit-manipulation helper.
@@ -430,15 +457,22 @@ function makeContext(catalog, request, issue) {
   };
   const act = (question, claim) => {
     const before = new Set(units.map(unit => unit.id));
+    // A still-unresolved claim may have no executable entry. An explicitly
+    // qualified source name can scope LOOKUP without filling that semantic
+    // entry, choosing a deployed receiver, or borrowing another claim's frame.
+    const namedScope = (claim?.implementation || '').match(/\b([A-Z][\w$]*)::([\w$]+)/);
+    const scopeCandidates = namedScope ? catalog.mentioned({contract:namedScope[1],name:namedScope[2]}) : [];
+    const lookupEntry = functions.get(claim?.entry) || (scopeCandidates.length === 1 ? scopeCandidates[0] : null);
     let target = functions.get(question.target);
     // Follow an explicitly requested definition across files. A receiver such
     // as manager.take is not a contract name and remains a candidate, not dispatch.
     const qualified = question.target.match(/^([A-Z][\w$]*)(?:::|\.)([\w$]+)$/);
     if (!target && qualified) {
-      const entry = functions.get(claim?.entry);
+      const entry = lookupEntry;
       let candidates = catalog.relevantDefinitions(catalog.mentioned({ contract: qualified[1], name: qualified[2] }), entry?.file);
       if (!candidates.length && entry) candidates = catalog.modifierDefinitions(qualified[1], qualified[2], entry.file);
       if (!candidates.length) candidates = catalog.functionDeclarations(qualified[1], qualified[2], entry?.file);
+      if (!candidates.length && entry?.contract === qualified[1]) candidates = declarationsFor(entry, qualified[2]);
       if (candidates.length === 1) target = candidates[0];
     }
     const location = question.target.match(/^(.+\.sol):(\d+)$/);
@@ -446,22 +480,53 @@ function makeContext(catalog, request, issue) {
       try {
         const line = Number(location[2]), doc = catalog.document(location[1]);
         target = catalog.functionAt(location[1], line);
-        if (!target && line >= 1 && line <= doc.lineCount) target = { name: 'Code details', kind: 'context', file: doc.uri.fsPath,
-          startLine: line, endLine: Math.min(line + 7, doc.lineCount), contract: null, calls: [], memberCalls: [], modifiers: [] };
+        if (!target && line >= 1 && line <= doc.lineCount) {
+          // A line in contiguous documentation means the complete comment,
+          // not eight lines ending before the very rule being requested.
+          let startLine = line, endLine = Math.min(line + 7, doc.lineCount);
+          if (/^\s*\/\//.test(doc.lines[line - 1])) {
+            while (startLine > 1 && /^\s*\/\//.test(doc.lines[startLine - 2])) startLine--;
+            endLine = line;
+            while (endLine < doc.lineCount && /^\s*\/\//.test(doc.lines[endLine])) endLine++;
+          }
+          target = { name: 'Code details', kind: 'context', contextKind: 'excerpt', file: doc.uri.fsPath,
+            startLine, endLine, contract: null, calls: [], memberCalls: [], modifiers: [] };
+        }
       } catch { /* exact local target unavailable */ }
     }
-    const entry = functions.get(claim?.entry), scope = entry && catalog.relative(entry.file);
+    const entry = lookupEntry, scope = entry && catalog.relative(entry.file);
     const matched = new Set();
     const omittedLocal = [];
     const include = (fn, reason) => { const id = add(fn, reason); if (id) matched.add(id); else if (fn) omittedLocal.push(`${fn.contract || ''}::${fn.name} at ${catalog.relative(fn.file)}:${fn.startLine}`); return id; };
+    const enclosing = (fn, reason) => {
+      if (fn.kind !== 'context') completionFunctions.set(catalog.key(fn),fn);
+      const doc = catalog.document(catalog.relative(fn.file));
+      return include({ name: 'Complete enclosing source', kind: 'context', contextKind: 'excerpt', file: fn.file,
+        startLine: 1, endLine: doc.lineCount, contract: null, calls: [], memberCalls: [], modifiers: [] }, reason);
+    };
     const declarationContext = fn => {
       for (const item of declarationsFor(fn)) include(item, `${fn.contract}::${fn.name} uses ${item.symbol}. Its declaration answers type/storage questions, not deployment or specification questions.`);
     };
     const qTerms = terms(question.text + ' ' + question.why);
     const nameScore = name => [...terms(name)].filter(term => qTerms.has(term)).length;
     if (['inspect', 'symbol', 'missing-context'].includes(question.action) && target) {
+      if (/\b(?:overrides|modifier bodies)\b/i.test(question.text))
+        enclosing(target, 'Complete defining source for the explicitly requested override/modifier survey. Supplied source is not proof of a deployed override or successful execution.');
       include(target, 'Code requested by the selected statement.'); declarationContext(target);
+      if (target.kind === 'context' && /\b(?:type|struct|declaration)\b/i.test(question.text))
+        enclosing(target, 'The requested declaration depends on its enclosing type definitions. Full current file supplied, not a deployment observation.');
       for (const link of [...catalog.callLinks(target)].sort((a, b) => nameScore(b.expression) - nameScore(a.expression)).slice(0, 4)) if (link.candidates.length === 1) include(link.candidates[0], `Possible callee for ${link.expression}; check dispatch and branch conditions.`);
+      for (const name of [...new Set([...question.text.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(\)/g)].map(m=>m[1]))].slice(0,4)) {
+        const candidates=catalog.relevantDefinitions(catalog.candidates(name,target.contract,false,0),target.file);
+        if(candidates.length===1)include(candidates[0], 'Explicitly named accessor in the same scoped inspection question; inspect overrides, not just spelling.');
+      }
+      if (/\b(?:inherited entry|actual inherited)\b/i.test(question.text)) {
+        // Inspect exact callers of the named hook, not every inherited method.
+        const imported = new (require('./source-imports').ImportContext)(catalog).files(target.file);
+        for (const fn of catalog.functions.filter(fn => imported.has(fn.file) && !isTest(catalog.relative(fn.file)) && catalog.code(fn).includes(target.name)))
+          if (catalog.callLinks(fn).some(site => site.candidates.some(candidate => catalog.key(candidate) === catalog.key(target))))
+            enclosing(fn, 'Full source of a caller of the requested inherited hook; inspect its entry guards and continuation. A declaration link is not runtime dispatch.');
+      }
     } else if (question.action === 'callers' && target) {
       let count = 0;
       for (const fn of catalog.functions) {
@@ -472,7 +537,10 @@ function makeContext(catalog, request, issue) {
       }
     } else if (['symbol', 'references'].includes(question.action) && /^[A-Za-z_$][\w$]{0,79}$/.test(question.target)) {
       const expression = new RegExp(`\\b${question.target.replace(/\$/g, '\\$')}\\b`);
-      for (const item of declarationsFor(entry, question.target)) include(item, `The selected statement asks about ${question.target}. This is its same-contract declaration; check any local shadowing in the function.`);
+      const scopedDeclarations=declarationsFor(entry,question.target);
+      for (const item of scopedDeclarations) include(item, `The selected statement asks about ${question.target}. This is its same-contract declaration; check any local shadowing in the function.`);
+      if (question.action === 'references' && scopedDeclarations.length && /\b(?:all uses|collection|recovery|intake|migration|deletion)\b/i.test(question.text + ' ' + question.why))
+        enclosing(entry, 'Full declaring source supplied for the requested state-use/collection survey. Absence of a use elsewhere or external capability is not inferred.');
       let count = 0;
       const questionText = `${question.text} ${question.why}`;
       const role = fn => (fn.contract && new RegExp(`\\b${escaped(fn.contract)}\\b`).test(questionText) ? 8 : 0) +
@@ -481,6 +549,7 @@ function makeContext(catalog, request, issue) {
         (question.action === 'symbol' ? Number(b.name === question.target) - Number(a.name === question.target) : nameScore(b.name) - nameScore(a.name)));
       for (const fn of candidates) {
         if (isTest(catalog.relative(fn.file))) continue;
+        if (question.action === 'references' && scopedDeclarations.length && fn.contract !== entry.contract) continue;
         // A bare, repeated method name cannot select an unrelated overload.
         if (question.action === 'symbol' && fn.name === question.target && catalog.functions.filter(candidate => candidate.name === fn.name && !isTest(catalog.relative(candidate.file))).length > 1 && entry && (fn.file !== entry.file || fn.contract !== entry.contract)) continue;
         const namesContract = fn.contract === question.target && question.action === 'references';
@@ -502,6 +571,14 @@ function makeContext(catalog, request, issue) {
         const requested = new Set((`${question.text} ${question.why}`.match(/\b(?:receive|fallback)\b/g) || []));
         for (const fn of catalog.functions.filter(fn => fn.file === entry.file && fn.contract === entry.contract && requested.has(fn.name)).slice(0, 2))
           include(fn, 'Explicitly requested local receiving definition; not proof of runtime receiver identity, dispatch, self-call reachability or settlement.');
+        if (/\b(?:self-call|recovery|collection)\b/i.test(question.text)) enclosing(entry, 'The question asks about alternative local routes. Inspect the complete declaring source; receiving code alone cannot establish absence of recovery.');
+      }
+      if (/\b(?:capability|capabilities|implementation)\b/i.test(question.text)) {
+        const names = new Set((question.text.match(/\b[A-Z][A-Za-z0-9_$]+\b/g) || []));
+        for (const name of names) {
+          const files = [...new Map(catalog.functions.filter(fn => fn.contract === name && !isTest(catalog.relative(fn.file))).map(fn => [fn.file, fn])).values()];
+          if (files.length === 1) enclosing(files[0], 'Explicitly named local implementation supplied for capability review. Its name is not authenticated deployed receiver identity.');
+        }
       }
     }
     // Follow a small amount of compiler declaration context around the explicit
@@ -537,15 +614,19 @@ function makeContext(catalog, request, issue) {
       restored.readThrough = Math.max(restored.source.line - 1, Math.min(unit.readThrough || restored.source.line - 1, restored.source.endLine));
     }
   };
-  const prioritize = draft => {
+  const prioritize = (draft, protectedIds = [], supersededIds = []) => {
     // Only unbound discovery candidates can leave the working packet. Never
     // evict a cited function, an inspected premise or an explicit report root
     // to manufacture room. Deferred code stays available in the local index.
     const pinned = new Set([...(draft.claims || []).map(item => item.entry), ...(draft.evidence || []).map(item => item.sourceId),
-      ...(draft.explanationReviews || []).flatMap(item => item.checkedSourceIds || []), ...(draft.questions || []).map(item => item.target)]);
-    const roots = new Set(targets.selected.map(fn => catalog.key(fn))), deferred = [];
-    for (let i = units.length - 1; i >= 0 && units.length > 32; i--) {
-      const unit = units[i], fn = functions.get(unit.id);
+      ...(draft.explanationReviews || []).flatMap(item => item.checkedSourceIds || []), ...(draft.questions || []).map(item => item.target), ...protectedIds]);
+    const knownIds=new Set(units.map(u=>u.id)), retain=value=>{if(typeof value==='string'&&knownIds.has(value))pinned.add(value);else if(value&&typeof value==='object')for(const item of Object.values(value))retain(item);};
+    for(const value of [draft.causal,draft.bindingPlan,draft.property])retain(value);
+    const roots = new Set(targets.selected.map(fn => catalog.key(fn))), rootContracts=new Set(targets.selected.map(fn=>fn.contract)), deferred = [];
+    const score=unit=>unit.kind==='test-source'?-2:rootContracts.has(unit.contract)?2:/^(?:lib|node_modules)\//.test(unit.source.file)?1:0;
+    for (const unit of [...units].sort((a,b)=>score(a)-score(b))) {
+      if(units.length<=32 && !supersededIds.includes(unit.id))continue;
+      const i=units.indexOf(unit), fn = functions.get(unit.id);
       if (pinned.has(unit.id) || fn && roots.has(catalog.key(fn))) continue;
       deferred.push(`${unit.name} at ${unit.source.file}:${unit.source.line}`);
       budget += unit.code.length; units.splice(i, 1); functions.delete(unit.id);
@@ -758,17 +839,22 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const input = phase => ({ phase, semanticInput: semanticInput.packet(draft.semanticInput), finding: { id: findingId, title: request.finding.title,
       reportSections: content(issue?.reportText || request.finding.summary).sections.map(({ field, proposed, role }) => ({ field, proposed, role })),
       reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary) },
-      snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })), sources: modelSources(context.units),
+      snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })),
+      // An isolated challenge has no memory of previously read prefixes. Keep
+      // all acquired canonical source here and admit by FINAL UTF-8 transport
+      // size below; never silently remove a necessary prefix to fit raw chars.
+      sources: modelSources(context.units, phase === 'challenge' ? Infinity : 110000, phase === 'challenge'),
       compiler: draft.compiler, experiments: draft.experiments, codeGaps: context.gaps, documentation: context.documentation,
       capabilities: require('./source-bindings').capability,
       ...(phase === 'generate' || draft.bindingPlan ? { bindingFormat: require('./source-bindings').VERSION } : {}),
       ...(phase === 'challenge' ? { earlierDraft: draft.bindingPlan ? require('./source-bindings').wire(challengeFormat.earlier(draft, reviewSchema), draft.bindingPlan) : challengeFormat.earlier(draft, reviewSchema),
         ...(draft.bindingPlan ? { assembledEarlier: require('./source-bindings').derived(draft) } : {}),
-        evidenceScopes: require('./review-scope').manifest(draft), actions: draft.actions.slice(-5) } : {}) });
+        evidenceScopes: require('./review-scope').manifest(draft), actions: draft.actions.slice(-5).map(({ id, performedAt, ...material }) => material) } : {}) });
     // One response repair per finding attempt, not one extra repair after
     // each generation/challenge yield or interrupted generation.
     let repairUsed = !!draft.checkpoint?.repairUsed;
-    let followups = resumeChallenge && !resumeQuestions ? draft.checkpoint?.followups || 0 : 0;
+    let followups = resumeChallenge ? draft.checkpoint?.followups || 0 : 0;
+    const supersededCandidates = new Set();
     const readQuestions = result => {
       let progress = false; const priorUnits = [...context.units], alreadyRead = new Set(priorUnits.map(unit => unit.id));
       const deferred = context.prioritize(result);
@@ -781,10 +867,14 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       for (const question of result.questions) {
         ensure();
         const claim = result.claims.find(item => item.id === question.claimId);
-        const key = hash([question, claim?.entry, draft.snapshot.reportHash, draft.snapshot.sourceDigest, draft.snapshot.configuration]);
+        const key = hash([ACQUISITION_VERSION, question, claim?.entry, draft.snapshot.reportHash, draft.snapshot.sourceDigest, draft.snapshot.configuration]);
         const previous = [...draft.actions].reverse().find(action => action.acquisitionKey === key);
         if (previous && ['no-additional-context', 'context-already-available', 'blocked'].includes(previous.outcome) && previous.sourceIds.every(id => context.units.some(unit => unit.id === id))) continue;
-        const action = { ...context.act(question, claim), acquisitionKey: key };
+        const action = { ...context.act(question, claim), acquisitionKey: key, acquisitionVersion: ACQUISITION_VERSION };
+        if (['source-returned','context-already-available'].includes(action.outcome)) {
+          const old = [...draft.actions].reverse().find(item=>item.questionId===question.id && item.acquisitionVersion!==ACQUISITION_VERSION);
+          for(const id of old?.sourceIds || [])if(!action.sourceIds.includes(id))supersededCandidates.add(id);
+        }
         draft.actions.push(action);
         if (['source-returned', 'reading-limit'].includes(action.outcome) && action.sourceIds.some(id => !alreadyRead.has(id) &&
             (question.action !== 'missing-context' || !priorUnits.some(unit => require('./source-coverage').contains(context.units.find(item => item.id === id), unit, true))))) progress = true;
@@ -797,6 +887,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
       if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
       else if (phase === 'challenge') data.repairOnly = true;
+      data = require('./packet-context').compact(data);
       const call = async input => {
         const transport = invoke === runProvider || invoke.isProviderTransport === true;
         const health = require('./provider-health'), healthOptions = { ...providerResources, executable };
@@ -954,16 +1045,30 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     if (yieldAfterStage) { draft.yielded = true; await save(); return draft; }
     }
     let savedFeedback = resumeChallenge ? draft.checkpoint?.feedback : null;
+    // Restore a paid pending response against its EXACT stored request first.
+    // Only a genuinely new challenge performs acquisition. Both stopped
+    // challenge and completed-but-blocked checkpoints use this same boundary.
+    let preparedNewCode = false;
+    if (resumeChallenge && !draft.pendingResponse && !localOnly) {
+      const acquired = readQuestions(draft);
+      const deferred = context.prioritize(draft, draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds), [...supersededCandidates]);
+      if (deferred.length) draft.actions.push({id:`priority-${crypto.randomUUID()}`,kind:'context-priority',outcome:'candidates-deferred',performedAt:now(),sourceIds:[],
+        result:`After current question resolution, deferred only unreferenced candidates outside its required source set: ${deferred.join('; ')}. All accepted semantic references and newly requested code remain.`});
+      ensure(); const completion = context.complete(draft, { finishQuestions: true }); draft.actions.push(completion);
+      preparedNewCode = acquired || completion.sourceIds.length > 0 || context.units.some(unit => unit.readThrough < unit.source.endLine);
+      draft.readingLimits = [...context.unread].slice(0, 40);
+      draft.checkpoint.newContext ||= preparedNewCode;
+    }
     if (resumeQuestions) {
       // A stopped material question can resume from its checked draft when
       // local retrieval yields new evidence. Retrying an unavailable external
       // fact must not regenerate the same explanation or spend another call.
-      if (followups >= 2 || !(readQuestions(draft) || context.units.some(unit => unit.readThrough < unit.source.endLine))) {
+      if (!draft.pendingResponse && (followups >= 2 || !preparedNewCode)) {
         draft.phase = 'blocked'; draft.failureKind = 'material-evidence';
         draft.publication = guidePolicy.gate(draft); draft.error = draft.publication.problems[0] || 'No new local evidence resolves the remaining question.';
         draft.sources = context.units; await save(); return draft;
       }
-      followups++;
+      if (!draft.pendingResponse) followups++;
       savedFeedback = { problems: guidePolicy.gate(draft).problems, newLocalCode: true,
         instruction: 'Recheck the unresolved statements using the newly supplied local code. Preserve scope and genuine external unknowns.' };
     }
@@ -1033,4 +1138,4 @@ function create({ findingId, request, issue, catalog }) {
     claims: [], evidence: [], transitions: [], questions: [], sources: [], actions: [], experiments: [], corrections: [], runs: [],
     conclusion: { status: 'insufficient-evidence', text: 'Preparation has not yet established source-based conclusions.', humanReviewed: false, origin: 'preparation' } };
 }
-module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest };
+module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };

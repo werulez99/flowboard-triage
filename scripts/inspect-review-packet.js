@@ -31,7 +31,7 @@ async function main() {
   if (!entry) throw new Error('The imported finding cannot be reconciled with its original report boundaries.');
   const request = coordinator.request(entry, catalog, report);
   const draft = mode ? structuredClone(engine.read(root, id)) : engine.create({ findingId: id, request, issue, catalog });
-  let packet, replay, retainedHashes;
+  let packet, replay, retainedHashes, preparation;
   if (mode === '--replay-challenge') {
     if (!path.isAbsolute(priorInput || '') || !path.isAbsolute(priorResponse || '')) throw new Error('Exact saved request/response absolute paths are required.');
     retainedHashes = [priorInput, priorResponse].map(file => engine.hash(fs.readFileSync(file).toString('base64')));
@@ -41,7 +41,7 @@ async function main() {
     engine.validateCurrent(catalog, draft);
     replay = require('./replay-review').replayReview({ saved: draft, input: packet, response: raw.value || raw, units: draft.sources });
     if (JSON.stringify(retainedHashes) !== JSON.stringify([priorInput, priorResponse].map(file => engine.hash(fs.readFileSync(file).toString('base64'))))) throw new Error('Retained request or response changed.');
-  } else if (mode) ({ packet } = await require('./saved-stage-packet').inspectSavedStage({ root, catalog, request, issue, findingId: id, saved: draft }));
+  } else if (mode) ({ packet, preparation } = await require('./saved-stage-packet').inspectSavedStage({ root, catalog, request, issue, findingId: id, saved: draft }));
   else
   await engine.advance({ root, findingId: id, request, issue, catalog, draft, provider: 'codex', persist: false,
     current: () => true, publish: async () => {}, invoke: async input => {
@@ -49,18 +49,21 @@ async function main() {
       throw Object.assign(new Error('Offline capture complete. No provider process or request was started.'), { code: 'LOCAL_READING_LIMIT' });
     } });
   if (!packet) throw new Error(draft.error || 'Source preparation produced no request packet.');
-  const metrics = provider.requestMetrics(packet);
+  const metrics = provider.measureRequest(packet);
   if (JSON.stringify(records()) !== JSON.stringify(beforeRecords)) throw new Error('Offline inspection changed saved workspace records.');
   fs.mkdirSync(destination, { mode: 0o700 });
   fs.writeFileSync(path.join(destination, 'input.json'), JSON.stringify(packet, null, 2), { flag: 'wx', mode: 0o600 });
+  if (preparation) fs.writeFileSync(path.join(destination, 'preparation.json'), JSON.stringify(preparation, null, 2), { flag: 'wx', mode: 0o600 });
   if (replay) fs.writeFileSync(path.join(destination, 'replay.json'), JSON.stringify({ ...replay, retainedHashes }, null, 2), { flag: 'wx', mode: 0o600 });
   const result = { mode: replay ? 'offline-rejected-review-replay' : mode ? 'offline-saved-challenge' : 'offline-production-packet', providerRequests: 0, findingId: id, reportCount: report.issues.length,
     reportHash: report.reportHash, snapshot: draft.snapshot, sourceUnits: packet.sources.length, savedRecordsUnchanged: true, savedRecordHashes: beforeRecords,
     indexingMs: indexedAt - start, acquisitionAndPacketMs: Date.now() - indexedAt,
-    inputBytes: metrics.inputBytes, inputSections: metrics.inputSections, packetBoundBytes: metrics.requestBytes,
+    inputBytes: metrics.inputBytes, inputSections: metrics.inputSections, inputFields: metrics.inputFields, sourceUnitDetails: metrics.sourceUnits,
+    dispatchable: metrics.dispatchable, limit: metrics.limit, packetBoundBytes: metrics.requestBytes,
     inputHash: metrics.inputHash, sourcePacketHash: metrics.sourcePacketHash, instructionHash: metrics.instructionHash, schemaHash: metrics.schemaHash };
   fs.writeFileSync(path.join(destination, 'metrics.json'), JSON.stringify(result, null, 2), { flag: 'wx', mode: 0o600 });
   // Never print original report/code or private input locations to a shared log.
-  console.log(JSON.stringify({ ...result, snapshot: undefined, findingId: undefined, reportHash: undefined, savedRecordHashes: undefined }));
+  console.log(JSON.stringify({ mode: result.mode, providerRequests: 0, reportCount: result.reportCount, schemaHash: metrics.schemaHash, savedRecordsUnchanged: true, dispatchable: metrics.dispatchable,
+    inputBytes: metrics.inputBytes, packetBoundBytes: metrics.requestBytes, indexingMs: result.indexingMs, acquisitionAndPacketMs: result.acquisitionAndPacketMs }));
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

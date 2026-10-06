@@ -207,7 +207,8 @@ test('FIRST pending-response recovery projects the recovered missing input throu
   await f.runner.ensure(); await new Promise(resolve => setImmediate(resolve));
   const saved = engine.read(f.root, 'I-1'), job = f.runner.status().jobs[0], delivered = messages.at(-1).report.jobs[0];
   assert.equal(saved.failureKind, 'material-evidence'); assert.equal(job.failureKind, saved.failureKind);
-  assert.deepEqual(job.missingInputs, saved.questions.map(({ id, claimId, text, why }) => ({ id, claimId, text, why })));
+  assert.deepEqual(job.missingInputs.map(({id,claimId,text,why})=>({id,claimId,text,why})), saved.questions.map(({ id, claimId, text, why }) => ({ id, claimId, text, why })));
+  assert.equal(job.missingInputs[0].action,'missing-context');
   assert.deepEqual(delivered, job); assert.equal(f.calls.length, 0);
   assert.equal(f.runner.state.resources.requests, ledger.requests); assert.equal(f.runner.state.resources.limit, ledger.limit);
   assert.equal(f.runner.published(saved), false);
@@ -668,6 +669,49 @@ test('authorized two pairs plus generation-only observation consumes exactly fiv
   assert.equal(require('../extension/batch-plan').owedChallenges([{id:'ordinary', state:'paused', checkpoint:{stage:'challenge'}}], 'other'), 1);
 });
 
+test('runner/coordinator additive challenge plan preserves four prior attempts and never dispatches a third continuation', { skip: !native }, async t => {
+  const f = await fixture(t, 2, input => {
+    const value = response({ ...input, checkOnly: false });
+    if (input.phase === 'challenge') {
+      value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['Check the named local policy.'];
+      value.causal.outcome = 'blocked'; value.causal.obligations[0].state = 'open';
+      value.questions = [{id:'q',claimId:'c1',action:'symbol',target:'Policy::expected',text:'Inspect Policy.expected.',why:'The retained conclusion needs its local definition.'}];
+    }
+    return value;
+  },reportText(2),code+'\ncontract Policy { function expected() external pure returns (bool) { return false; } }\n');
+  f.options.configuration=()=>({provider:'codex',workers:1,requestLimit:5,findingRequestLimit:2});
+  await f.runner.ensure();await f.runner.control('pause');
+  assert.equal(f.runner.status().requests,4);assert.equal(f.runner.status().ready,0);
+  const {EvaluationPlanGuard,packetIdentity,savedBase,accountingBaseline}=require('../scripts/evaluation-plan-guard');
+  const {executionOptions,runCases}=require('../scripts/run-evaluation-plan');
+  const baseline=accountingBaseline(f.runner.state),priorReceipts=structuredClone(baseline.receipts),catalog=await f.options.catalog();
+  const {entries,report}=reconcile(f.root),cases=[];
+  for(const entry of entries){const issue=f.runner.issue(entry),request=f.runner.request(entry,catalog,report),saved=engine.read(f.root,entry.id);
+    const {packet}=await require('../scripts/saved-stage-packet').inspectSavedStage({root:f.root,catalog,request,issue,findingId:entry.id,saved});
+    cases.push({findingId:entry.id,phases:['challenge'],timeoutMs:600000,snapshotHash:engine.hash(saved.snapshot),retainedBaseHash:engine.hash(savedBase(saved)),firstPacket:packetIdentity(packet)});
+  }
+  const manifest={root:f.root,referenceHash:'separate-controlled-reference',maximumRequests:2,cases,
+    continuation:{parentManifestHash:'controlled-parent',baseline,baselineHash:engine.hash(baseline)}};
+  let ledger={manifestHash:engine.hash(manifest),used:0,receipts:[]};
+  const approval={authorized:true,manifestHash:engine.hash(manifest),maximumRequests:2};
+  const guard=new EvaluationPlanGuard({manifest,approval,ledger,root:f.root,save:()=>{},acceptedBase:id=>engine.read(f.root,id)});
+  assert.equal(guard.continuation(f.runner.state).baselineRequests,4);assert.equal(f.runner.state.resources.limit,5,'Inactive checking does not apply allowance.');
+  const changed=structuredClone(f.runner.state);changed.resources.requests=3;assert.throws(()=>guard.continuation(changed),/baseline/i);
+  const callbacks=[];
+  const invoke=async(input,options)=>{const receipt=guard.dispatch(input,options.requestId);callbacks.push(input.phase);
+    const result={value:response(input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local'}};guard.result(receipt,input,result);return result;};
+  f.runner.dispose();await f.runner.loop;
+  const runner=new ReportPreparation(f.root,executionOptions({manifest,guard,catalog:async()=>catalog,invoke}));t.after(()=>runner.dispose());
+  await runCases(runner,manifest);
+  assert.deepEqual(callbacks,['challenge','challenge']);assert.equal(ledger.used,2);assert.equal(runner.status().requests,6);assert.equal(runner.state.resources.limit,6);
+  for(const [id,receipt]of Object.entries(priorReceipts))assert.deepEqual(runner.state.resources.receipts[id],receipt);
+  assert.equal(runner.status().ready,2);
+  const accounting=JSON.stringify(accountingBaseline(runner.state));
+  await runCases(runner,manifest);assert.equal(callbacks.length,2);assert.equal(JSON.stringify(accountingBaseline(runner.state)),accounting);
+  ledger=JSON.parse(JSON.stringify(ledger));const reopened=new EvaluationPlanGuard({manifest,approval,ledger,root:f.root,save:()=>assert.fail('No refund'),acceptedBase:id=>engine.read(f.root,id)});
+  assert.ok(reopened.continuation(runner.state));assert.throws(()=>reopened.authorize({phase:'challenge',finding:{id:'I-1'}}),/Aggregate/);
+});
+
 test('an old imported report has no inherited elapsed-time stop', { skip: !native }, async t => {
   const f = await fixture(t, 1), file = path.join(f.root, '.flowboard/report.json'), old = JSON.parse(fs.readFileSync(file));
   old.importedAt = new Date(Date.now() - 3600000).toISOString(); fs.writeFileSync(file, JSON.stringify(old));
@@ -888,7 +932,10 @@ test('a long function keeps its full local body and reads its tail before a subs
   const draft = engine.read(f.root, 'I-1'), unit = draft.sources.find(item => item.name === 'Gate::finish');
   assert.ok(unit.code.length > 110000); assert.ok(unit.source.endLine > 1500);
   assert.equal(unit.readThrough, unit.source.endLine); assert.ok(unit.code.includes('reading context 1499'));
-  assert.ok(packets[1].sources.find(item => item.id === unit.id).line > 800, 'The challenge actually receives code beyond the former stored prefix.');
+  const supplied = packets[1].sources.find(item => item.id === unit.id);
+  assert.equal(supplied.line, unit.source.line, 'An isolated challenge receives the full function, not only a remembered prefix or new tail.');
+  assert.equal(supplied.endLine, unit.source.endLine);
+  assert.ok(supplied.code.includes('reading context 0:') && supplied.code.includes('reading context 1499:') && supplied.code.includes(`${guardLine} |         require(accepted, "rejected");`));
   assert.equal(unit.code, long.split('\n').slice(unit.source.line - 1, unit.source.endLine).join('\n'));
   assert.equal(draft.evidence[0].source.line, guardLine); assert.equal(draft.claims[0].status, 'contradicted');
 });

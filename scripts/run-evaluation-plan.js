@@ -5,28 +5,51 @@ const fs=require('node:fs'),path=require('node:path');
 const engine=require('../extension/investigation-engine'),provider=require('../extension/semantic-provider');
 const {EvaluationPlanGuard,packetIdentity}=require('./evaluation-plan-guard');
 async function verifyAdmission(manifest) {
-  let catalog, selected; const verified=[];
+  const verified=[];
   const root=fs.realpathSync(manifest.root),native=process.env.FLOWBOARD_EXTENSION_PATH;
   if(!native||root!==manifest.root)throw Error('Exact workspace/native dependency required.');
-  const coordinator=new(require('../extension/report-preparation').ReportPreparation)(root,{
-    configuration:()=>({provider:'codex',workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
-    catalog:async()=>{if(!catalog){const r=await require('../extension/runner-adapter').analyze(native,root,{mode:'source',background:true});catalog=new(require('../extension/source').SourceCatalog)(root,r.runner,r.result);}return catalog;},
-    invoke:async()=>{throw Error('Offline admission inspection must never dispatch.');},
-    authorizeRequest:({input})=>{
-      if(input.finding.id!==selected.findingId || input.phase!==selected.phases[0] || engine.hash(packetIdentity(input))!==engine.hash(selected.firstPacket)) {
-        fs.writeFileSync(path.join(path.dirname(selected.firstPacketPath),`drift-${Date.now()}.json`),JSON.stringify(input,null,2),{flag:'wx',mode:0o600});
-        throw Error('Saved next production packet differs from the frozen execution identity.');
-      }
-      verified.push(input.finding.id);
-      throw Object.assign(Error('Inactive evaluation: inspected before reservation; no dispatch authorized.'),{code:'REPORT_PAUSED'});
+  const inventory=()=>{const found={};const walk=folder=>{for(const name of fs.readdirSync(folder).sort()){const f=path.join(folder,name),s=fs.lstatSync(f);if(s.isSymbolicLink())throw Error('Unexpected saved-record symlink.');if(s.isDirectory())walk(f);else found[path.relative(root,f)]=engine.hash(fs.readFileSync(f).toString('base64'));}};walk(path.join(root,'.flowboard'));return found;};
+  const before=inventory(),journal=JSON.parse(fs.readFileSync(path.join(root,'.flowboard/report-preparation.json')));
+  verifyParent(manifest);
+  const indexed=await require('../extension/runner-adapter').analyze(native,root,{mode:'source',background:true});
+  const catalog=new(require('../extension/source').SourceCatalog)(root,indexed.runner,indexed.result);
+  const report=require('../extension/store').readReport(root),parsed=require('../extension/report').parseReport(report.originalReport,{manifest:true});
+  // This ephemeral guard only CHECKS admissibility. No approval file, lock,
+  // coordinator ensure, reservation, health reset or saved-project write.
+  const guard=new EvaluationPlanGuard({manifest,approval:{authorized:true,manifestHash:engine.hash(manifest),maximumRequests:manifest.maximumRequests},
+    ledger:{manifestHash:engine.hash(manifest),used:0,receipts:[]},root,save:()=>{throw Error('Offline inspection cannot reserve.');},acceptedBase:id=>engine.read(root,id)});
+  if(manifest.continuation)guard.continuation(journal);
+  const observer=new(require('../extension/report-preparation').ReportPreparation)(root,{});
+  for(const c of manifest.cases){
+    const issue=report.issues.find(i=>i.id===c.findingId),entry=parsed.issues.find(i=>i.id===c.findingId);
+    if(!issue||!entry)throw Error('Finding no longer matches the imported report.');
+    const request=observer.request(entry,catalog,report),saved=engine.read(root,c.findingId);let packet;
+    if(c.phases[0]==='challenge')({packet}=await require('./saved-stage-packet').inspectSavedStage({root,catalog,request,issue,findingId:c.findingId,saved}));
+    else {
+      if(saved?.runs?.some(r=>r.resultAccepted)||saved?.pendingResponse)throw Error('A paid stage exists; fresh generation inspection would misrepresent continuation.');
+      const draft=saved?structuredClone(saved):engine.create({findingId:c.findingId,request,issue,catalog});
+      await engine.advance({root,catalog,request,issue,findingId:c.findingId,draft,persist:false,provider:'codex',current:()=>true,publish:async()=>{},invoke:async input=>{
+        packet=input;throw Object.assign(Error('Offline capture; no reservation.'),{code:'LOCAL_READING_LIMIT'});
+      }});
     }
-  });
-  try{
-    for(const c of manifest.cases){selected=c;await coordinator.continueFinding(c.findingId);coordinator.control('pause');await coordinator.loop;
-      if(coordinator.status().requests!==0)throw Error('Offline admission found consumed accounting; no further inspection.');}
-    if(verified.length!==manifest.cases.length)throw Error('Not every saved next packet matched. Inspect finite coordinator status.');
-    console.log(JSON.stringify({manifestHash:engine.hash(manifest),verified,providerRequests:0,reservations:0,mode:coordinator.status().mode}));
-  }finally{coordinator.dispose();await coordinator.loop;}
+    if(!packet)throw Error('No admissible next packet.');guard.check(packet);verified.push(c.findingId);
+  }
+  if(engine.hash(before)!==engine.hash(inventory()))throw Error('Offline verification changed retained records.');
+  console.log(JSON.stringify({manifestHash:engine.hash(manifest),verified,providerRequests:0,newReservations:0,baselineRequests:journal.resources.requests,savedRecordsUnchanged:true}));
+}
+function verifyParent(manifest) {
+  const c=manifest.continuation;if(!c)return;
+  if(!path.isAbsolute(c.parentManifestPath||'')||!path.isAbsolute(c.parentLedgerPath||'')||
+    engine.hash(JSON.parse(fs.readFileSync(c.parentManifestPath)))!==c.parentManifestHash ||
+    engine.hash(JSON.parse(fs.readFileSync(c.parentLedgerPath)))!==c.parentLedgerHash)throw Error('Parent manifest/ledger changed or missing; no continuation permission.');
+}
+function executionOptions({manifest,guard,catalog,invoke}) {
+  return {configuration:()=>({provider:'codex',executable:manifest.executable,workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
+    catalog,phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
+    log:message=>console.error(message)};
+}
+async function runCases(coordinator,manifest) {
+  for(const c of manifest.cases){await coordinator.continueFinding(c.findingId);coordinator.control('pause');await coordinator.loop;}
 }
 async function main() {
   const [file,mode,approvalFile]=process.argv.slice(2);
@@ -38,6 +61,7 @@ async function main() {
   if (mode!=='--execute' || !path.isAbsolute(approvalFile||'')) throw Error('Explicit execution mode and separate approval file required.');
   const approval=JSON.parse(fs.readFileSync(approvalFile));
   if (!approval.authorized || approval.manifestHash!==engine.hash(manifest) || approval.maximumRequests!==manifest.maximumRequests) throw Error('No approval for this exact evaluation.');
+  verifyParent(manifest);
   const root=fs.realpathSync(manifest.root),native=process.env.FLOWBOARD_EXTENSION_PATH;
   if (!native || root!==manifest.root) throw Error('Exact workspace and original native dependency required.');
   const sha=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
@@ -57,13 +81,14 @@ async function main() {
     const ledgerFile=path.join(path.dirname(file),'execution-ledger.json');
     const ledger=fs.existsSync(ledgerFile)?JSON.parse(fs.readFileSync(ledgerFile)):{manifestHash:engine.hash(manifest),used:0,receipts:[]};
     const journal=JSON.parse(fs.readFileSync(path.join(root,'.flowboard/report-preparation.json')));
-    if(journal.resources.requests>ledger.used || Object.values(journal.jobs).some(job=>job.requests>ledger.receipts.filter(r=>r.findingId===job.id).length))
+    if(!manifest.continuation && (journal.resources.requests>ledger.used || Object.values(journal.jobs).some(job=>job.requests>ledger.receipts.filter(r=>r.findingId===job.id).length)))
       throw Error('Evaluation ledger is missing or behind production accounting; no allowance is recreated.');
     const save=value=>ownership.publish(ledgerFile,value,true);
     let catalog;
     const guard=new EvaluationPlanGuard({manifest,approval,ledger,save,root,acceptedBase:id=>{
       const draft=engine.read(root,id);if(draft)engine.validateCurrent(catalog,draft);return draft;
     }});
+    if(manifest.continuation)guard.continuation(journal);
     const invoke=async(input,options)=>{
       const receipt=guard.dispatch(input,options.requestId);
       // Raw immutable packets/responses remain private beside the manifest.
@@ -73,17 +98,13 @@ async function main() {
         fs.writeFileSync(prefix+'-result.json',JSON.stringify(result,null,2),{flag:'wx',mode:0o600});guard.result(receipt,input,result);return result;
       } catch(error){guard.result(receipt,input,null,error);throw error;}
     };invoke.isProviderTransport=true;
-    coordinator=new(require('../extension/report-preparation').ReportPreparation)(root,{
-      configuration:()=>({provider:'codex',executable:manifest.executable,workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
-      catalog:async signal=>{if(!catalog){const r=await require('../extension/runner-adapter').analyze(native,root,{mode:'source',background:true,signal});catalog=new(require('../extension/source').SourceCatalog)(root,r.runner,r.result);}return catalog;},
-      phasePlan:id=>guard.phasePlan(id), authorizeRequest:({input})=>guard.authorize(input),invoke,
-      log:message=>console.error(message)
-    });
+    coordinator=new(require('../extension/report-preparation').ReportPreparation)(root,executionOptions({manifest,guard,
+      catalog:async signal=>{if(!catalog){const r=await require('../extension/runner-adapter').analyze(native,root,{mode:'source',background:true,signal});catalog=new(require('../extension/source').SourceCatalog)(root,r.runner,r.result);}return catalog;},invoke}));
     // Only explicit case-local admission, never Resume entire report. Existing
     // exhausted accounting is not reset or increased on reopen.
-    for(const c of manifest.cases){await coordinator.continueFinding(c.findingId);coordinator.control('pause');await coordinator.loop;}
+    await runCases(coordinator,manifest);
     console.log(JSON.stringify({used:ledger.used,status:coordinator.status()}));
   } finally {coordinator?.dispose();await coordinator?.loop;ownership.removeOwned(lock,owner.owner);}
 }
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});
-module.exports={main};
+module.exports={main,verifyAdmission,executionOptions,runCases,verifyParent};

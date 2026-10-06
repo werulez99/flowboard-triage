@@ -15,6 +15,10 @@ function savedBase(draft) {
   return { earlierDraft: draft.bindingPlan ? require('../extension/source-bindings').wire(earlier, draft.bindingPlan) : earlier,
     assembledEarlier: draft.bindingPlan ? require('../extension/source-bindings').derived(draft) : null };
 }
+function accountingBaseline(journal) {
+  return { project:journal.project,reportHash:journal.reportHash,requests:journal.resources.requests,limit:journal.resources.limit,
+    receipts:journal.resources.receipts || {},jobs:Object.fromEntries(Object.entries(journal.jobs).map(([id,job])=>[id,{requests:job.requests,requestLimit:job.requestLimit}])) };
+}
 class EvaluationPlanGuard {
   constructor({ manifest, approval, ledger, save, root, acceptedBase }) {
     this.manifest=manifest;this.approval=approval;this.ledger=ledger;this.save=save;this.root=fs.realpathSync(root);this.acceptedBase=acceptedBase;
@@ -35,7 +39,7 @@ class EvaluationPlanGuard {
     if (input.phase==='challenge') {
       const base=this.acceptedBase(c.findingId);
       if (!base || !engine.sameSnapshot(base.snapshot,input.snapshot) || base.pendingResponse || base.lastRejected ||
-          base.checkpoint?.stage!=='challenge') deny('A compatible accepted generation is required, not a pending/rejected response.');
+          !['challenge','complete'].includes(base.checkpoint?.stage)) deny('A compatible accepted stage is required, not a pending/rejected response.');
       if (receipts.length && !base.runs?.some(r=>r.requestId===receipts[0].requestId && r.resultAccepted)) deny('The reserved generation was not accepted by the engine.');
       const expected=savedBase(base);
       if (engine.hash(input.earlierDraft)!==engine.hash(expected.earlierDraft) || engine.hash(input.assembledEarlier||null)!==engine.hash(expected.assembledEarlier))
@@ -52,6 +56,32 @@ class EvaluationPlanGuard {
     // dispatch without making a read-only debt scan fail the selected case.
     if (!item) return [];
     return [...item.phases];
+  }
+  continuation(journal) {
+    const b=this.manifest.continuation;
+    if(!b)return null;
+    // Approval is checked before the host is given any allowance mutation.
+    this.phasePlan(this.manifest.cases[0]?.findingId);
+    if(this.ledger.manifestHash!==engine.hash(this.manifest)||this.ledger.used!==this.ledger.receipts.length||this.ledger.used>this.manifest.maximumRequests)
+      deny('Continuation execution ledger is missing, mismatched or damaged.');
+    if(this.manifest.cases.some(c=>c.phases.join()!=='challenge') || this.manifest.maximumRequests>2 ||
+       !b.parentManifestHash || engine.hash(b.baseline)!==b.baselineHash || journal.project!==b.baseline.project || journal.reportHash!==b.baseline.reportHash)
+      deny('Continuation requires its exact parent/nonzero-history baseline and challenge-only cases.');
+    const marker=journal.evaluationContinuations?.[engine.hash(this.manifest)];
+    if(!marker && engine.hash(accountingBaseline(journal))!==b.baselineHash)deny('Production baseline changed before additive approval.');
+    if(marker && (marker.baselineHash!==b.baselineHash || marker.maximumRequests!==this.manifest.maximumRequests))deny('Continuation marker changed.');
+    const prior=b.baseline.receipts;
+    for(const [id,receipt]of Object.entries(prior))if(engine.hash(journal.resources.receipts[id])!==engine.hash(receipt))deny('A historical production receipt changed.');
+    const extra=Object.values(journal.resources.receipts).filter(r=>!Object.hasOwn(prior,r.id));
+    if(journal.resources.requests!==b.baseline.requests+extra.length || extra.some(r=>!this.ledger.receipts.some(x=>x.requestId===r.id&&x.findingId===r.findingId)) || extra.length>this.ledger.used)
+      deny('Continuation ledger is behind or unrelated to production history.');
+    for(const [id,old]of Object.entries(b.baseline.jobs))if(journal.jobs[id]?.requests!==old.requests+extra.filter(r=>r.findingId===id).length)deny('Finding accounting differs from the pinned baseline.');
+    return {id:engine.hash(this.manifest),parentManifestHash:b.parentManifestHash,baselineHash:b.baselineHash,baselineRequests:b.baseline.requests,
+      maximumRequests:this.manifest.maximumRequests,findings:Object.fromEntries(this.manifest.cases.map(c=>[c.findingId,{baselineRequests:b.baseline.jobs[c.findingId].requests,attempts:c.phases.length}]))};
+  }
+  phaseRemaining(id) {
+    const phases=this.phasePlan(id);
+    return this.ledger.used<this.manifest.maximumRequests && this.ledger.receipts.filter(r=>r.findingId===id).length<phases.length;
   }
   authorize(input) {
     const timeoutMs=this.check(input), receipt={findingId:input.finding.id,phase:input.phase,timeoutMs,...packetIdentity(input),
@@ -74,4 +104,4 @@ class EvaluationPlanGuard {
       responseHash:result?engine.hash(result.value):null,error:error?.message||null});this.save(this.ledger);
   }
 }
-module.exports={EvaluationPlanGuard,packetIdentity,savedBase};
+module.exports={EvaluationPlanGuard,packetIdentity,savedBase,accountingBaseline};
