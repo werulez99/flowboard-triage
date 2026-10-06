@@ -137,7 +137,7 @@ test('a crash after a durable provider response reuses generation in a fresh pro
   const reopen = run('restore'); assert.equal(reopen.status, 0, reopen.stderr);
   assert.deepEqual(JSON.parse(reopen.stdout).calls, []); assert.deepEqual(JSON.parse(reopen.stdout).readable, ['I-1']);
 });
-test('a final paid response recovers in a fresh disabled-provider host at 2/2 without increasing allowance', { skip: !native }, async t => {
+test('a final paid response recovers after historical default expiry in a disabled-provider host at 2/2', { skip: !native }, async t => {
   const f = await fixture(t, 2), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
   // Retained small ledgers remain valid historical states. New cold reports
   // instead stop at the shortfall preflight tested separately above.
@@ -152,6 +152,9 @@ test('a final paid response recovers in a fresh disabled-provider host at 2/2 wi
   const before = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024);
   assert.equal(before.resources.requests, 2); assert.equal(before.resources.limit, 2);
   assert.ok(Object.values(before.resources.receipts).every(item => item.outcome === 'completed'));
+  before.mode = 'paused'; before.batch = { startedAt: new Date(Date.now() - 3600000).toISOString(),
+    deadlineAt: new Date(Date.now() - 1800000).toISOString(), finishedAt: new Date(Date.now() - 1800000).toISOString(), outcome: 'deadline-exceeded' };
+  p.atomicJson(f.root, '.flowboard/report-preparation.json', before);
   const reopened = run('restore'); assert.equal(reopened.status, 0, reopened.stderr);
   const state = JSON.parse(reopened.stdout);
   assert.deepEqual(state.calls, []); assert.deepEqual(state.readable, ['I-1']);
@@ -161,6 +164,9 @@ test('a final paid response recovers in a fresh disabled-provider host at 2/2 wi
   assert.equal(accepted.causal.summary, pending.causal.summary);
   assert.ok(accepted.runs.some(run => run.phase === 'challenge' && run.reusedResponse));
   assert.equal(accepted.pendingResponse, undefined);
+  const restored = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024);
+  assert.equal(restored.batch.startedAt, before.batch.startedAt); assert.equal(restored.batch.historicalStop.deadlineAt, before.batch.deadlineAt);
+  assert.deepEqual(restored.resources, before.resources, 'Unpaid recovery does not rewrite receipts/accounting.');
   const again = JSON.parse(run('restore').stdout);
   assert.deepEqual(again.calls, []); assert.deepEqual(again.readable, ['I-1']); assert.equal(again.status.requestLimit, 2);
 });
@@ -625,6 +631,59 @@ test('a 301-entry import schedules every legitimate entry independently before r
   assert.equal(f.runner.status().published, false);
 });
 module.exports = { response };
+
+test('authorized two pairs plus generation-only observation consumes exactly five without orphan challenge debt', { skip: !native }, async t => {
+  const f = await fixture(t, 3), { EvaluationPlanGuard, packetIdentity } = require('../scripts/evaluation-plan-guard');
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 5, workers: 1 }); await f.runner.ensure();
+  const catalog = await f.options.catalog(), { report, entries } = reconcile(f.root), cases = [];
+  for (const entry of entries) {
+    const request = f.runner.request(entry, catalog, report), issue = f.runner.issue(entry); let packet;
+    await engine.advance({ root: f.root, catalog, request, issue, findingId: entry.id, draft: engine.create({ findingId: entry.id, catalog, request, issue }),
+      provider: 'codex', persist: false, current: () => true, publish: async () => {}, invoke: async input => { packet = input; throw Object.assign(Error('offline capture'), { code: 'REPORT_PAUSED' }); } });
+    cases.push({ findingId: entry.id, phases: entry.id === 'I-3' ? ['generate'] : ['generate', 'challenge'], timeoutMs: 600000,
+      snapshotHash: engine.hash(packet.snapshot), firstPacket: packetIdentity(packet) });
+  }
+  const manifest = { root: f.root, maximumRequests: 5, referenceHash: 'independent-control', cases }, ledger = { manifestHash: engine.hash(manifest), used: 0, receipts: [] };
+  const guard = new EvaluationPlanGuard({ root: f.root, manifest, approval: { authorized: true, manifestHash: engine.hash(manifest), maximumRequests: 5 }, ledger,
+    save: () => {}, acceptedBase: id => engine.read(f.root, id) });
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 5, workers: 1 });
+  f.options.phasePlan = id => guard.phasePlan(id);
+  f.options.authorizeRequest = ({ input }) => guard.authorize(input);
+  f.options.invoke = async (input, options) => {
+    const receipt = guard.dispatch(input, options.requestId), value = response(input);
+    const result = { value: input.phase === 'generate' ? require('../scripts/fixtures/source-bound-output').encode(value, input) : value, audit: { requestId: options.requestId, outcome: 'completed', phase: input.phase, provider: 'controlled' } };
+    f.calls.push([input.finding.id, input.phase]); guard.result(receipt, input, result); return result;
+  };
+  for (const c of cases) { await f.runner.continueFinding(c.findingId); await f.runner.control('pause');
+    t.diagnostic(JSON.stringify({ id: c.findingId, reason: f.runner.state.jobs[c.findingId].reason, receipts: ledger.receipts.map(r => ({ phase: r.phase, completeGeneration: r.completeGeneration })) })); }
+  assert.deepEqual(f.calls, [['I-1','generate'],['I-1','challenge'],['I-2','generate'],['I-2','challenge'],['I-3','generate']]);
+  assert.equal(ledger.used, 5); assert.equal(f.runner.status().requests, 5);
+  for (const id of ['I-1', 'I-2']) assert.ok(f.runner.published(engine.read(f.root, id)));
+  const observation = engine.read(f.root, 'I-3'); assert.ok(observation.claims.length); assert.equal(observation.checkpoint.stage, 'challenge');
+  assert.equal(f.runner.published(observation), false); assert.equal(f.runner.state.jobs['I-3'].state, 'blocked');
+  assert.equal(require('../extension/batch-plan').owedChallenges(Object.values(f.runner.state.jobs), 'other', id => id !== 'I-3'), 0);
+  await f.runner.ensure(); assert.equal(ledger.used, 5); assert.equal(f.calls.length, 5);
+  await f.runner.continueFinding('I-3'); assert.equal(ledger.used, 5); assert.equal(f.calls.length, 5);
+  assert.equal(require('../extension/batch-plan').owedChallenges([{id:'ordinary', state:'paused', checkpoint:{stage:'challenge'}}], 'other'), 1);
+});
+
+test('an old imported report has no inherited elapsed-time stop', { skip: !native }, async t => {
+  const f = await fixture(t, 1), file = path.join(f.root, '.flowboard/report.json'), old = JSON.parse(fs.readFileSync(file));
+  old.importedAt = new Date(Date.now() - 3600000).toISOString(); fs.writeFileSync(file, JSON.stringify(old));
+  await f.runner.ensure(); assert.equal(f.calls.length, 2); assert.equal(f.runner.status().ready, 1);
+  assert.equal(f.runner.state.batch.startedAt, old.importedAt);
+});
+
+test('historical expiry does not auto-resume a paused job but explicit local continuation works', { skip: !native }, async t => {
+  const f = await fixture(t, 1); f.options.configuration = () => ({ provider: 'none', requestLimit: 6 }); await f.runner.ensure();
+  f.runner.state.batch = { startedAt: new Date(Date.now()-3600000).toISOString(), deadlineAt: new Date(Date.now()-1800000).toISOString(), outcome: 'deadline-exceeded' };
+  f.runner.state.mode = 'paused'; f.runner.state.jobs['I-1'].state = 'paused'; f.runner.save();
+  const startedAt = f.runner.state.batch.startedAt;
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6 }); await f.runner.ensure();
+  assert.equal(f.calls.length, 0); assert.equal(f.runner.state.mode, 'paused');
+  await f.runner.continueFinding('I-1'); assert.equal(f.calls.length, 2); assert.equal(f.runner.status().ready, 1);
+  assert.equal(f.runner.state.batch.startedAt, startedAt);
+});
 
 test('204 fresh jobs complete both real engine stages and publication with automatic finite allowance', { skip: !native }, async t => {
   const count = 204, phases = new Map(); let peak = 0, active = 0, indexed = 0;

@@ -233,7 +233,12 @@ class ReportPreparation {
       jobs: sameProject ? old.jobs : {}, publication: null,
       resources: sameProject ? old.resources : { requests: 0, limit: Math.min(10000, config.requestLimit > 0 ? config.requestLimit : entries.length * (config.findingRequestLimit || batch.DEFAULT_ATTEMPTS)),
         allowanceMode: config.requestLimit > 0 ? 'explicit' : 'automatic', costUSD: null },
-      ...(!sameProject ? { batch: { startedAt: report.importedAt, deadlineAt: new Date(Date.parse(report.importedAt) + Math.min(batch.DEADLINE_MS, config.batchDeadlineMs || batch.DEADLINE_MS)).toISOString(), outcome: 'pending' } } : old.batch ? { batch: old.batch } : {}) };
+      ...(!sameProject ? { batch: { startedAt: report.importedAt, outcome: 'pending',
+        ...(config.batchDeadlineMs > 0 ? { stopPolicy: 'explicit-user-v1', deadlineAt: new Date(Date.parse(report.importedAt) + config.batchDeadlineMs).toISOString() } : {}) } } : old.batch ? { batch: old.batch } : {}) };
+    if (this.state.batch?.deadlineAt && !this.deadlineEnabled()) {
+      this.state.batch.historicalStop ||= { deadlineAt: this.state.batch.deadlineAt, outcome: this.state.batch.outcome, finishedAt: this.state.batch.finishedAt || null };
+      if (this.state.reason?.startsWith('Preparation deadline reached;')) this.state.reason = 'The historical automatic time limit no longer stops review. Work remains paused; explicitly continue an eligible finding within its existing allowance.';
+    }
     this.state.version = VERSION;
     const currentIds = new Set(entries.map(entry => entry.id));
     for (const id of Object.keys(this.state.jobs)) if (!currentIds.has(id)) { delete this.state.jobs[id]; this.accepted.delete(id); }
@@ -262,7 +267,7 @@ class ReportPreparation {
       if (!fs.existsSync(path.join(this.root, '.flowboard/investigations'))) return;
     }
     clearTimeout(this.deadlineTimer);
-    if (this.state.batch && !this.expired()) this.deadlineTimer = setTimeout(() => this.expire(), Math.max(1, Date.parse(this.state.batch.deadlineAt) - Date.now()));
+    if (this.deadlineEnabled() && !this.expired()) this.deadlineTimer = setTimeout(() => this.expire(), Math.max(1, Date.parse(this.state.batch.deadlineAt) - Date.now()));
     // Disabled providers must not make ordinary import eagerly index code.
     // Existing private/accepted artifacts still take the local revalidation
     // path below, including migration while report work is paused.
@@ -431,7 +436,9 @@ class ReportPreparation {
     this.save();
   }
   issue(entry) { return { ...entry, reportText: entry.body }; }
-  expired() { return !!this.state?.batch && Date.now() >= Date.parse(this.state.batch.deadlineAt); }
+  deadlineEnabled() { return this.state?.batch?.stopPolicy === 'explicit-user-v1' && Number.isFinite(Date.parse(this.state.batch.deadlineAt)); }
+  expired() { return this.deadlineEnabled() && Date.now() >= Date.parse(this.state.batch.deadlineAt); }
+  observationOnly(id) { return this.options.phasePlan?.(id)?.join() === 'generate'; }
   expire() {
     if (!this.expired() || this.disposed || this.state.batch.outcome === 'completed') return;
     this.state.batch.outcome = 'deadline-exceeded'; this.state.batch.finishedAt ||= now();
@@ -487,7 +494,7 @@ class ReportPreparation {
       attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
     const current = () => {
-      if (this.disposed || this.expired() || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
+      if (this.disposed || (!localOnly && this.expired()) || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
       try {
         return p.readWorkspaceJson(this.root, '.flowboard/report.json', 12 * 1024 * 1024).reportHash === report.reportHash &&
           engine.findingInputHash(this.request(entry, catalog, report), issue) === fresh.snapshot.reportHash;
@@ -498,12 +505,14 @@ class ReportPreparation {
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
         providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly,
         beforeRequest: async data => {
+          const phases = this.options.phasePlan?.(entry.id);
+          if (phases && !phases.includes(data.phase)) throw Object.assign(new Error('This authorized phase plan does not permit the next request; retained observation remains unpublished.'), { code: 'REPORT_PAUSED' });
           if (this.state.mode !== 'running' && !this.localEligible.has(entry.id)) throw Object.assign(new Error('Paused after the current request. Resume will reuse the accepted stage.'), { code: 'REPORT_PAUSED' });
           if (!current()) throw Object.assign(new Error('Preparation inputs changed before dispatch.'), { code: 'INVESTIGATION_SUPERSEDED' });
           if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error(`Report request allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). Accepted stages are saved.`), { code: 'REPORT_BUDGET' });
           if (job.requests >= job.requestLimit) throw Object.assign(new Error(`Finding ${job.id} request allowance exhausted (${job.requests}/${job.requestLimit}). Other findings may continue.`), { code: 'FINDING_BUDGET' });
           const challengeCapacity = () => {
-            const owed = batch.owedChallenges(Object.values(this.state.jobs), entry.id) + (data.phase === 'generate' ? 1 : 0);
+            const owed = batch.owedChallenges(Object.values(this.state.jobs), entry.id, id => !this.observationOnly(id)) + (data.phase === 'generate' && !this.observationOnly(entry.id) ? 1 : 0);
             if (this.state.resources.limit - this.state.resources.requests <= owed) throw Object.assign(new Error(`Remaining allowance is reserved for ${owed} mandatory challenges of admitted findings; no new request was reserved.`), { code: 'FINDING_BUDGET' });
           };
           challengeCapacity();
@@ -558,6 +567,11 @@ class ReportPreparation {
         finishedAt: now(), elapsedMs: Date.now() - Date.parse(job.startedAt), runs: draft.runs.slice(-12) });
       if (checked(draft)) this.accept(entry, draft, job);
       else this.recoveryStatus(job, draft);
+      if (this.observationOnly(entry.id) && draft.yielded && draft.checkpoint?.stage === 'challenge') {
+        Object.assign(job, { state: 'blocked', stage: 'unpublished-observation', publishable: false,
+          reason: 'The authorized generation-only observation is saved. No challenge is authorized and no checked walkthrough is published.' });
+        this.localEligible.delete(entry.id);
+      }
       const diagnostic = draft.runs.at(-1)?.diagnostics?.lastReportedError;
       const nonRetryable = ['authentication', 'authorization', 'request-format', 'context-limit', 'model-unavailable'].includes(diagnostic?.category) || diagnostic?.code === 'insufficient_quota';
       if (draft.failureKind === 'provider' && !nonRetryable && (job.providerFailures = (job.providerFailures || 0) + 1) < 2 && job.requests < job.requestLimit && this.state.mode === 'running') {

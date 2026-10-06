@@ -76,7 +76,7 @@ async function main() {
     coordinator=new(require('../extension/report-preparation').ReportPreparation)(root,{
       configuration:()=>({provider:'codex',executable:manifest.executable,workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
       catalog:async signal=>{if(!catalog){const r=await require('../extension/runner-adapter').analyze(native,root,{mode:'source',background:true,signal});catalog=new(require('../extension/source').SourceCatalog)(root,r.runner,r.result);}return catalog;},
-      authorizeRequest:({input})=>guard.authorize(input),invoke,
+      phasePlan:id=>guard.phasePlan(id), authorizeRequest:({input})=>guard.authorize(input),invoke,
       log:message=>console.error(message)
     });
     // Only explicit case-local admission, never Resume entire report. Existing

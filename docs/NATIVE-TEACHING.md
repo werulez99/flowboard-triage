@@ -1,5 +1,15 @@
 # Native teaching and finite report preparation (0.19.11)
 
+Policy correction after this delivery: the 20/30-minute batch goal is an
+observation target, not a default stop. The old inherited `deadlineAt` and
+`reportDeadlineMinutes` setting are historical only. New optional
+`reportTimeLimitMinutes > 0` explicitly chooses a stop for a new run; its default
+is zero. Request timeouts, bounded attempts, ownership and health checks remain.
+Old paused/cancelled jobs are not automatically resumed, and paid local recovery
+does not require extending a time allowance. The original timestamps remain.
+The deadline implementation described below records the earlier delivered
+behavior, not the corrected current default.
+
 Baseline: `d64214b347551665fc23cba5e93ef00d516f3203`, development branch
 `improve/checked-reading-path`. Original native dependency remains 1.2.0,
 policy v9 and source-bindings-v1. No product-provider request was authorized or

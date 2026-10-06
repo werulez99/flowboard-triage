@@ -1,6 +1,6 @@
 'use strict';
 // Finite local planning, NOT provider quota discovery or a measured ETA.
-const MAX_CONCURRENCY = 32, DEFAULT_ATTEMPTS = 6, DEADLINE_MS = 30 * 60 * 1000;
+const MAX_CONCURRENCY = 32, DEFAULT_ATTEMPTS = 6;
 const capacity = value => Math.max(1, Math.min(MAX_CONCURRENCY, Number.isInteger(value) ? value : 2));
 function plan(jobs, resources, workers, providerCapacity) {
   const unfinished = jobs.filter(job => !job.publishable);
@@ -16,9 +16,9 @@ function plan(jobs, resources, workers, providerCapacity) {
       excludes: 'Local preparation, token/request quotas, backoff, repairs and longest dependent path. Remote capacity and monetary cost are unknown.' },
     basis: 'Expected: generation + mandatory challenge, or one saved-stage challenge. Maximum: bounded remaining finding attempts, including one response repair across the retained generation/challenge checkpoint and at most two new-source follow-ups; a transport retry also consumes allowance.' };
 }
-function owedChallenges(jobs, selectedId) {
-  return jobs.filter(job => job.id !== selectedId && !job.publishable &&
+function owedChallenges(jobs, selectedId, requiresChallenge = () => true) {
+  return jobs.filter(job => job.id !== selectedId && requiresChallenge(job.id) && !job.publishable &&
     (job.checkpoint?.stage === 'challenge' && !['blocked', 'failed', 'cancelled'].includes(job.state) ||
       job.state === 'running' && job.stage === 'generate')).length;
 }
-module.exports = { capacity, plan, owedChallenges, MAX_CONCURRENCY, DEFAULT_ATTEMPTS, DEADLINE_MS };
+module.exports = { capacity, plan, owedChallenges, MAX_CONCURRENCY, DEFAULT_ATTEMPTS };

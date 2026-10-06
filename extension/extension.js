@@ -41,7 +41,7 @@ function activate(context) {
           return { provider, executable: config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined,
             budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 0),
             findingRequestLimit: config.get('findingRequestLimit', 6), workers: config.get('preparationWorkers', 2),
-            providerCapacity: config.get('providerConcurrency', 2), batchDeadlineMs: config.get('reportDeadlineMinutes', 30) * 60000 }; },
+            providerCapacity: config.get('providerConcurrency', 2), batchDeadlineMs: config.get('reportTimeLimitMinutes', 0) * 60000 }; },
         // Unsaved project dependencies affect every analysis. A finding JSON
         // is an input only to that finding, not a report-wide reading barrier.
         // No ID means "project-wide dirty", not "any finding is dirty".

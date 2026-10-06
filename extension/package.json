@@ -57,9 +57,9 @@
           "type": "integer", "default": 2, "minimum": 1, "maximum": 32, "scope": "machine",
           "description": "Configured shared local capacity per OS user/provider across projects, not discovered remote account quota or cross-machine coordination. Conflicting active capacity settings are refused; change when the shared pool is idle. Configure only supported host/account capacity. Does not grant request or monetary allowance."
         },
-        "flowboardTriage.reportDeadlineMinutes": {
-          "type": "integer", "default": 30, "minimum": 1, "maximum": 30, "scope": "resource",
-          "description": "Acceptance window for NEW report runs, measured from import acceptance including local work and capacity waits. Expiry stops new dispatch and cancels owned work with finite cleanup; accepted guides/checkpoints survive. Reload never restarts the clock."
+        "flowboardTriage.reportTimeLimitMinutes": {
+          "type": "integer", "default": 0, "minimum": 0, "maximum": 1440, "scope": "resource",
+          "description": "Optional explicit time limit for NEW report runs, from import acceptance. Default 0: observe elapsed time without stopping quality review. Positive selection stops owned work at its chosen boundary, preserving paid responses and guides. Historical reportDeadlineMinutes/default deadlines do not authorize a stop. Per-request timeouts and request caps still apply."
         },
         "flowboardTriage.analysisMode": {
           "type": "string", "enum": ["source", "slither"], "default": "source",

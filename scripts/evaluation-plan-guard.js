@@ -44,6 +44,13 @@ class EvaluationPlanGuard {
     }
     return c.timeoutMs;
   }
+  phasePlan(findingId) {
+    if (this.approval?.authorized !== true || this.approval.manifestHash !== engine.hash(this.manifest) || this.approval.maximumRequests !== this.manifest.maximumRequests || this.root !== this.manifest.root)
+      deny('No trusted evaluation phase plan for this workspace/approval.');
+    const item = this.manifest.cases.find(c => c.findingId === findingId);
+    if (!item) deny('Finding is outside the approved phase plan.');
+    return [...item.phases];
+  }
   authorize(input) {
     const timeoutMs=this.check(input), receipt={findingId:input.finding.id,phase:input.phase,timeoutMs,...packetIdentity(input),
       reservedAt:new Date().toISOString(),outcome:'reserved',requestId:null,dispatched:false};
