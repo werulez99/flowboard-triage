@@ -53,6 +53,23 @@ test('a real declaration cannot carry a claim of an operation or committed resul
   assert.ok(policy.gate(draft).problems.some(problem => /declaration is context/.test(problem)));
   draft.causal.events[0].effect = 'read'; assert.equal(policy.gate(draft).ready, true);
 });
+test('a supported primary statement does not require a narrowed secondary impact to become supported', () => {
+  const draft = checked(), second = structuredClone(draft.claims[0]); second.id = 'c2'; second.status = 'narrowed';
+  draft.claims[0].status = 'supported'; draft.claims.push(second);
+  draft.evidence.push({ ...structuredClone(draft.evidence[0]), id: 'secondary', claimId: 'c2' });
+  for (const obligation of [...draft.causal.obligations]) {
+    const other = { ...structuredClone(obligation), id: `secondary-${obligation.id}`, claimId: 'c2', evidence: ['secondary'], state: obligation.kind === 'impact' ? 'refuted' : 'established' };
+    draft.causal.obligations.push(other); draft.causal.checks.push({ target: other.id, reason: other.reason, evidence: ['secondary'], documentation: [] });
+    obligation.state = 'established';
+  }
+  draft.causal.outcome = 'supported'; draft.property = { text: 'Controlled independently supplied rule', basis: 'source-contract', evidence: ['guard'] };
+  draft.evidence[0].stance = 'supports'; draft.walkthrough.assessment = { result: 'valid', why: 'Primary supported; secondary impact refuted in scope.', supportingEvidence: 'guard', opposingEvidence: 'secondary' };
+  assert.equal(policy.gate(draft).ready, true, policy.gate(draft).problems.join('\n'));
+  draft.causal.obligations.find(item => item.claimId === 'c1' && item.kind === 'impact').state = 'refuted';
+  assert.equal(policy.gate(draft).ready, false, 'No established primary impact cannot be hidden behind a narrowed secondary.');
+  draft.causal.obligations.find(item => item.claimId === 'c1' && item.kind === 'impact').state = 'established';
+  draft.claims[1].unknowns = ['A material input remains unavailable']; assert.equal(policy.gate(draft).ready, false);
+});
 test('the displayed issue assessment must agree with the explanation and its decisive evidence', () => {
   const draft = checked(); draft.walkthrough.assessment.result = 'valid';
   assert.equal(policy.gate(draft).ready, false);

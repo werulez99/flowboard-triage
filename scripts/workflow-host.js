@@ -309,6 +309,7 @@ async function start(options = {}) {
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
       return json({ readOnly, productionExtension, productionVersion, selectionRoute: options.productionSelection ? 'extension.activate/openFinding/sourceCatalog/board.open' : 'controller-harness', productionTrace, reportPreparation: reportPreparation?.status(), ...(options.mixedFixture ? { mixedHeld } : {}), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
         investigation: board.models.get(board.activeId)?.investigationDraft || null,
+        exposedInvestigation: board.exposed(board.models.get(board.activeId)?.investigationDraft) || null,
         privatePreparationDraft: reportPreparation && board.activeId ? require(path.join(productionExtension, 'investigation-engine')).read(root, board.activeId) : null,
         debug: { nativeToken: board.native.triageToken, nativeFinding: board.native.triageFindingId, callbacks: panel.callbacks.length, disposed: board.disposed, trusted: api.workspace.isTrusted },
         library: storage.library(root), lastLoad: pending.findLast(message => message.type === 'triage:load') || null });

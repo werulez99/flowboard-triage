@@ -33,11 +33,12 @@
   const preparationJob = id => reportPreparation?.jobs?.find(job => job.id === id);
   const canContinueFinding = () => {
     const job = preparationJob(active);
-    return job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
+    return job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
+      !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
-    job?.failureKind === 'material-evidence' ? 'Needs evidence' : ['validation', 'structural'].includes(job?.failureKind) ? 'Invalid review response' :
+    job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
   const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
   function updatePreparationRows() {
@@ -163,7 +164,7 @@
       }
       if (selectedJob?.validationProblems?.length) {
         const invalid = element('details'); invalid.append(element('summary', '', 'Retained response: targeted repair needed'));
-        for (const item of selectedJob.validationProblems) invalid.append(element('p', '', `${item.code}: ${item.message}`));
+        for (const item of selectedJob.validationProblems) invalid.append(element('p', '', `${item.code}${item.target ? ` (${item.target})` : ''}: ${item.message}`), ...(item.action ? [element('small', 'triage-muted', item.action)] : []));
         parent.append(invalid);
       }
       const controls = element('div', 'guide-preparation-actions');
@@ -447,7 +448,7 @@
     } else if (step.evidence) {
       renderGuide(); redrawEdges();
       guideNavigation = crypto.randomUUID();
-      send('triage:investigationFocus', { evidenceId: step.evidence.id, claimId: step.claimId, navigationId: guideNavigation, materialize: true });
+      send('triage:investigationFocus', { evidenceId: step.evidence.id, eventId: step.id, claimId: step.claimId, navigationId: guideNavigation, materialize: true });
     } else { checkedLocation = null; renderGuide(); redrawEdges(); schedulePersist(); }
   }
   function guideEvidence(entry, editor = false) {
@@ -606,11 +607,12 @@
           const table = element('div', 'guide-parameter-table');
           for (const input of step.inputs) {
             const row = element('div', 'guide-input-row'), links = element('div', 'guide-input-evidence');
-            for (const [label, value] of [['Caller expression', input.expression], ['Callee parameter', input.name]]) {
+            const anchors = FlowboardWalkthrough.inputLinks(guide, step, input);
+            const mapped = !!(anchors.argument && anchors.parameter);
+            for (const [label, value] of [[mapped ? 'Caller expression' : 'Source expression', input.expression], [mapped ? 'Callee parameter' : 'Value / parameter', input.name]]) {
               const cell = element('div'); cell.append(element('strong', 'guide-value-label', label), element('code', '', value)); row.append(cell);
             }
             const meaning = element('div', 'guide-input-meaning'); meaning.append(element('strong', 'guide-value-label', 'Meaning / units'), element('span', '', `${input.origin} · ${input.units}`)); row.append(meaning);
-            const anchors = FlowboardWalkthrough.inputLinks(guide, step, input);
             if (anchors.argument) links.append(button('Read caller argument', () => navigateInput(step, input, 'argument')));
             if (anchors.parameter) links.append(button('Read callee parameter', () => navigateInput(step, input, 'parameter')));
             evidenceActions(links, input.evidence, 'Read origin'); row.append(links); table.append(row);
@@ -1809,7 +1811,7 @@
         guideDetour = guide.draft.evidence.some(item => item.id === savedGuide.detour) || profile().evidence.some(item => item.id === savedGuide.detour) || savedGuide.detour === 'new-note' && evidenceInput.cardId || savedGuide.detour?.startsWith('input:') ? savedGuide.detour : null;
         // Restore only a reference still contained by this exact saved review.
         const position = savedGuide.position, source = position?.checkedLocation;
-        if (source && [...guide.draft.evidence, ...profile().evidence].some(entry => JSON.stringify(entry.source) === JSON.stringify(source))) checkedLocation = source;
+        if (source && [...guide.steps.map(step => step.evidence), ...guide.draft.evidence, ...profile().evidence].some(entry => JSON.stringify(entry.source) === JSON.stringify(source))) checkedLocation = source;
         else if (source && guideDetour === 'new-note' && source.file === hints[evidenceInput.cardId]?.file && source.sourceHash === hints[evidenceInput.cardId]?.sourceHash && source.line === evidenceInput.line) checkedLocation = source;
         else if (source && guideDetour?.startsWith('input:') && JSON.stringify(detourStep()?.evidence?.source) === JSON.stringify(source)) checkedLocation = source;
         if (position && cards.has(position.selectedCard)) selectedCard = position.selectedCard;
@@ -1877,6 +1879,7 @@
       const card = cards.get(message.cardId); if (!card) return;
       if (message.guideAvailability) guideAvailability = message.guideAvailability;
       if (message.navigationId && guide) {
+        const materializing = guidePending;
         guidePending = false; guideRequest = null; guideError = null;
         if (guideMode === 'detour' && !guideDetour?.startsWith('input:')) guideDetour = message.evidenceId;
         const sameFunction = selectedCard === card.id;
@@ -1886,7 +1889,9 @@
         activeInvestigationClaim = message.claimId;
         visibleInvestigation = structuredClone(guide.draft); activeClaim = null; claimFocus = false; spotlight = false;
         redrawEdges(); renderGuide();
-        if (document.body.classList.contains('guide-reading')) { if (!sameFunction) focusReadable(card); guideReveal(checkedLocation.line); }
+        // A deleted card can be recreated with the same stable ID at a new
+        // native position. ID equality alone does not restore its old camera.
+        if (document.body.classList.contains('guide-reading')) { if (!sameFunction || materializing) focusReadable(card); guideReveal(checkedLocation.line); }
         else if (!sameFunction) focusSourceLine(card, message.source.line);
         else {
           const row = card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`), bounds = row?.getBoundingClientRect(), viewport = flowboard.getBoundingClientRect();

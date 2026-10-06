@@ -82,15 +82,16 @@ causal.order and causal.events are the ONE reading tutorial. The host derives le
 walkthrough.assessment is a PRELIMINARY opinion of the whole issue, never the saved human judgment. Use unclear for unresolved material routes, reachability, impact or expected rules. Supporting normal code behavior alone does not justify valid. valid needs an independently grounded rule, a supported violation and a supported consequence under the stated conditions. invalid needs decisive counterevidence covering the allegation's applicable routes, not a single contradicted subclaim. why should be two short sentences with scope and conditions. supportingEvidence and opposingEvidence each name ONE strongest existing evidence ID with that stance, or empty when not established. Never return a list of IDs in these fields. Prefer decisive behavior or a guard body over a signature alone. Do not manufacture balance. Visiting a step adds no evidence.
 Prioritize material unknowns that could change the assessment of THIS current checkout and reported conditions. Do not ask about an already-true flag when rollback already settles whether the current call changed it. Do not invent a historical-version or deployment requirement for a source-only allegation that is resolved by the supplied code. Retain such uncertainty only where the report or actual dispatch makes it relevant. In multi-route findings, put the unknown of an unresolved route before optional background questions on an already contradicted route. One concise question is better than repeating unavailable specification/history language for every note.`;
 
-const responseSchema = input => input.checkOnly ? challengeFormat.checkSchema(schema) : input.repairOnly ? challengeFormat.patchSchema(schema) : input.phase === 'challenge' ? challengeFormat.schemaFor(schema) : schema;
+const fullSchema = input => input.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(schema) : schema;
+const responseSchema = input => input.checkOnly ? challengeFormat.checkSchema(fullSchema(input)) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
 const responseInstruction = input => input.checkOnly ? challengeFormat.checkInstruction : input.repairOnly ?
-  challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + JSON.stringify(schema) :
+  challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + JSON.stringify(fullSchema(input)) :
   input.phase === 'challenge' ? challengeFormat.instruction : '';
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 256 * 1024;
 function requestMetrics(input) {
-  const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input), encodedSchema = JSON.stringify(responseSchema(input));
+  const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
   const sections = { report: 0, source: 0, previousDraft: 0, metadata: 0 };
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue;
@@ -448,4 +449,4 @@ async function runSchemaProbe(options = {}) {
 }
 function runProvider(input, options) { return options.provider === 'codex' ? runCodex(input, options) : runClaude(input, options); }
 module.exports = { schema, instruction, runClaude, runCodex, runSchemaProbe, runResponseContractDiagnostic, responseContractDiagnosticPacket,
-  runProvider, codexDisabled, requestMetrics, MAX_OUTPUT_BYTES, MAX_REQUEST_BYTES };
+  runProvider, codexDisabled, requestMetrics, responseSchema, MAX_OUTPUT_BYTES, MAX_REQUEST_BYTES };

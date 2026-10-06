@@ -533,7 +533,7 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   }
   const site = exactSite(source, link.callSiteId), destinationParts = destination && functionParts(destination.code, destination.name.split('::').at(-1));
   if (!site || from.callSiteId !== link.callSiteId) { fail(`${from.title}: anchor this handoff and event to one exact current call-site ID. Name or line matches cannot identify an invocation.`); return; }
-  const anchor = evidence.get(from.evidenceId);
+  const anchor = from.anchor || evidence.get(from.evidenceId);
   const path = sourcePath(source, site.span.start, callerConstraints(from, source), units,
     { noOverflow: (from.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
   if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`, 'material-evidence');
@@ -582,7 +582,7 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   } else if (dispatch.kind === 'observed-external') {
     // Researcher assertions and local document quotations are not authenticated
     // deployment observations. Do not accept a provider-created checked flag.
-    fail(`${from.title}: observed external dispatch requires independently verified deployment/code identity; the current source-only input cannot establish it.`, 'material-evidence');
+    fail(`${from.title}: observed external dispatch requires independently verified deployment/code identity; the current source-only input cannot authenticate it. Supply chain/block/address, implementation identity and a verified observation through a supported evidence capability.`, 'capability');
   } else fail(`${from.title}: this runtime implementation remains unresolved; source candidates are not dispatch evidence.`, 'material-evidence');
   const context = internal ? 'same' : site.isNew ? 'creation' : site.callKind === 'low-level' && site.name === 'delegatecall' ? 'delegatecall' : site.callKind === 'low-level' && site.name === 'staticcall' ? 'staticcall' : 'call';
   if (dispatch.context !== context) fail(`${from.title}: execution context must be ${context} for this checked call.`);

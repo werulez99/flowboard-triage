@@ -5,8 +5,11 @@ const engine = require('../extension/investigation-engine'), format = require('.
 const provider = require('../extension/semantic-provider'), scope = require('../extension/review-scope'), policy = require('../extension/guide-policy');
 function replayReview({ saved, input, response, units }) {
   const originals = JSON.stringify({ saved, input, response, units });
-  if (input.phase !== 'challenge' || !format.valid(input.earlierDraft, provider.schema)) throw new Error('Exact saved challenge input and full earlier object are required.');
-  if (JSON.stringify(format.earlier(saved, provider.schema)) !== JSON.stringify(input.earlierDraft))
+  const binding = require('../extension/source-bindings');
+  const schema = input.bindingFormat === binding.VERSION ? binding.schema(provider.schema) : provider.schema;
+  const canonical = format.earlier(saved, provider.schema), earlier = saved.bindingPlan ? binding.wire(canonical, saved.bindingPlan) : canonical;
+  if (input.phase !== 'challenge' || !format.valid(input.earlierDraft, schema)) throw new Error('Exact saved challenge input and full earlier object are required.');
+  if (JSON.stringify(earlier) !== JSON.stringify(input.earlierDraft))
     throw new Error('Saved accepted checkpoint is not the exact earlierDraft used by this response.');
   const previous = structuredClone(saved), inspectedUnits = structuredClone(units), errors = [], result = { diagnosticOnly: true, providerRequests: 0, writes: 0,
     baseHash: engine.hash(input.earlierDraft), responseHash: engine.hash(response), fullSchema: false, accepted: false };
@@ -20,9 +23,9 @@ function replayReview({ saved, input, response, units }) {
       // Reflect only source actually present in this saved paid request.
       if (supplied.line <= (unit.readThrough || unit.source.line - 1) + 1) unit.readThrough = Math.max(unit.readThrough || 0, supplied.endLine);
     }
-    assembled = response.mode === format.PATCH ? format.assemblePatch(response, input.earlierDraft, provider.schema) :
-      input.checkOnly ? format.checked(response, input.earlierDraft, provider.schema) : response.mode ? format.expand(response, input.earlierDraft, provider.schema) : structuredClone(response);
-    result.fullSchema = format.valid(assembled, provider.schema);
+    assembled = response.mode === format.PATCH ? format.assemblePatch(response, input.earlierDraft, schema) :
+      input.checkOnly ? format.checked(response, input.earlierDraft, schema) : response.mode ? format.expand(response, input.earlierDraft, schema) : structuredClone(response);
+    result.fullSchema = format.valid(assembled, schema);
     if (!result.fullSchema) throw new Error('The assembled review does not satisfy the full generation schema.');
     errors.push(...scope.problems(previous, assembled));
     candidate = engine.accept(assembled, previous, inspectedUnits);

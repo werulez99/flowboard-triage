@@ -47,6 +47,7 @@ if args.report:
 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 result = {'boundary': 'Production code and renderer; real provider; simulated editor transport. No live Cursor UI control.', 'case': args.case, 'checks': []}
 if args.recorded: result['boundary'] = 'Production preparation and renderer with recorded fictional provider responses; exact matching source IDs translated for a new temporary project. Simulated editor transport; no fresh AI reasoning.'
+if args.workspace and args.provider == 'none': result['boundary'] = 'Saved workspace artifact, current source checks, board controller and native renderer; provider disabled. Simulated editor transport, not actual Cursor activation/playback.'
 try:
     line = process.stdout.readline()
     if not line: raise RuntimeError(process.stderr.read())
@@ -109,13 +110,20 @@ try:
         if args.baseline:
             result['checks'].append('Captured the installed older renderer in its normal selected-finding state.')
         elif draft and draft['phase'] == 'ready':
+            def visual(event):
+                note = next(e for e in draft['evidence'] if e['id'] == event['evidenceId'])
+                return event.get('anchor') or note
+            def original_unit(event):
+                anchor = visual(event)
+                exposed = state.get('exposedInvestigation') or draft
+                return exposed.get('nativeSources', {}).get(event['id']) or next(u for u in draft['sources'] if u['id'] == anchor['sourceId'])
             page.wait_for_selector('.guide-controls:visible')
             controls = page.locator('.guide-controls')
             steps = draft['causal']['order']; visited = []
             before_calls = len(state['providerCalls'])
             for i, identity in enumerate(steps):
                 event = next(e for e in draft['causal']['events'] if e['id'] == identity)
-                entry = next(e for e in draft['evidence'] if e['id'] == event['evidenceId'])
+                entry = visual(event)
                 assert page.locator('.guide-annotation').get_attribute('data-step-id') == identity
                 spans = page.locator('.guide-active-card .triage-claim-line').evaluate_all('(ns)=>ns.map(n=>Number(n.dataset.sourceLine))')
                 assert spans == list(range(entry['source']['line'], entry['source']['endLine'] + 1)), (identity, spans, entry['source'])
@@ -124,9 +132,13 @@ try:
                 first_line = page.locator('.guide-active-card .triage-claim-line').first.bounding_box()
                 for label, box in [('function header', header), ('active line', first_line)]:
                     assert box and box['x'] >= viewport['x'] - 1 and box['x'] < viewport['x'] + viewport['width'] and box['y'] >= viewport['y'] - 1 and box['y'] + min(box['height'],24) <= viewport['y'] + viewport['height'], (label, identity, box, viewport)
-                unit = next(u for u in draft['sources'] if u['id'] == entry['sourceId'])
+                unit = original_unit(event)
                 original = page.locator('.guide-active-card [data-source-line]').count()
                 assert original == len(unit['code'].split('\n')), (original, unit['name'])
+                annotation = page.locator('.guide-annotation').bounding_box()
+                dock = page.locator('.guide-aside').bounding_box()
+                assert annotation and dock and annotation['width'] > 100 and annotation['height'] > 20
+                assert annotation['x'] >= dock['x'] - 1 and annotation['x'] + annotation['width'] <= dock['x'] + dock['width'] + 1
                 quote = page.locator('.guide-report blockquote')
                 if quote.count(): assert quote.inner_text() in state['lastLoad']['reportText']
                 page.wait_for_timeout(35)
@@ -137,7 +149,7 @@ try:
                     camera_before = page.evaluate('()=>({scale,panX,panY})')
                     controls.get_by_role('button', name='Next step', exact=True).click()
                     following = next(e for e in draft['causal']['events'] if e['id'] == steps[i + 1])
-                    following_entry = next(e for e in draft['evidence'] if e['id'] == following['evidenceId'])
+                    following_entry = visual(following)
                     if following_entry['sourceId'] == entry['sourceId']:
                         assert page.evaluate('()=>({scale,panX,panY})') == camera_before
             result['visited'] = visited
@@ -159,7 +171,7 @@ try:
             camera = page.evaluate('()=>({scale,panX,panY})')
             current_step = page.locator('.guide-annotation').get_attribute('data-step-id')
             page.locator('.guide-file-link').click(); page.wait_for_timeout(250)
-            entry = next(e for e in draft['evidence'] if e['id'] == event['evidenceId'])
+            entry = visual(event)
             opened = request('/state')['opened'][-1]
             assert opened['file'] == entry['source']['file'] and opened['selection']['startLine'] == entry['source']['line'] - 1
             controls.get_by_role('button', name='Return to step', exact=True).click()
@@ -192,7 +204,9 @@ try:
                 assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[-1]
             page.get_by_role('button', name='Read full report', exact=True).click()
             page.locator('.guide-report-links summary').click()
-            page.locator('.guide-report-links button').first.click()
+            first_event = next(e for e in draft['causal']['events'] if e['id'] == steps[0])
+            # Report paragraph order need not equal the tutorial reading order.
+            page.locator('.guide-report-links').get_by_role('button', name='Step 1: ' + first_event['title'], exact=True).click()
             assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
             result['checks'].append('Keyboard steps and original-report-to-step navigation use the same prepared route.')
             # Measure actual renderer click-to-next-paint, excluding Python and
@@ -249,6 +263,15 @@ try:
             controls.get_by_role('button', name='Resume walkthrough', exact=True).click()
             page.wait_for_selector('.guide-active-card .triage-claim-line', timeout=30000)
             assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
+            # Materialization can precede the native layout/focus frame. Wait
+            # for the actual readable endpoint, not merely a highlighted DOM node.
+            page.wait_for_function('''() => {
+              const viewport=document.querySelector('#flowboard').getBoundingClientRect();
+              return ['.guide-active-card .card-header','.guide-active-card .triage-claim-line'].every(selector=>{
+                const node=document.querySelector(selector); if(!node)return false;
+                const box=node.getBoundingClientRect();return box.x>=viewport.x-1&&box.x<viewport.right&&box.y>=viewport.y-1&&box.y<viewport.bottom;
+              });
+            }''', timeout=10000)
             for node in ['.guide-active-card .card-header', '.guide-active-card .triage-claim-line']:
                 box = page.locator(node).first.bounding_box(); viewport = page.locator('#flowboard').bounding_box()
                 assert box['x'] >= viewport['x'] - 1 and box['x'] < viewport['x'] + viewport['width'] and box['y'] >= viewport['y'] - 1 and box['y'] < viewport['y'] + viewport['height']
@@ -271,7 +294,7 @@ try:
             first_load = request('/state')['lastLoad']
             first_event = next(e for e in draft['causal']['events'] if e['id'] == steps[0])
             first_evidence = next(e for e in draft['evidence'] if e['id'] == first_event['evidenceId'])
-            first_unit = next(u for u in draft['sources'] if u['id'] == first_evidence['sourceId'])
+            first_unit = original_unit(first_event)
             assert any(c['startLine'] == first_unit['source']['line'] and c['code'] == first_unit['code'] for c in first_load['state']['cards'])
             page.get_by_role('button', name='Walkthrough', exact=True).click()
             page.wait_for_selector('.guide-active-card .triage-claim-line')
@@ -327,6 +350,7 @@ try:
             result['checks'].append('Incomplete explanation is withheld, with an explicit preparation status.')
         result['pageErrors'] = errors
         assert not errors, errors
+        assert not request('/state')['errors'], request('/state')['errors']
         page.evaluate('window.closing=true;clearInterval(window.timer)'); browser.close()
 except Exception as error:
     result['error'] = repr(error)

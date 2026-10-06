@@ -153,7 +153,7 @@ test('saved investigation revisions reject competing writes and tampered source 
   assert.throws(() => engine.validateCurrent(context.catalog, later), /does not match/);
   const packet = engine.modelSources(draft.sources);
   assert.ok(packet[0].code.startsWith('8 | '));
-  assert.equal(packet[0].sourceHash, undefined, 'Compiler/source hashes are not repeated on every model-visible reference.');
+  assert.equal(packet[0].sourceHash, draft.sources[0].source.sourceHash, 'Each selectable source unit carries its current hash once; occurrence selectors must not guess it.');
 });
 test('model source packets remove only redundant call aliases and keep exact occurrence and binding evidence', () => {
   const span = { start: 10, end: 19, line: 2, endLine: 2, column: 1, endColumn: 10 };
@@ -192,6 +192,14 @@ contract DelayPolicy {
   assert.ok(input.sources.some(unit=>unit.name==='DelayPolicy::end'&&unit.complete));
   assert.ok(draft.actions.some(action=>action.id.startsWith('prime-')&&action.sourceIds.length));
   assert.equal(draft.publication?.ready || false,false,'Reading the constant is not semantic acceptance.');
+  const fresh=engine.create({findingId:issue.id,request,issue,catalog}), context=engine.makeContext(catalog,request,issue),doc=catalog.document('src/DelayPolicy.sol');
+  const extra=context.add({name:'Code details',kind:'context',contextKind:'excerpt',file:doc.uri.fsPath,startLine:1,endLine:doc.lineCount,contract:null,calls:[],memberCalls:[],modifiers:[]},'Locally acquired complete source before generation.');
+  fresh.sources=context.units; let restored;
+  await engine.advance({root,findingId:issue.id,request,issue,catalog,draft:fresh,provider:'codex',persist:false,current:()=>true,publish:async()=>{},invoke:async value=>{
+    restored=value;throw Object.assign(new Error('Offline capture'),{code:'LOCAL_READING_LIMIT'});
+  }});
+  assert.ok(restored.sources.some(unit=>unit.id===extra && unit.code.includes('contract DelayPolicy') && unit.complete),'Pre-dispatch source acquisition survives the first generation boundary.');
+  assert.equal(fresh.runs.length,0); assert.equal(fresh.publication?.ready || false,false);
 });
 test('researcher correction invalidates only its dependent scope and predictions without validating itself', { skip: !native }, async t => {
   const context = await fixture(t), units = engine.makeContext(context.catalog, context.request).units;

@@ -12,7 +12,8 @@ async function inspectSavedStage({ root, catalog, request, issue, findingId, sav
   if (!engine.compatible(draft, catalog, request, issue) || !engine.sameSnapshot(draft.snapshot, engine.snapshot(catalog, request, issue)))
     throw new Error('The saved stage no longer matches the current material snapshot. Inspect the changed inputs before dispatch.');
   engine.validateCurrent(catalog, draft);
-  const earlier = format.earlier(draft, provider.schema);
+  const canonical = format.earlier(draft, provider.schema);
+  const earlier = draft.bindingPlan ? require('../extension/source-bindings').wire(canonical, draft.bindingPlan) : canonical;
   let packet;
   await engine.advance({ root, catalog, request, issue, findingId, draft, provider: 'codex', persist: false,
     current: () => true, publish: async () => {}, invoke: async input => {

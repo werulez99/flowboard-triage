@@ -3,6 +3,25 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { TriageBoard } = require('../extension/board');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
+test('rematerialized guide card with a reused ID regains readable focus, ordinary same-card delivery preserves camera', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
+  const begin = source.indexOf('      if (message.navigationId && guide) {');
+  const end = source.indexOf('\n      rememberLocation(); guidePause();', begin);
+  const body = source.slice(begin, end);
+  for (const pending of [false, true]) {
+    let focused = 0, revealed = 0;
+    const context = { guidePending:pending, guideRequest:{}, guideError:null, guideMode:'guided', guideDetour:null, guideNavigation:'N', guide:{draft:{}},
+      selectedCard:'same-native-id', card:{id:'same-native-id'}, message:{navigationId:'N',source:{file:'src/Guard.sol',sourceHash:'checked',line:30},claimId:'c'},
+      checkedLocation:null,activeInvestigationClaim:null,visibleInvestigation:null,activeClaim:null,claimFocus:false,spotlight:false,
+      guideReturn:{invocation:'entry',codeScroll:19}, evidenceInput:{note:'Keep draft'}, structuredClone,
+      redrawEdges(){},renderGuide(){},schedulePersist(){}, document:{body:{classList:{contains:()=>true}}},
+      focusReadable(){focused++;},guideReveal(line){assert.equal(line,30);revealed++;} };
+    require('node:vm').runInNewContext(`(function(){${body}})()`,context);
+    assert.equal(focused,pending?1:0);assert.equal(revealed,1);assert.equal(context.guidePending,false);
+    assert.equal(context.guideReturn.invocation,'entry');assert.equal(context.evidenceInput.note,'Keep draft');
+  }
+});
+
 test('Retry opening code replays the failed detour operation, not Start or Return', () => {
   const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
   const body = source.slice(source.indexOf('  function retryGuideNavigation('), source.indexOf('  function show(tab)'));

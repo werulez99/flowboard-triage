@@ -84,7 +84,10 @@
       const event = draft.causal.events.find(item => item.id === id), entry = valid.find(item => item.id === event?.evidenceId);
       const claim = entry && draft.claims.find(item => item.id === event.claimId && item.id === entry.claimId);
       if (!claim || !units.get(entry.sourceId)?.complete) return null;
-      steps.push({ ...event, kind: 'code', claim, evidence: entry, unit: units.get(entry.sourceId), report: reportLink(report, event),
+      const unit = draft.nativeSources?.[event.id] || units.get(entry.sourceId);
+      const visual = { ...(event.anchor ? { ...entry, ...event.anchor } : entry), sourceId: unit.id };
+      if (!exact(visual, unit)) return null;
+      steps.push({ ...event, kind: 'code', claim, evidence: visual, analyticalEvidence: entry, unit, report: reportLink(report, event),
         handoff: draft.causal.relationships.find(item => item.to === id && item.from === steps.at(-1)?.id), transitions: [] });
     }
     if (!steps.length) return null;

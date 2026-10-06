@@ -322,10 +322,9 @@ class TriageBoard {
     // checked guide. Auto-start must never race addFunction/hint messages.
     const exposed = this.exposed(model.investigationDraft);
     if (exposed?.phase === 'ready') {
-      const needed = new Set(exposed.causal.events.map(event => exposed.evidence.find(item => item.id === event.evidenceId)?.sourceId));
       let x = Math.max(0, ...state.cards.map(card => (card.x || 0) + 800));
-      for (const unit of exposed.sources.filter(unit => needed.has(unit.id))) {
-        const fn = catalog.resolveUnit(unit);
+      for (const unit of require('./event-source').units(exposed)) {
+        const fn = this.resolveGuideUnit(model, unit);
         if (state.cards.some(card => model.sourceById.has(card.id) && catalog.key(model.sourceById.get(card.id)) === catalog.key(fn))) continue;
         if (state.cards.length >= 200) continue;
         const cardId = `finding:${id}:investigation-${unit.id}`;
@@ -409,11 +408,9 @@ class TriageBoard {
   guideAvailability(model) {
     const draft = model.investigationDraft;
     if (!draft?.causal?.events) return null;
-    const needed = new Set(draft.causal.events.map(event => draft.evidence.find(item => item.id === event.evidenceId)?.sourceId).filter(Boolean));
-    const missingSourceIds = [...needed].filter(id => {
-      const unit = draft.sources.find(item => item.id === id); if (!unit) return true;
+    const missingSourceIds = require('./event-source').units(draft).filter(unit => {
       return ![...model.sourceById].some(([cardId, fn]) => model.expandedIds.has(cardId) && model.catalog.relative(fn.file) === unit.source.file && fn.startLine === unit.source.line);
-    });
+    }).map(unit => unit.id);
     const materializedCount = model.expandedIds.size, deficit = Math.max(0, materializedCount + missingSourceIds.length - 200);
     return { ready: !missingSourceIds.length, missingSourceIds, limit:200, materializedCount, deficit,
       reason: missingSourceIds.length ? `The walkthrough needs ${missingSourceIds.length} missing function card${missingSourceIds.length === 1 ? '' : 's'}.${deficit ? ` Remove ${deficit} exploration card${deficit === 1 ? '' : 's'} from the 200-card canvas, then resume.` : ' Start it to open the required code.'} Your layout, notes and checked explanation are preserved.` : '' };
@@ -445,16 +442,19 @@ class TriageBoard {
     }
     return links.filter((edge, index) => links.findIndex(other => edge.from === other.from && edge.to === other.to) === index);
   }
+  resolveGuideUnit(model, unit) {
+    const fn = model.catalog.resolveUnit(unit);
+    if (unit.projectedFrom && (fn.startLine !== unit.source.line || fn.endLine !== unit.source.endLine || model.catalog.code(fn) !== unit.code)) throw new Error('The checked containing-source slice is not the exact native function. Keep the source available and recheck this presentation capability.');
+    return fn;
+  }
   async prepareInvestigationCards(model) {
     if (!this.investigationCurrent(model)) return;
     const draft = model.investigationDraft, first = draft.claims[0];
     if (!first) return;
-    const sourceIds = draft.causal?.events?.map(event => draft.evidence.find(entry => entry.id === event.evidenceId)?.sourceId).filter(Boolean) ||
-      [first.entry, ...draft.evidence.filter(item => first.evidence.includes(item.id)).map(item => item.sourceId)].filter(Boolean);
+    const units = draft.causal?.events?.length ? require('./event-source').units(draft) : draft.sources.filter(unit => unit.id === first.entry || draft.evidence.some(item => first.evidence.includes(item.id) && item.sourceId === unit.id));
     const hints = {};
-    for (const sourceId of [...new Set(sourceIds)]) {
-      const unit = draft.sources.find(item => item.id === sourceId); if (!unit) continue;
-      const fn = model.catalog.resolveUnit(unit);
+    for (const unit of units) {
+      const fn = this.resolveGuideUnit(model, unit);
       if ([...model.sourceById.values()].some(value => model.catalog.key(value) === model.catalog.key(fn))) continue;
       if (model.expandedIds.size >= 200) continue;
       this.assertCurrent(model); p.sources(this.root, { cards: [unit.source] });
@@ -511,10 +511,13 @@ class TriageBoard {
     const draft = model.investigationDraft;
     if (message.investigationRevision !== undefined && message.investigationRevision !== draft?.revision) throw new Error('A newer review is available. Update the walkthrough before opening this note; the old link was not moved.');
     const evidence = message.evidenceId ? draft?.evidence.find(item => item.id === message.evidenceId) : null;
-    const unit = draft?.sources.find(item => item.id === (evidence?.sourceId || message.sourceId));
+    let unit = draft?.sources.find(item => item.id === (evidence?.sourceId || message.sourceId));
     if (!unit || message.evidenceId && !evidence) throw new Error('Unknown investigation evidence/source.');
     this.assertCurrent(model);
-    const source = evidence?.source || unit.source;
+    const event = message.eventId ? draft?.causal?.events.find(item => item.id === message.eventId && item.evidenceId === evidence?.id) : null;
+    if (message.eventId && (!event || !this.exposed(draft)?.causal || require('./source-bindings').integrity(draft).length)) throw new Error('The prepared step or its source binding is no longer available.');
+    if (event) unit = require('./event-source').eventSource(draft, event);
+    const source = event?.anchor?.source || evidence?.source || unit.source;
     const [checked] = p.sources(this.root, { cards: [source] });
     const document = await this.vscode.workspace.openTextDocument(this.vscode.Uri.file(checked.absolute));
     if (!this.investigationCurrent(model)) return;
@@ -523,7 +526,7 @@ class TriageBoard {
     if (message.editor) return this.vscode.window.showTextDocument(document, {
       viewColumn: this.native.panel.viewColumn === 1 ? this.vscode.ViewColumn?.Beside || 2 : this.vscode.ViewColumn?.One || 1,
       selection: new this.vscode.Range(source.line - 1, 0, source.endLine - 1, 0), preview: false });
-    const fn = model.catalog.resolveUnit(unit);
+    const fn = this.resolveGuideUnit(model, unit);
     let cardId = [...model.sourceById].find(([, value]) => model.catalog.key(value) === model.catalog.key(fn))?.[0];
     if (!cardId || message.materialize === true) {
       if (!cardId && model.expandedIds.size >= 200) throw new Error('The current map has reached its source-card limit.');

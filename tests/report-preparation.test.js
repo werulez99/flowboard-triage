@@ -179,6 +179,29 @@ test('local recovery cannot publish stale code, damaged responses or a generatio
     if (scenario === 'missing-challenge') assert.equal(engine.read(f.root, 'I-1').checkpoint.stage, 'challenge');
   });
 });
+
+test('FIRST pending-response recovery projects the recovered missing input through board status without spending', { skip: !native }, async t => {
+  const f = await fixture(t, 1), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
+  const value = response({ phase: 'challenge', sources: engine.makeContext(catalog, f.runner.request(entries[0], catalog, report), f.runner.issue(entries[0])).units });
+  value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The asserted receiver identity is unavailable.'];
+  value.questions = [{ id: 'receiver', claimId: 'c1', text: 'Which receiver is actually configured?', action: 'missing-context', target: 'deployment', why: 'The asserted runtime route depends on that identity.' }];
+  value.causal.outcome = 'blocked';
+  fs.writeFileSync(path.join(f.root, '.flowboard/controlled-answer.json'), JSON.stringify(value));
+  const child = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname, 'fixtures/reopen-preparation-host.js'), f.root, 'crash-after-challenge'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(child.status, 73, child.stderr);
+  const pending = engine.read(f.root, 'I-1'); assert.equal(pending.pendingResponse.phase, 'challenge');
+  const ledger = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024).resources;
+  const { TriageBoard } = require('../extension/board'), messages = [];
+  const board = Object.assign(Object.create(TriageBoard.prototype), { disposed: false, models: new Map(), callbacks: { reportPreparation: () => f.runner }, post: async m => messages.push(m) });
+  f.options.changed = () => board.reportProgress(); f.options.configuration = () => ({ provider: 'none', requestLimit: 2 });
+  await f.runner.ensure(); await new Promise(resolve => setImmediate(resolve));
+  const saved = engine.read(f.root, 'I-1'), job = f.runner.status().jobs[0], delivered = messages.at(-1).report.jobs[0];
+  assert.equal(saved.failureKind, 'material-evidence'); assert.equal(job.failureKind, saved.failureKind);
+  assert.deepEqual(job.missingInputs, saved.questions.map(({ id, claimId, text, why }) => ({ id, claimId, text, why })));
+  assert.deepEqual(delivered, job); assert.equal(f.calls.length, 0);
+  assert.equal(f.runner.state.resources.requests, ledger.requests); assert.equal(f.runner.state.resources.limit, ledger.limit);
+  assert.equal(f.runner.published(saved), false);
+});
 test('a durable substantively checked model finishes host validation locally without resuming paid work', { skip: !native }, async t => {
   const f = await fixture(t, 1); await f.runner.ensure(); f.runner.dispose();
   const saved = engine.read(f.root, 'I-1'), summary = saved.causal.summary;

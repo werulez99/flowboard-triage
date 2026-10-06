@@ -220,7 +220,7 @@ function modelSources(units, packetLimit = 110000) {
     const firstLine = unit.source.line + offset, lastLine = firstLine + excerpt.length - 1;
     packet.push({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind, parameterSpans: unit.parameterSpans || [],
     contextKind: unit.contextKind || null, initialization: unit.initialization || null,
-    file: unit.source.file, line: firstLine, endLine: lastLine, complete: offset === 0 && lastLine === unit.source.endLine, reason: unit.reason,
+    file: unit.source.file, sourceHash: unit.source.sourceHash, line: firstLine, endLine: lastLine, complete: offset === 0 && lastLine === unit.source.endLine, reason: unit.reason,
     ...(offset || lastLine !== unit.source.endLine ? { localReading: { functionLine: unit.source.line, functionEndLine: unit.source.endLine,
       previouslyReadThrough: unit.readThrough || unit.source.line - 1, reason: 'Complete function is stored locally. This request contains a contiguous segment, not a missing implementation.' } } : {}),
     // Code already supplies the full expression. Repeating its text, receiver
@@ -531,6 +531,12 @@ function makeContext(catalog, request, issue) {
     documentation: workspaceSnapshot.docs(catalog, [semantic.title, queryText].join('\n')) };
 }
 function accept(output, draft, units) {
+  if (output?.bindingFormat !== undefined && output.bindingFormat !== require('./source-bindings').VERSION)
+    throw Object.assign(new Error('This source-binding representation is not supported.'), { code: 'BINDING_VERSION' });
+  if (output?.bindingFormat === require('./source-bindings').VERSION) {
+    if (!challengeFormat.valid(output, require('./source-bindings').schema(reviewSchema))) throw new Error('The source-binding response does not satisfy its full versioned schema.');
+    output = require('./source-bindings').compile(output, units);
+  }
   if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > limits.claims || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
   for (const key of ['claims', 'evidence', 'transitions', 'questions']) capacity.assertLength(output[key] || [], limits[key], key);
   if (output.walkthrough?.steps !== undefined) capacity.assertLength(output.walkthrough.steps, limits.steps, 'walkthrough steps');
@@ -601,7 +607,7 @@ function accept(output, draft, units) {
   const inputReviews = structuredClone(output.inputReviews || []);
   const inputProblems = semanticInput.problems({ ...draft, claims, evidence, causal: output.causal, inputReviews }, false);
   if (inputProblems.length) throw new Error(inputProblems.join('\n'));
-  return { property, claims, evidence, transitions, questions, inputReviews, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
+  return { property, claims, evidence, transitions, questions, inputReviews, bindingPlan: output.bindingPlan || null, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
     scopedStatus: claims.some(claim => claim.status === 'unresolved') ? 'partial' : text(output.conclusion.status, 100),
     text: text(output.conclusion.text, 4000), limitations: list(output.conclusion.limitations), origin: 'model-draft', humanReviewed: false } };
 }
@@ -676,7 +682,19 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         resumeQuestions ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate');
     if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft); }
-    else draft.actions.push(context.prime());
+    else {
+      // Pre-dispatch local acquisition is durable preparation too. Preserve
+      // its exact current sources instead of silently discarding them when
+      // constructing the first generation packet. No accepted verdict is
+      // borrowed and no unread segment is stamped as reviewed.
+      if (!lastAccepted && draft.sources.length) {
+        validateCurrent(catalog, draft);
+        const acquired = new Map(context.units.map(unit => [unit.id, unit]));
+        for (const unit of draft.sources) acquired.set(unit.id, unit);
+        context.restore([...acquired.values()], draft);
+      }
+      draft.actions.push(context.prime());
+    }
     if (resumeChallenge) context.gaps.push(...(draft.codeGaps || []));
     draft.codeGaps = [...new Set(context.gaps)];
     for (const unit of context.units) if (!unit.complete) draft.codeGaps.push(`${unit.name} is only available through ${unit.source.file}:${unit.source.endLine} in this review. Its remaining code has not been checked.`);
@@ -706,7 +724,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary) },
       snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })), sources: modelSources(context.units),
       compiler: draft.compiler, experiments: draft.experiments, codeGaps: context.gaps, documentation: context.documentation,
-      ...(phase === 'challenge' ? { earlierDraft: challengeFormat.earlier(draft, reviewSchema), evidenceScopes: require('./review-scope').manifest(draft), actions: draft.actions.slice(-5) } : {}) });
+      capabilities: require('./source-bindings').capability,
+      ...(phase === 'generate' || draft.bindingPlan ? { bindingFormat: require('./source-bindings').VERSION } : {}),
+      ...(phase === 'challenge' ? { earlierDraft: draft.bindingPlan ? require('./source-bindings').wire(challengeFormat.earlier(draft, reviewSchema), draft.bindingPlan) : challengeFormat.earlier(draft, reviewSchema),
+        ...(draft.bindingPlan ? { assembledEarlier: require('./source-bindings').derived(draft) } : {}),
+        evidenceScopes: require('./review-scope').manifest(draft), actions: draft.actions.slice(-5) } : {}) });
     let repairUsed = resumeChallenge && !!draft.checkpoint?.repairUsed;
     let followups = resumeChallenge && !resumeQuestions ? draft.checkpoint?.followups || 0 : 0;
     const readQuestions = result => {
@@ -820,12 +842,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       } };
       draft.runs.push({ ...response.audit, resultAccepted: false, ...(feedback ? { repair: true } : {}) });
       const validate = value => {
-        if (data.checkOnly && value?.result) value = challengeFormat.checked(value, data.earlierDraft, reviewSchema);
+        const formatSchema = data.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
+        if (data.checkOnly && value?.result) value = challengeFormat.checked(value, data.earlierDraft, formatSchema);
         // Assemble first so independent note/scope failures can be reported
         // together. checkExplanations below enforces the same immutable scope
         // gate before anything is accepted; diagnostic assembly is not approval.
-        if (value?.mode === challengeFormat.PATCH) value = previous ? challengeFormat.assemblePatch(value, data.earlierDraft, reviewSchema) : challengeFormat.apply(value, data.earlierDraft, reviewSchema);
-        else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, reviewSchema);
+        if (value?.mode === challengeFormat.PATCH) value = previous ? challengeFormat.assemblePatch(value, data.earlierDraft, formatSchema) : challengeFormat.apply(value, data.earlierDraft, formatSchema);
+        else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, formatSchema);
         try {
         const accepted = accept(value, draft, context.units);
         for (const entry of accepted.evidence) {
@@ -933,6 +956,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), followups, repairUsed, at: now() };
     if (!draft.publication.ready) {
       draft.failureKind = draft.publication.details?.some(item => item.kind === 'local-reading') ? 'local-reading' :
+        draft.publication.details?.some(item => item.kind === 'capability') ? 'capability' :
         draft.publication.details?.some(item => item.kind === 'material-evidence') ? 'material-evidence' : 'structural';
       draft.error = draft.publication.problems[0];
       if (draft.failureKind === 'structural') {

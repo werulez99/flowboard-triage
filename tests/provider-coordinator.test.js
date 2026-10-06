@@ -207,6 +207,35 @@ test('Pause, Cancel and disposal during real health-lock admission revoke its au
     assert.equal(f.runner.pendingFindings.size, 0); assert.equal(f.runner.tasks.size, 0);
   });
 });
+
+test('board receives finite host-local admission and save conflicts without touching the other owner', { skip: !native }, async t => {
+  const f = await fixture(t), { TriageBoard } = require('../extension/board'), messages = [], errors = [];
+  const model = { id: 'I-1' };
+  const board = Object.assign(Object.create(TriageBoard.prototype), { models: new Map(), callbacks: { reportPreparation: () => f.runner },
+    investigationCurrent: () => true, post: async m => messages.push(m), vscode: { window: { showErrorMessage: e => errors.push(e) } } });
+  f.options.changed = () => board.reportProgress();
+  const ownership = require('../extension/provider-ownership'), lock = path.join(f.root, '.flowboard/report-preparation.lock.json'), owner = ownership.ownerMetadata();
+  ownership.publish(lock, owner); t.after(() => ownership.removeOwned(lock, owner.owner)); const bytes = fs.readFileSync(lock);
+  await board.startInvestigation(model, true); await f.runner.loop; await new Promise(resolve => setImmediate(resolve));
+  assert.match(messages.at(-1)?.report?.reason || '', /another local host/); assert.deepEqual(errors, []);
+  assert.ok(bytes.equals(fs.readFileSync(lock))); assert.equal(f.calls.length, 0); assert.equal(f.runner.pendingFindings.size, 0);
+  assert.ok(!fs.existsSync(path.join(f.root, '.flowboard/report-preparation.json')));
+  // save's no-ownership early return must use the same local notification path.
+  messages.length = 0; f.runner.save(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(messages.at(-1)?.report?.reason || '', /another local host/); assert.ok(bytes.equals(fs.readFileSync(lock)));
+  messages.length = 0; f.runner.locked = true; f.runner.save(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(messages.at(-1)?.report?.reason || '', /ownership changed/); assert.ok(bytes.equals(fs.readFileSync(lock)));
+});
+test('stale-journal save refusal notifies the board without overwriting the newer journal', { skip: !native }, async t => {
+  const f = await fixture(t), messages = [], { TriageBoard } = require('../extension/board');
+  const board = Object.assign(Object.create(TriageBoard.prototype), { models: new Map(), callbacks: { reportPreparation: () => f.runner }, post: async message => messages.push(message) });
+  f.options.changed = () => board.reportProgress(); await f.runner.ensure();
+  const file = path.join(f.root, '.flowboard/report-preparation.json'), newer = JSON.parse(fs.readFileSync(file));
+  newer.reason = 'Newer owner has a saved action'; fs.writeFileSync(file, JSON.stringify(newer)); const bytes = fs.readFileSync(file);
+  messages.length = 0; f.runner.save(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(messages.at(-1)?.report?.reason || '', /Another host updated/); assert.ok(bytes.equals(fs.readFileSync(file)));
+  assert.equal(f.calls.length, 2); assert.equal(f.runner.published(engine.read(f.root, 'I-1')), true);
+});
 test('a genuinely new intent survives failed setup; repeated selection is idempotent', { skip: !native }, async t => {
   const f = await fixture(t, 2); let release, entered, catalogs = 0;
   const blocked = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
@@ -226,6 +255,60 @@ test('a finding removed while indexing cannot be admitted or reserve a request',
   fs.writeFileSync(file, JSON.stringify(report)); release(); await pending;
   assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0); assert.equal(f.runner.pendingFindings.size, 0);
   assert.match(f.runner.status().reason, /report changed/);
+});
+test('fixed finding evaluation enforces identity, one generation/challenge, finite failure and unchanged defaults before reservation', { skip: !native }, async t => {
+  const { FindingEvaluationGuard } = require('../scripts/finding-evaluation-guard'), binding = require('../scripts/fixtures/source-bound-output');
+  let guard, ledger;
+  const f = await fixture(t, 2, (input, options) => {
+    const receipt = guard.reserve(input, options.requestId); assert.equal(receipt.timeoutMs, 600000); assert.equal(options.timeoutMs, undefined);
+    const value = input.checkOnly ? response(input) : binding.encode(response(input), input), audit = { outcome: 'completed' }; guard.result(receipt, input, value, audit);
+    return { value, audit };
+  });
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 2, workers: 1 }); await f.runner.ensure();
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 2, workers: 1 });
+  f.options.authorizeRequest = ({ input }) => {
+    if (!guard) {
+      ledger = { eligible: true, referenceHash: 'controlled-reference', frozenSnapshot: engine.hash(input.snapshot), findingId: 'I-1', phases: ['generate', 'challenge'], limit: 2, used: 0, receipts: [] };
+      guard = new FindingEvaluationGuard(ledger, () => {});
+      assert.throws(() => guard.check({ ...input, finding: { id: 'I-2' } }), /identity/);
+      assert.throws(() => guard.check({ ...input, phase: 'challenge' }), /next specified/);
+      const failed = structuredClone(ledger); failed.used = 1; failed.receipts = [{ outcome: 'failed', completeGeneration: false }];
+      assert.throws(() => new FindingEvaluationGuard(failed, () => {}).check({ ...input, phase: 'challenge', earlierDraft: {} }), /complete structured/);
+    }
+    guard.check(input);
+  };
+  await f.runner.continueFinding('I-1');
+  assert.equal(ledger.used, 2); assert.deepEqual(f.calls.map(call => call.phase), ['generate', 'challenge']);
+  assert.equal(f.runner.state.resources.requests, 2); assert.equal(f.runner.state.jobs['I-2'].requests, 0);
+  assert.ok(f.runner.published(engine.read(f.root, 'I-1')), engine.read(f.root, 'I-1').error); assert.ok(engine.read(f.root, 'I-1').bindingPlan);
+  const before = f.calls.length; await f.runner.continueFinding('I-2'); assert.equal(f.calls.length, before);
+  assert.equal(f.runner.state.resources.requests, 2);
+});
+test('reviewed enclosing source resolves an exact original native function without moving the note or buying another answer', { skip: !native }, async t => {
+  const f = await fixture(t), policy = require('../extension/guide-policy'), { TriageBoard } = require('../extension/board');
+  await f.runner.ensure(); const draft = engine.read(f.root, 'I-1'), original = structuredClone(draft.evidence[0]), doc = f.catalog.document('src/Guard.sol');
+  const context = engine.makeContext(f.catalog, f.runner.request(require('../extension/report').parseReport(report(1), { manifest: true }).issues[0], f.catalog, require('../extension/store').readReport(f.root)));
+  const id = context.add({ name:'Code details', kind:'context', contextKind:'excerpt', file:doc.uri.fsPath, startLine:1, endLine:doc.lineCount, contract:null, calls:[], memberCalls:[], modifiers:[] },'Controlled supplied enclosing file.');
+  const unit = context.units.find(item => item.id === id); unit.readThrough = unit.source.endLine;
+  draft.sources.push(unit); draft.evidence[0].sourceId = id; draft.claims[0].entry = id;
+  // Real response interpretation and substantive-check ingestion on the new
+  // full-source identity, without editing a paid response or fabricating checks.
+  const format = require('../extension/challenge-format'), schema = require('../extension/semantic-provider').schema, output = format.earlier(draft, schema);
+  output.explanationReviews = [{ evidenceId:'guard', result:'kept', reason:'Read the complete supplied function in its enclosing file; require(false) rejects.', checkedSourceIds:[id] }];
+  const accepted = { ...draft, ...engine.checkExplanations(output, draft, engine.accept(output, draft, draft.sources), draft.sources) };
+  accepted.phase = 'ready'; accepted.publication = policy.gate(accepted); accepted.publication.digest = policy.digest(accepted);
+  assert.equal(accepted.publication.ready, true, accepted.publication.problems.join('\n'));
+  const exposed = policy.expose(accepted), projected = exposed.nativeSources.event;
+  assert.ok(projected); assert.equal(projected.contextKind, undefined);
+  assert.equal(projected.id, original.sourceId, 'An already supplied identical function keeps its canonical frame identity.');
+  const fn = TriageBoard.prototype.resolveGuideUnit({ catalog:f.catalog }, projected);
+  assert.equal(fn.name,'finish'); assert.equal(f.catalog.code(fn),projected.code);
+  assert.equal(projected.source.line,3); assert.equal(projected.source.endLine,5);
+  assert.deepEqual(accepted.evidence[0].source,original.source); assert.equal(accepted.evidence[0].quote,original.quote);
+  assert.ok(require('../extension/webview/walkthrough-model').build(exposed, '').steps[0].unit.projectedFrom);
+  unit.readThrough = unit.source.endLine - 1; assert.equal(policy.gate(accepted).ready,false,'Supplied/read coverage is still required.');
+  unit.readThrough = unit.source.endLine; unit.contextKind = 'state'; assert.equal(policy.gate(accepted).ready,false,'A storage declaration is still not an executed function.');
+  assert.equal(f.calls.length,2);
 });
 test('single saved-review guard rejects the next internal repair before coordinator reservation', { skip: !native }, async t => {
   const { SingleReviewRepairGuard } = require('../scripts/challenge-pilot-guard'), format = require('../extension/challenge-format'), { schema } = require('../extension/semantic-provider');

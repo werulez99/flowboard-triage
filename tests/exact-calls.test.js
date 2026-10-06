@@ -98,7 +98,7 @@ contract LiteralCalls {
 });
 
 test('occurrence spans preserve same-line, nested, named arguments, gas/value options and creation salt', { skip: !native }, async t => {
-  const { links, code } = await fixture(t, '  a.foo{value: msg.value, gas: 50000}(x); b.foo(y);\n  a.foo({value: b.foo(y)});\n  A created = new A{salt: bytes32(x)}();');
+  const { catalog, fn, links, code } = await fixture(t, '  a.foo{value: msg.value, gas: 50000}(x); b.foo(y);\n  a.foo({value: b.foo(y)});\n  A created = new A{salt: bytes32(x)}();');
   assert.equal(links.length, 5);
   assert.deepEqual(links.slice(0, 2).map(site => [site.receiver, site.arguments]), [['a', 'x'], ['b', 'y']]);
   assert.equal(links[0].line, links[1].line);
@@ -115,6 +115,22 @@ test('occurrence spans preserve same-line, nested, named arguments, gas/value op
     assert.equal(code.slice(site.span.start, site.span.end), site.sourceExpression);
     for (const argument of [...site.argumentSpans, ...site.options]) assert.equal(code.slice(argument.span.start, argument.span.end), argument.expression);
     assert.equal(site.span.column, site.span.start - (code.lastIndexOf('\n', site.span.start - 1) + 1));
+  }
+  // Structural compiler control (not a Ready claim): candidate selection is
+  // explicit; the publication controls separately prove/reject receiver/path.
+  const binding = require('../extension/source-bindings'), caller = unit(catalog, fn, 'caller');
+  for (const [index, receiver] of ['A', 'B'].entries()) {
+    const destination = unit(catalog, catalog.named('foo').find(fn => fn.contract === receiver), 'callee');
+    const value = { bindingFormat: binding.VERSION, evidence: [{ id: 'from', sourceId: 'caller' }, { id: 'to', sourceId: 'callee' }],
+      causal: { entryBindings: [{ id: 'entry', callerEventId: 'call', calleeEventId: 'enter', sourceId: 'caller', sourceHash: caller.source.sourceHash,
+        callSiteId: links[index].id, implementationSourceId: 'callee', kind: 'local-instance', context: 'call', failure: 'not-applicable', evidence: [] }],
+      events: [{ id: 'call', invocationId: 'root', transaction: 'tx', evidenceId: 'from', inputs: [] },
+        { id: 'enter', invocationId: 'foo', transaction: 'tx', evidenceId: 'to', inputs: [{ entryBindingId: 'entry', parameterIndex: 0, units: 'unknown', origin: 'Unproved semantic control', evidence: [] }] }],
+      relationships: [{ from: 'call', to: 'enter', kind: 'call', entryBindingId: 'entry' }] } };
+    const compiled = binding.compile(value, [caller, destination]);
+    assert.equal(compiled.causal.events[1].inputs[0].expression, index ? 'y' : 'x');
+    assert.equal(compiled.causal.relationships[0].dispatch.receiver, index ? 'b' : 'a');
+    assert.deepEqual(compiled.causal.events[0].anchor.occurrence, links[index].span);
   }
 });
 
@@ -278,7 +294,7 @@ test('unknown or mutable receiver bindings and incompatible selectors remain unr
   unresolved.draft.causal.relationships[0].dispatch.kind = 'unresolved';
   assert.match(policy.gate(unresolved.draft).problems.join('\n'), /implementation remains unresolved/);
   unresolved.draft.causal.relationships[0].dispatch.kind = 'observed-external';
-  assert.ok(policy.gate(unresolved.draft).details.some(problem => problem.kind === 'material-evidence' && /verified deployment\/code identity/.test(problem.reason)),
+  assert.ok(policy.gate(unresolved.draft).details.some(problem => problem.kind === 'capability' && /verified deployment\/code identity/.test(problem.reason)),
     'A missing external observation is not mislabeled as a model-reference repair.');
 });
 
@@ -364,7 +380,7 @@ module.exports = { callDraft, dispatchFixture };
 // These intentionally incorrect controlled responses exercise the production
 // location/challenge/publication path. A model agreeing with itself must not
 // override independently read Solidity semantics.
-function checkedPipeline(draft) {
+function checkedPipeline(draft, selectors = false) {
   const engine = require('../extension/investigation-engine');
   const output = {
     property: draft.property,
@@ -381,11 +397,73 @@ function checkedPipeline(draft) {
   };
   const base = { ...draft, corrections: [], experiments: [] };
   const first = engine.accept(output, base, draft.sources);
-  const checked = engine.checkExplanations(output, first, engine.accept(output, base, draft.sources), draft.sources);
+  let reviewed = output;
+  if (selectors) {
+    const binding = require('../extension/source-bindings'), format = require('../extension/challenge-format'), schema = require('../extension/semantic-provider').schema;
+    const plan = { entries: [], links: [], inputs: [] };
+    for (const link of draft.causal.relationships.filter(link => ['call', 'callback'].includes(link.kind))) {
+      const from = draft.causal.events.find(event => event.id === link.from), to = draft.causal.events.find(event => event.id === link.to);
+      const source = draft.sources.find(unit => unit.id === draft.evidence.find(note => note.id === from.evidenceId).sourceId);
+      const destination = draft.sources.find(unit => unit.id === link.dispatch.implementation), id = `entry-${to.invocationId}`;
+      plan.entries.push({ id, callerEventId: from.id, calleeEventId: to.id, sourceId: source.id, sourceHash: source.source.sourceHash,
+        callSiteId: link.callSiteId, implementationSourceId: destination.id, kind: link.dispatch.kind, context: link.dispatch.context,
+        failure: link.dispatch.failure, evidence: link.dispatch.evidence });
+      for (const related of draft.causal.relationships.filter(item => item === link || item.kind === 'return' && item.callSiteId === link.callSiteId && draft.causal.events.find(event => event.id === item.from).invocationId === to.invocationId))
+        plan.links.push({ key: `${related.from}->${related.to}:${related.kind}`, entryBindingId: id });
+      for (const [index, input] of to.inputs.entries()) plan.inputs.push({ eventId: to.id, index, entryBindingId: id,
+        parameterIndex: bindings.parameterSpans(destination.code, destination.name.split('::').at(-1)).findIndex(p => p.name === input.name) });
+    }
+    reviewed = binding.wire(format.earlier({ ...base, ...first }, schema), plan);
+    reviewed.explanationReviews = output.explanationReviews;
+    assert.ok(format.valid(reviewed, binding.schema(schema)));
+    if (typeof selectors === 'function') selectors(reviewed);
+  }
+  const checked = engine.checkExplanations(reviewed, first, engine.accept(reviewed, base, draft.sources), draft.sources);
   const accepted = { ...base, ...checked };
   accepted.publication = policy.gate(accepted); accepted.publication.digest = policy.digest(accepted);
   return { accepted, gate: accepted.publication, exposed: policy.expose(accepted) };
 }
+
+test('native selected IDs compile one entry and matching return, retaining full semantic rejection controls', { skip: !native }, async t => {
+  for (const [name, options, ready] of [
+    ['handled-string', { catches: 'catch Error(string memory) {}' }, true],
+    ['catch-return', { catches: 'catch Error(string memory) { return false; }', returns: true, catchReturn: true }, true],
+    ['unmatched-panic', { catches: 'catch Panic(uint256) {}' }, false],
+    ['empty-payload', { helper: 'function reject() internal pure { require(false); }', guard: 'reject();\n  require(accepted, "rejected");', failureNeedle: 'reject();', catches: 'catch Error(string memory) {}' }, false],
+    ['unreachable', { entryParameter: 'bool flag', entrySetup: 'if (!flag) return false;', returns: true, catches: 'catch Error(string memory) {}' }, false],
+    ['shadowed', { shadow: true }, false],
+    ['input-drift', { drift: true }, false],
+    ['propagates', { continues: false }, true]
+  ]) await t.test(name, async t => {
+    const { draft } = await semanticFixture(t, options), result = checkedPipeline(draft, true);
+    assert.equal(result.gate.ready, ready, result.gate.problems.join('\n'));
+    assert.equal(!!result.exposed.causal, ready);
+    assert.ok(result.accepted.bindingPlan.entries.length);
+    assert.equal(result.accepted.causal.events[0].anchor.source.line, draft.causal.events[0].callSiteId && draft.sources[0].relatedCalls.find(site => site.id === draft.causal.events[0].callSiteId).span.line);
+    const returned = result.accepted.causal.relationships.find(link => link.kind === 'return');
+    if (returned) assert.deepEqual(returned.dispatch, result.accepted.causal.relationships[0].dispatch);
+    const tampered = structuredClone(result.accepted); tampered.causal.events[0].anchor.source.line++;
+    assert.equal(policy.gate(tampered).ready, false);
+    assert.equal(draft.evidence[0].source.line, result.accepted.evidence[0].source.line, 'The analytical note is never moved.');
+  });
+});
+test('source selectors reject stale identities before publication and preserve reviewed replay without mutation', { skip: !native }, async t => {
+  const { draft } = await semanticFixture(t, { catches: 'catch Error(string memory) {}' });
+  for (const [field, value] of [['sourceId', 'missing'], ['sourceHash', 'stale'], ['callSiteId', 'neighbor'], ['implementationSourceId', 'absent']])
+    assert.throws(() => checkedPipeline(draft, wire => { wire.causal.entryBindings[0][field] = value; }), error => error.code === 'BINDING_SOURCE_STALE', field);
+  assert.throws(() => checkedPipeline(draft, wire => { wire.causal.events[1].inputs[0].parameterIndex = 99; }), error => error.code === 'BINDING_PARAMETER');
+  const result = checkedPipeline(draft, true), binding = require('../extension/source-bindings'), format = require('../extension/challenge-format'), schema = require('../extension/semantic-provider').schema;
+  assert.throws(() => binding.compile({ bindingFormat: 'unknown' }, draft.sources), error => error.code === 'BINDING_VERSION');
+  assert.throws(() => require('../extension/investigation-engine').accept({ bindingFormat: 'unknown' }, draft, draft.sources), error => error.code === 'BINDING_VERSION');
+  const future = structuredClone(result.accepted); future.bindingPlan.version = 'unknown'; assert.ok(binding.integrity(future).length);
+  const earlier = binding.wire(format.earlier(result.accepted, schema), result.accepted.bindingPlan);
+  const input = { phase: 'challenge', bindingFormat: binding.VERSION, earlierDraft: earlier,
+    sources: draft.sources.map(unit => ({ id: unit.id, file: unit.source.file, line: unit.source.line, endLine: unit.source.endLine,
+      code: unit.code.split('\n').map((line, index) => `${unit.source.line + index} | ${line}`).join('\n') })) };
+  const response = structuredClone(earlier); response.explanationReviews = result.accepted.explanationReviews.map(({ evidenceId, result, reason, checkedSourceIds }) => ({ evidenceId, result, reason, checkedSourceIds }));
+  const replay = require('../scripts/replay-review').replayReview({ saved: result.accepted, input, response, units: draft.sources });
+  assert.equal(replay.fullSchema, true, JSON.stringify(replay.errors)); assert.deepEqual(replay.errors, []); assert.equal(replay.gate.ready, true, JSON.stringify(replay.gate.problems)); assert.equal(replay.inputsUnchanged, true);
+});
 async function semanticFixture(t, options = {}) {
   const local = options.local !== undefined;
   const source = `pragma solidity ^0.8.20;

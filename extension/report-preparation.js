@@ -68,21 +68,28 @@ class ReportPreparation {
     if (typeof id !== 'string' || id === this.preferredFinding) return;
     this.preferredFinding = id; this.priorityStages = 2;
   }
+  notifyStatus() {
+    if (this.disposed || this.statusNotification) return;
+    this.statusNotification = true;
+    Promise.resolve().then(() => { this.statusNotification = false; if (!this.disposed) return this.options.changed?.(this.status()); })
+      .catch(error => this.options.log?.(`Report display update: ${error.message}`));
+  }
+  localAdmissionFailure(reason) { this.admissionStatus = { mode: 'paused', reason }; this.notifyStatus(); }
   save() { clearTimeout(this.progressTimer); this.progressTimer = null;
     // Controls outside a run also need ownership. Never overwrite another
     // live host's journal merely to display a local admission failure.
-    if (this.locked && !this.ownsLock()) { this.locked = false; this.admissionStatus = { mode: 'paused', reason: 'Report ownership changed. No journal update or new request is permitted from this host.' }; return; }
+    if (this.locked && !this.ownsLock()) { this.locked = false; this.localAdmissionFailure('Report ownership changed. No journal update or new request is permitted from this host.'); return; }
     const temporary = !this.locked;
-    if (temporary) try { this.lock(); } catch (error) { this.admissionStatus = { mode: 'paused', reason: error.message }; return; }
+    if (temporary) try { this.lock(); } catch (error) { this.localAdmissionFailure(error.message); return; }
     try {
       if (temporary && this.savedJournalHash) {
         const latest = p.readWorkspaceJson(this.root, FILE, 8 * 1024 * 1024);
-        if (hash(latest) !== this.savedJournalHash) { this.admissionStatus = { mode: 'paused', reason: 'Another host updated this report. Reopen it before applying a control; its journal was preserved.' }; return; }
+        if (hash(latest) !== this.savedJournalHash) { this.localAdmissionFailure('Another host updated this report. Reopen it before applying a control; its journal was preserved.'); return; }
       }
       this.aggregate(); this.state.updatedAt = now(); p.atomicJson(this.root, FILE, this.state); this.savedJournalHash = hash(this.state);
     }
     finally { if (temporary) this.unlock(); }
-    Promise.resolve().then(() => this.options.changed?.(this.status())).catch(error => this.options.log?.(`Report display update: ${error.message}`)); }
+    this.notifyStatus(); }
   progress() { if (!this.progressTimer) this.progressTimer = setTimeout(() => { if (!this.disposed) this.save(); }, 250); }
   status() {
     if (!this.state) return this.admissionStatus ? { ...this.admissionStatus, total: 0, ready: 0, counts: {}, jobs: [], active: [], stopped: [], requests: 0, requestLimit: 0 } : null;
@@ -177,7 +184,7 @@ class ReportPreparation {
     this.admissionStatus = null;
     this.loop = this.run(retry).catch(error => {
       if (this.disposed || runEpoch !== this.epoch) return;
-      this.admissionStatus = { mode: 'paused', reason: error.message };
+      this.localAdmissionFailure(error.message);
       if (this.state && this.locked) { this.state.mode = 'paused'; this.state.reason = error.message; this.save(); }
       this.options.log?.(`Report preparation stopped: ${error.message}`);
     }).finally(() => {
@@ -268,6 +275,9 @@ class ReportPreparation {
         // before provider, pause and allowance checks, without authorizing a
         // new request or resuming any sibling's paid work.
         await this.work(entry, catalog, report, job, epoch, config, true);
+        // work projects its recovered result under its currentness/ownership
+        // checks. The pre-recovery object must never overwrite that projection.
+        continue;
       }
       if (!job.publishable) this.recoveryStatus(job, saved);
       } catch (error) { this.recordFailure(job, error); }
@@ -509,7 +519,9 @@ class ReportPreparation {
   published(draft) { return !!draft && this.artifact(draft.findingId) === policy.digest(draft) && checked(draft); }
   recoveryStatus(job, draft) {
     job.failureKind = draft.failureKind || null;
-    job.validationProblems = (draft.checkpoint?.feedback?.validationProblems || []).map(({ code, evidenceId, oldClaimId, proposedClaimId, message }) => ({ code, evidenceId, oldClaimId, proposedClaimId, message }));
+    const validation = draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
+      (draft.publication?.details || []).filter(item => ['structural', 'capability'].includes(item.kind)).map(item => ({ code: item.kind === 'capability' ? 'ANALYSIS_CAPABILITY' : 'CAUSAL_BINDING_OR_COVERAGE', target: item.target, message: item.reason, action: item.action }));
+    job.validationProblems = validation.map(({ code, target, evidenceId, oldClaimId, proposedClaimId, message, action }) => ({ code, target, evidenceId, oldClaimId, proposedClaimId, message, action }));
     job.missingInputs = (draft.questions || []).filter(item => item.action === 'missing-context').map(({ id, claimId, text, why }) => ({ id, claimId, text, why }));
   }
   async control(action) {
