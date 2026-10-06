@@ -41,7 +41,8 @@ function gate(draft) {
   const fail = (reason, kind = 'structural', target = null) => { problems.push(reason); details.push({ kind, target, reason,
     action: kind === 'capability' ? 'This material route needs a supported analysis capability or independently verified versioned input; unchanged retries cannot establish it.' : kind === 'material-evidence' ? 'Obtain the named evidence; do not regenerate unchanged claims.' : kind === 'local-reading' ? 'Read the remaining local segments and challenge the affected claim.' : 'Repair the affected references or coverage, retaining accepted source and claims.' }); };
   if (!model || typeof model !== 'object') return { ready: false, problems: ['The saved analysis has no checked explanation model. Prepare it with the current review policy.'] };
-  for (const problem of require('./semantic-input').problems(draft)) fail(problem, 'structural');
+  const resolved = require('./event-source').resolver(draft);
+  for (const problem of require('./semantic-input').problems(draft, true, resolved)) fail(problem, 'structural');
   for (const problem of require('./source-bindings').integrity(draft)) fail(problem, 'structural');
   const nonempty = value => typeof value === 'string' && !!value.trim();
   const list = value => Array.isArray(value) ? value : [];
@@ -90,7 +91,7 @@ function gate(draft) {
   for (const event of events) {
     if (eventIds.has(event.id) || !['id', 'invocationId', 'transaction', 'title', 'role', 'what', 'why'].every(key => nonempty(event[key])) || !claims.has(event.claimId) || evidence.get(event.evidenceId)?.claimId !== event.claimId || !refs([event.evidenceId]) || !check(capacity.target('event', event), [event.evidenceId]) || !['read', 'condition', 'intermediate', 'committed', 'rolled-back', 'return'].includes(event.effect)) fail(`The step ${event.title || event.id || '(unnamed)'} is incomplete or lacks checked code.`);
     eventIds.add(event.id);
-    const eventUnit = require('./event-source').eventSource(draft, event);
+    const eventUnit = resolved.event(event);
     if (event.callSiteId) {
       const site = bindings.exactSite(eventUnit, event.callSiteId), anchor = (event.anchor || evidence.get(event.evidenceId))?.source;
       if (event.anchor && (!draft.bindingPlan || event.anchor.sourceId !== eventUnit?.id || event.anchor.source.sourceHash !== eventUnit?.source.sourceHash)) fail(`${event.title}: the derived visual anchor has no current binding identity.`);
@@ -122,13 +123,13 @@ function gate(draft) {
     const from = events.find(event => event.id === link.from), to = events.find(event => event.id === link.to);
     if (from && to && ['call', 'callback', 'return', 'branch'].includes(link.kind) && from.transaction !== to.transaction) fail('A call or return was incorrectly joined across transactions.');
     if (from && to && ['call', 'callback', 'return'].includes(link.kind)) {
-      const source = units.get(evidence.get(from.evidenceId)?.sourceId), destination = units.get(evidence.get(to.evidenceId)?.sourceId);
+      const source = resolved.event(from), destination = resolved.event(to);
       if (!nonempty(link.binding)) fail(`${from.title}: the ${link.kind} handoff has no checked value binding or reason it needs none.`, 'structural', capacity.target('relationship', link));
-      bindings.validateTransition({ draft, link, from, to, source, destination, units, evidence, refs, events, links,
+      bindings.validateTransition({ draft, link, from, to, source, destination, units: resolved.units, evidence: resolved.evidence, refs, events, links,
         fail: (reason, kind = 'structural') => fail(reason, kind, capacity.target('relationship', link)) });
     }
   }
-  bindings.validateInvocations({ events, links, units, evidence, fail });
+  bindings.validateInvocations({ events, links, units: resolved.units, evidence: resolved.evidence, fail, resolved });
   if (!events.length || !Array.isArray(model.order) || model.order.length !== events.length || new Set(model.order).size !== events.length || model.order.some(id => !eventIds.has(id))) fail('The tutorial has no complete, unique reading order.');
   for (let i = 1; i < list(model.order).length; i++) if (!links.some(link => link.from === model.order[i - 1] && link.to === model.order[i])) fail('A move to the next step has no explained handoff or context detour.');
   return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details };

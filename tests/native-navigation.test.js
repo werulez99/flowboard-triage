@@ -3,6 +3,32 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { TriageBoard } = require('../extension/board');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
+test('actual preparation renderer retains selected job reason and shows current host refusal in dock and expanded view', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
+  const definitions = source.slice(source.indexOf('  const preparationJob'), source.indexOf('  const readyDraft'));
+  const rendering = source.slice(source.indexOf('  function preparationContent'), source.indexOf('  function guideReveal'));
+  const node = (tag, cls, text = '') => ({ tag, text, children: [], hidden: false, disabled: false, scrollTop: 0,
+    classList: { toggle() {} }, append(...nodes) { this.children.push(...nodes); }, prepend(...nodes) { this.children.unshift(...nodes); },
+    replaceChildren() { this.children = []; }, setAttribute() {}, querySelectorAll() { return []; } });
+  const flat = n => [n, ...n.children.flatMap(flat)], surface = node('div');
+  const context = { active: 'B', reportPreparation: { project: 'P', reportHash: 'R', mode: 'paused', ready: 1, total: 2, reportName: 'Fixture', requests: 2, requestLimit: 2,
+    jobs: [{ id: 'A', publishable: true, state: 'completed' }, { id: 'B', state: 'paused', reason: 'Finding request allowance exhausted.' }],
+    admission: { scope: 'report', project: 'P', reportHash: 'R', reason: 'Report preparation is already owned by another local host.', action: 'Reopen after that host stops.' } },
+    element: node, button: (label, action) => ({ ...node('button', '', label), action }), preparationLabel: s => s,
+    report: '', guideAvailability: null, guideIntent: 'waiting', preparing: null, preparationState: null, investigationDraft: null, sourceStale: false, preparationExpanded: true,
+    preparationSurface: surface, document: { body: { classList: { toggle() {} } } }, FlowboardWalkthrough: { build: () => null }, issueIdentifier: () => 'B', send() {} };
+  const vm = require('node:vm'); vm.runInNewContext(`${definitions}\n${rendering}\nrenderPreparation();`, context);
+  const text = flat(surface).map(n => n.text).join('\n');
+  assert.equal((text.match(/This host cannot continue/g) || []).length, 2);
+  assert.match(text, /Finding request allowance exhausted/); assert.match(text, /another local host/);
+  assert.ok(!flat(surface).some(n => n.text === 'Continue this finding'));
+  assert.ok(flat(surface).find(n => n.text === 'Resume entire report').disabled);
+  context.active = 'A'; context.FlowboardWalkthrough.build = () => ({ ready: true }); vm.runInNewContext('renderPreparation()', context);
+  assert.equal(surface.hidden, true, 'An independent ready walkthrough is not covered by the local refusal.');
+  context.active = 'B'; context.reportPreparation.admission = null; context.FlowboardWalkthrough.build = () => null;
+  vm.runInNewContext('renderPreparation()', context); assert.ok(flat(surface).some(n => n.text === 'Continue this finding'));
+});
+
 test('rematerialized guide card with a reused ID regains readable focus, ordinary same-card delivery preserves camera', () => {
   const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
   const begin = source.indexOf('      if (message.navigationId && guide) {');

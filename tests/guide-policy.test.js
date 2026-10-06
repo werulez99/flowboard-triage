@@ -90,7 +90,7 @@ test('repeated invocations retain event identities, and calls cannot cross trans
 });
 test('a return cannot use the caller invocation but highlight a different helper function', () => {
   const draft = checked(), original = draft.sources[0];
-  const helper = { ...original, id: 'helper', name: 'Guard::_helper', source: { ...original.source, file: 'src/Helper.sol' } };
+  const helper = { ...original, id: 'helper', name: 'Guard::_helper', code: original.code.replace('function finish(', 'function _helper('), source: { ...original.source, file: 'src/Helper.sol' } };
   draft.sources.push(helper);
   draft.evidence.push({ ...draft.evidence[0], id: 'helper-note', sourceId: helper.id, source: { ...draft.evidence[0].source, file: helper.source.file } });
   draft.causal.events.push({ ...draft.causal.events[0], id: 'e2', evidenceId: 'helper-note', title: 'Return to the caller' });
@@ -101,7 +101,7 @@ test('a return cannot use the caller invocation but highlight a different helper
   draft.causal.events[1].invocationId = 'helper-invocation';
   draft.causal.relationships[0].kind = 'context';
   assert.equal(policy.gate(draft).ready, true, 'A separately identified helper context is not the original caller invocation.');
-  helper.code = helper.code.replace('function finish(bool accepted) external', 'modifier acceptedOnly()');
+  helper.code = helper.code.replace('function _helper(bool accepted) external', 'modifier acceptedOnly(bool accepted)'); helper.name = 'Guard::acceptedOnly';
   draft.causal.events[1].invocationId = draft.causal.events[0].invocationId;
   assert.equal(policy.gate(draft).ready, true, 'An actual modifier belongs to its enclosing invocation.');
 });

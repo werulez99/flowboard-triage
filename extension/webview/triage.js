@@ -31,9 +31,18 @@
   const preparationLabel = state => ({ completed: 'Ready', ready: 'Ready', queued: 'Queued', running: 'Checking', 'retry-scheduled': 'Queued for another check',
     'waiting-for-provider-capacity': 'Waiting for capacity', blocked: 'Blocked', failed: 'Failed', stale: 'Code changed', paused: 'Paused', cancelled: 'Cancelled' }[state] || 'Not prepared');
   const preparationJob = id => reportPreparation?.jobs?.find(job => job.id === id);
+  const localAdmission = () => {
+    const notice = reportPreparation?.admission;
+    return notice?.scope === 'report' && (!notice.reportHash || notice.reportHash === reportPreparation.reportHash) &&
+      (!notice.project || notice.project === reportPreparation.project) ? notice : null;
+  };
+  function appendAdmission(parent) {
+    const notice = localAdmission();
+    if (notice) parent.append(element('p', 'guide-status-reason', `This host cannot continue: ${notice.reason}`), element('small', 'triage-muted', notice.action));
+  }
   const canContinueFinding = () => {
     const job = preparationJob(active);
-    return job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
+    return !localAdmission() && job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
@@ -156,6 +165,7 @@
         element('p', '', preparationJob(active)?.reason || progress.reason || 'Ready walkthroughs are available immediately. Other findings continue preparing in the background.'),
         element('small', 'triage-muted', `${progress.requests} of ${progress.requestLimit} model requests used${progress.ambiguities ? ` · ${progress.ambiguities} report sections need classification` : ''}`));
       for (const job of progress.active || []) parent.append(element('p', '', `${job.id} · ${job.stage || 'Locating code'}`));
+      appendAdmission(parent);
       if (selectedJob?.missingInputs?.length) {
         const needed = element('details'); needed.append(element('summary', '', 'Evidence needed before this finding can finish'));
         for (const item of selectedJob.missingInputs) needed.append(element('p', '', `${item.claimId}: ${item.text}`), element('small', 'triage-muted', item.why));
@@ -171,7 +181,9 @@
       if (canContinueFinding()) {
         parent.append(element('small', 'triage-muted', 'Continue uses remaining shared allowance and may renew only this finding’s limit. Paused siblings stay paused. It never adds report allowance.'));
       }
-      controls.append(button(running ? 'Pause report preparation' : 'Resume entire report', () => send('triage:reportControl', { action: running ? 'pause' : 'resume' })),
+      const resume = button(running ? 'Pause report preparation' : 'Resume entire report', () => send('triage:reportControl', { action: running ? 'pause' : 'resume' }));
+      resume.disabled = !!localAdmission();
+      controls.append(resume,
         button('Cancel', () => send('triage:reportControl', { action: 'cancel' })), button('Keep exploring', () => { guideIntent = 'explore'; renderPreparation(); }));
       parent.append(controls);
       const details = element('details'); details.append(element('summary', '', 'Progress and stopped checks'));
@@ -221,6 +233,7 @@
       const stopped = progress?.stopped?.find(job => job.id === active);
       const reason = guideAvailability?.ready === false ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
+      appendAdmission(preparationSurface);
       if (preparationExpanded && !preparing) {
         const body = element('div', 'guide-status-details'); preparationContent(body); preparationSurface.append(body);
         [...preparationSurface.querySelectorAll('details')].forEach((node, index) => { node.open = !!openDetails[index]; });

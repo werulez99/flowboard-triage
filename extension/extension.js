@@ -207,8 +207,15 @@ function activate(context) {
     // Preserve the delivery's real ACK, but never publish late selection state.
     if (work.kind !== 'delivery') assertSelected(work);
     writeStatus(work, { requestId: request.id, state: 'ready', rendered: true, findingId: store.findingKey(request),
-      updatedAt: new Date().toISOString(), cards: nodes.map((node, i) => ({ id: request.cards[i].id, function: node.name,
-        file: request.cards[i].file, line: node.startLine, sourceHash: refs[i].hash })), analysis: diagnostics, git,
+      updatedAt: new Date().toISOString(), cards: nodes.map((node, i) => {
+        // A checked guide materializes additional original functions beyond
+        // the imported mapping cards. Status must describe those actual nodes,
+        // not index past the shorter request and replace a rendered guide with
+        // an unmapped error. The catalog was validated above for this operation.
+        const file = catalog.relative(node.fsPath || node.file);
+        return { id: node.id || request.cards[i]?.id, function: node.name, file, line: node.startLine,
+          sourceHash: crypto.createHash('sha256').update(catalog.document(file).text).digest('hex') };
+      }), analysis: diagnostics, git,
       assessment: { status: request.finding.status, confidence: request.finding.confidence || null, toolVerified: false } });
     log.appendLine(`Rendered ${request.finding.title}: ${nodes.length} source cards in an isolated finding view.`);
   }

@@ -210,8 +210,11 @@ test('Pause, Cancel and disposal during real health-lock admission revoke its au
 
 test('board receives finite host-local admission and save conflicts without touching the other owner', { skip: !native }, async t => {
   const f = await fixture(t), { TriageBoard } = require('../extension/board'), messages = [], errors = [];
-  const model = { id: 'I-1' };
-  const board = Object.assign(Object.create(TriageBoard.prototype), { models: new Map(), callbacks: { reportPreparation: () => f.runner },
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 2 }); await f.runner.ensure();
+  f.runner.state.jobs['I-1'].state = 'paused'; f.runner.state.jobs['I-1'].reason = 'Finding request allowance exhausted.'; f.runner.save();
+  const journal = fs.readFileSync(path.join(f.root, '.flowboard/report-preparation.json'));
+  const model = { id: 'I-1', displayedArtifact: null };
+  const board = Object.assign(Object.create(TriageBoard.prototype), { activeId: 'I-1', models: new Map([['I-1', model]]), callbacks: { reportPreparation: () => f.runner },
     investigationCurrent: () => true, post: async m => messages.push(m), vscode: { window: { showErrorMessage: e => errors.push(e) } } });
   f.options.changed = () => board.reportProgress();
   const ownership = require('../extension/provider-ownership'), lock = path.join(f.root, '.flowboard/report-preparation.lock.json'), owner = ownership.ownerMetadata();
@@ -219,7 +222,12 @@ test('board receives finite host-local admission and save conflicts without touc
   await board.startInvestigation(model, true); await f.runner.loop; await new Promise(resolve => setImmediate(resolve));
   assert.match(messages.at(-1)?.report?.reason || '', /another local host/); assert.deepEqual(errors, []);
   assert.ok(bytes.equals(fs.readFileSync(lock))); assert.equal(f.calls.length, 0); assert.equal(f.runner.pendingFindings.size, 0);
-  assert.ok(!fs.existsSync(path.join(f.root, '.flowboard/report-preparation.json')));
+  assert.ok(journal.equals(fs.readFileSync(path.join(f.root, '.flowboard/report-preparation.json'))));
+  const rendered = require('./helpers/preparation-renderer')(messages.at(-1).report, 'I-1');
+  assert.equal((rendered.text.match(/This host cannot continue/g) || []).length, 2);
+  assert.match(rendered.text, /another local host/); assert.match(rendered.text, /Finding request allowance exhausted/);
+  assert.ok(!rendered.buttons.some(button => button.text === 'Continue this finding'));
+  assert.equal(rendered.buttons.find(button => button.text === 'Resume entire report').disabled, true);
   // save's no-ownership early return must use the same local notification path.
   messages.length = 0; f.runner.save(); await new Promise(resolve => setImmediate(resolve));
   assert.match(messages.at(-1)?.report?.reason || '', /another local host/); assert.ok(bytes.equals(fs.readFileSync(lock)));
@@ -306,9 +314,39 @@ test('reviewed enclosing source resolves an exact original native function witho
   assert.equal(projected.source.line,3); assert.equal(projected.source.endLine,5);
   assert.deepEqual(accepted.evidence[0].source,original.source); assert.equal(accepted.evidence[0].quote,original.quote);
   assert.ok(require('../extension/webview/walkthrough-model').build(exposed, '').steps[0].unit.projectedFrom);
+  const enclosingOnly = structuredClone(accepted); enclosingOnly.sources = enclosingOnly.sources.filter(u => u.id !== original.sourceId);
+  const standalone = require('../extension/event-source').eventSource(enclosingOnly, enclosingOnly.causal.events[0]);
+  assert.equal(TriageBoard.prototype.resolveGuideUnit({ catalog: f.catalog }, standalone).name, 'finish', 'Derived ABI signature must match the native catalog, not the entire declaration header.');
+  assert.equal(policy.gate(enclosingOnly).ready, true);
   unit.readThrough = unit.source.endLine - 1; assert.equal(policy.gate(accepted).ready,false,'Supplied/read coverage is still required.');
   unit.readThrough = unit.source.endLine; unit.contextKind = 'state'; assert.equal(policy.gate(accepted).ready,false,'A storage declaration is still not an executed function.');
   assert.equal(f.calls.length,2);
+});
+test('sealed projected input drift is withdrawn durably on first reopen without reserving generation; good sibling survives', { skip: !native }, async t => {
+  const f = await fixture(t, 2), policy = require('../extension/guide-policy'); await f.runner.ensure();
+  const draft = engine.read(f.root, 'I-1'), doc = f.catalog.document('src/Guard.sol');
+  const context = engine.makeContext(f.catalog, f.runner.request(require('../extension/report').parseReport(report(2), { manifest: true }).issues[0], f.catalog, require('../extension/store').readReport(f.root)));
+  const id = context.add({ name: 'Code details', kind: 'context', contextKind: 'excerpt', file: doc.uri.fsPath, startLine: 1, endLine: doc.lineCount, contract: null, calls: [], memberCalls: [], modifiers: [] }, 'Controlled enclosing source.');
+  const whole = context.units.find(unit => unit.id === id); whole.readThrough = whole.source.endLine;
+  draft.sources.push(whole); draft.evidence[0].sourceId = whole.id;
+  draft.causal.events.push({ ...structuredClone(draft.causal.events[0]), id: 'drift', conditions: ['accepted is true'] });
+  draft.causal.order.push('drift'); draft.causal.relationships.push({ from: 'event', to: 'drift', kind: 'branch', explanation: 'Controlled historical incorrect drift.', evidence: ['guard'], callSiteId: '', binding: '',
+    dispatch: { kind: 'not-applicable', receiver: '', implementation: '', evidence: [], context: 'none', failure: 'not-applicable' } });
+  draft.causal.checks = require('../extension/review-capacity').targets(draft.causal).map(item => ({ target: item.key, reason: 'Controlled pre-fix review fixture.', evidence: ['guard'], documentation: [] }));
+  delete draft.bindingPlan;
+  draft.publication = { ready: true, policy: policy.POLICY, problems: [], digest: policy.digest(draft) }; draft.revision++; engine.write(f.root, draft);
+  const preserved = JSON.stringify([draft.claims, draft.evidence, draft.causal, draft.runs]), resources = structuredClone(f.runner.state.resources);
+  f.runner.dispose(); const messages = [], reopened = new ReportPreparation(f.root, { ...f.options, changed: status => messages.push(status) });
+  t.after(() => reopened.dispose()); await reopened.ensure();
+  const after = engine.read(f.root, 'I-1'), job = reopened.status().jobs.find(job => job.id === 'I-1');
+  assert.equal(after.failureCode, 'LOCAL_GATE_WITHDRAWN', JSON.stringify(job)); assert.equal(after.checkpoint.stage, 'challenge'); assert.equal(after.phase, 'blocked');
+  assert.equal(job.state, 'blocked'); assert.ok(job.validationProblems.length); assert.match(job.reason, /parameter premise/);
+  assert.equal(policy.expose(after).causal, undefined); assert.equal(reopened.published(engine.read(f.root, 'I-2')), true);
+  assert.equal(JSON.stringify([after.claims, after.evidence, after.causal, after.runs]), preserved);
+  assert.deepEqual(reopened.state.resources, resources); assert.equal(f.calls.length, 4);
+  const bytes = fs.readFileSync(path.join(f.root, '.flowboard/investigations/I-1.json')); await reopened.ensure();
+  assert.ok(bytes.equals(fs.readFileSync(path.join(f.root, '.flowboard/investigations/I-1.json')))); assert.equal(f.calls.length, 4);
+  assert.ok(messages.some(status => status.jobs.find(job => job.id === 'I-1')?.validationProblems?.length));
 });
 test('single saved-review guard rejects the next internal repair before coordinator reservation', { skip: !native }, async t => {
   const { SingleReviewRepairGuard } = require('../scripts/challenge-pilot-guard'), format = require('../extension/challenge-format'), { schema } = require('../extension/semantic-provider');

@@ -38,7 +38,8 @@ async function setup(t, options = {}) {
       if (!canPublish()) throw Object.assign(new Error('Delivery superseded by a newer user selection.'), { code: 'FLOWBOARD_SUPERSEDED' });
       this.activeId = store.findingKey(request); this.activeToken = request.id;
       opened.push({ request, catalog, diagnostics });
-      return request.cards.map(card => catalog.resolveCard(card));
+      const nodes = request.cards.map(card => catalog.resolveCard(card));
+      return options.extraRenderedFunction ? [...nodes, { ...catalog.functions.find(fn => !nodes.includes(fn)), id: 'guide-extra' }] : nodes;
     }
     async showLibrary(canPublish = () => true) { await this.ready; if (canPublish()) { this.libraryShown = true; this.library = store.library(root); } }
     async showUnmapped(id, _issue, error, canPublish = () => true) { await this.ready; if (canPublish()) this.unmapped = { id, error }; }
@@ -107,6 +108,13 @@ test('Doctor command reports the loaded extension identity and native path witho
   assert.equal(report.provider.provider, 'none'); assert.equal(report.provider.observedModel, null);
   assert.equal(env.analysis.count, analyses);
   assert.ok(env.logs[0].includes(report.activeTriage.version)); assert.ok(env.logs[0].includes(report.activeTriage.extensionPath));
+});
+test('production selection records additional materialized guide functions without replacing the ready board with an unmapped error', { skip: !native }, async t => {
+  const env = await setup(t, { extraRenderedFunction: true }); await env.select(env.board.library[0].id);
+  assert.equal(env.board.unmapped, undefined); assert.deepEqual(env.errors, []);
+  const status = JSON.parse(fs.readFileSync(path.join(env.root, '.flowboard/view-status.json')));
+  assert.equal(status.state, 'ready'); assert.equal(status.cards.length, env.opened.at(-1).request.cards.length + 1);
+  assert.equal(status.cards.at(-1).id, 'guide-extra'); assert.match(status.cards.at(-1).sourceHash, /^[a-f0-9]{64}$/);
 });
 test('Import Report command opens a large report library before indexing; only selected findings are mapped', { skip: !native }, async t => {
   const env = await setup(t, { empty: true }), report = path.join(env.root, 'report.md');

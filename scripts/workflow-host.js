@@ -65,7 +65,7 @@ async function start(options = {}) {
   const extension = productionExtension;
   const readOnly = !!options.workspace;
   const configuration = { semanticProvider: options.provider || 'none' };
-  if (options.productionSelection && !options.routeFixture && !options.mixedFixture) throw new Error('Production selection measurement currently requires an isolated controlled native fixture.');
+  if (options.productionSelection && !options.routeFixture && !options.mixedFixture && !(readOnly && configuration.semanticProvider === 'none')) throw new Error('Production selection requires a controlled fixture or an existing workspace with provider disabled.');
   if(options.mixedFixture&&options.routeFixture)throw new Error('Choose one controlled fixture.');
   if (options.mixedFixture || options.routeFixture) {
     if (readOnly || options.invoke || options.qualityCase || options.qualityBatch || options.qualityResponses || options.qualityRecording) throw new Error('Controlled preparation is an isolated fictional fixture.');
@@ -272,7 +272,7 @@ async function start(options = {}) {
     if (options.productionSelection) {
       const available = new Promise(resolve => { materializeBoard = resolve; });
       productionEditor ||= require('./production-editor-io').activateProduct({ extension: productionExtension, upstream, root, api,
-        Board: TriageBoard, invoke, onBoard: value => { board = value; materializeBoard?.(); }, onCoordinator: value => { reportPreparation = value; },
+        Board: TriageBoard, invoke, storage, readOnly, onBoard: value => { board = value; materializeBoard?.(); }, onCoordinator: value => { reportPreparation = value; },
         onSelection: value => { selection = value.catch(record); }, trace });
       // Serve the actual panel once created; the product command still awaits
       // its real webview ready event. Waiting for that before serving HTML
@@ -322,7 +322,7 @@ async function start(options = {}) {
       if (address.pathname === '/message') {
         if (message.type === 'annotate') throw new Error('Model execution is disabled in this deterministic integration harness.');
         if (message.type === 'triage:investigationTest' && !options.allowExistingRegression) throw new Error('Existing-test execution requires an explicit integration-run option.');
-        if (readOnly && ['triage:save', 'triage:refresh'].includes(message.type)) throw new Error('Read-only workspace: review writes and refresh are disabled.');
+        if (readOnly && ['triage:save', 'triage:refresh', 'triage:reportControl', 'triage:investigationRetry', 'triage:investigationEnable'].includes(message.type)) throw new Error('Read-only workspace: review writes, refresh and provider admission controls are disabled.');
         received.push({ type: message.type, issueId: message.issueId, token: message.token });
         // Mirror VS Code's event delivery: do not await a selection that waits
         // for a later webview render acknowledgement.

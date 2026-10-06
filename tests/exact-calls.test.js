@@ -464,6 +464,51 @@ test('source selectors reject stale identities before publication and preserve r
   const replay = require('../scripts/replay-review').replayReview({ saved: result.accepted, input, response, units: draft.sources });
   assert.equal(replay.fullSchema, true, JSON.stringify(replay.errors)); assert.deepEqual(replay.errors, []); assert.equal(replay.gate.ready, true, JSON.stringify(replay.gate.problems)); assert.equal(replay.inputsUnchanged, true);
 });
+test('native reviewed direct/enclosing callable frames have identical root parameter semantics and exact overload resolution', { skip: !native }, async t => {
+  for (const prefix of ['', '// overload\n', 'interface IGuard { function finish(bool accepted) external; }\n', 'contract Other { function finish(bool accepted) external {} }\n']) {
+    const source = `pragma solidity ^0.8.20;\n${prefix}contract Guard {\n function finish(bool accepted) external {\n  require(accepted, "rejected");\n  return;\n }\n${prefix === '// overload\n' ? ' function finish(uint256 value) external {}\n' : ''}}`;
+    const catalog = await sourceFixture(t, source), fn = catalog.named('finish').find(fn => fn.contract === 'Guard' && catalog.code(fn).includes('bool accepted'));
+    const original = unit(catalog, fn, 'callee');
+    for (const enclosing of [false, true]) for (const drift of [false, true]) {
+      const draft = callDraft(), guardLine = original.source.line + 1;
+      const whole = { ...original, id: 'whole', name: 'Code details', contextKind: 'excerpt', code: source,
+        source: { ...original.source, line: 1, endLine: source.split('\n').length }, readThrough: source.split('\n').length };
+      draft.sources = [original, whole];
+      draft.evidence = [0, 1].map(index => ({ ...draft.evidence[1], id: index ? 'return' : 'guard', sourceId: enclosing ? 'whole' : 'callee',
+        source: { ...original.source, line: guardLine + index, endLine: guardLine + index }, quote: source.split('\n')[guardLine + index - 1] }));
+      const event = draft.causal.events[1];
+      draft.causal.events = [0, 1].map(index => ({ ...event, id: index ? 'return' : 'finish', evidenceId: index ? 'return' : 'guard', effect: index ? 'return' : 'condition',
+        inputs: [{ ...event.inputs[0], expression: index && drift ? 'false' : 'true', evidence: ['guard', 'return'] }] }));
+      draft.causal.order = ['finish', 'return']; draft.causal.relationships = [{ from: 'finish', to: 'return', kind: 'branch', callSiteId: '',
+        dispatch: { kind: 'not-applicable', receiver: '', implementation: '', evidence: [], context: 'none', failure: 'not-applicable' }, binding: '', explanation: 'The same invocation reaches return.', evidence: ['guard', 'return'] }];
+      for (const item of draft.causal.obligations) item.evidence = ['guard', 'return'];
+      draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'Controlled structural response, not fresh model output.', evidence: ['guard', 'return'], documentation: [] }));
+      const result = checkedPipeline(draft, true);
+      assert.equal(result.gate.ready, !drift, `${prefix || 'overload'} enclosing=${enclosing} drift=${drift}: ${result.gate.problems.join('\n')}`);
+      assert.equal(!!result.exposed.causal, !drift);
+      assert.deepEqual(result.accepted.evidence.map(n => [n.sourceId, n.source, n.quote]), draft.evidence.map(n => [n.sourceId, n.source, n.quote]));
+    }
+  }
+});
+test('enclosing callee evidence preserves entered bindings, ordered mutations, units and typed failure semantics', { skip: !native }, async t => {
+  for (const options of [{ drift: true }, { drift: true, reassign: true }, { catches: 'catch Error(string memory) {}' },
+    { catches: 'catch Panic(uint256) {}' }, { catches: 'catch Error(string memory) { return false; }', catchReturn: true, returns: true }]) {
+    const { draft, catalog } = await semanticFixture(t, options), direct = checkedPipeline(draft, true);
+    const callee = draft.sources.find(u => u.id === 'callee'), doc = catalog.document(callee.source.file), code = doc.getText();
+    const whole = { ...callee, id: 'enclosing', name: 'Code details', contextKind: 'excerpt', code,
+      source: { ...callee.source, line: 1, endLine: code.split('\n').length }, readThrough: code.split('\n').length };
+    draft.sources.push(whole);
+    for (const note of draft.evidence) if (note.sourceId === callee.id) note.sourceId = whole.id;
+    const enclosed = checkedPipeline(draft, true);
+    assert.equal(enclosed.gate.ready, direct.gate.ready, enclosed.gate.problems.join('\n'));
+    assert.equal(!!enclosed.exposed.causal, !!direct.exposed.causal);
+    if (enclosed.gate.ready) {
+      const mixed = structuredClone(draft); mixed.evidence.find(n => n.sourceId === whole.id).sourceId = callee.id;
+      assert.equal(checkedPipeline(mixed, true).gate.ready, true);
+      whole.readThrough = callee.source.line; assert.equal(policy.gate({ ...enclosed.accepted, sources: draft.sources }).ready, false);
+    }
+  }
+});
 async function semanticFixture(t, options = {}) {
   const local = options.local !== undefined;
   const source = `pragma solidity ^0.8.20;

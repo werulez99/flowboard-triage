@@ -31,6 +31,8 @@ function compile(value, units) {
   if (value?.bindingFormat === undefined) return value; // legacy paid responses remain replayable
   if (value.bindingFormat !== VERSION) throw failure('BINDING_VERSION', '', 'This source-binding representation is not supported.');
   const result = structuredClone(value), model = result.causal, entries = model.entryBindings;
+  const resolved = require('./event-source').resolver({ sources: units, causal: model, evidence: result.evidence.map(note => ({ ...note,
+    source: note.source || { ...units.find(unit => unit.id === note.sourceId)?.source, line: note.line, endLine: note.endLine } })) });
   const plan = { version: VERSION, entries: structuredClone(entries), links: [], inputs: [] };
   const byId = new Map(), invocations = new Set(), callers = new Set();
   for (const entry of entries) {
@@ -41,7 +43,7 @@ function compile(value, units) {
       throw failure('BINDING_IDENTITY', entry.id, 'One unique entering binding and call event are required per callee invocation.');
     if (!source || source.source.sourceHash !== entry.sourceHash || !site || !destination)
       throw failure('BINDING_SOURCE_STALE', entry.id, 'The selected source/hash, occurrence or implementation ID is unavailable or stale.');
-    if (result.evidence.find(note => note.id === from.evidenceId)?.sourceId !== source.id || result.evidence.find(note => note.id === to.evidenceId)?.sourceId !== destination.id)
+    if (resolved.event(from)?.id !== source.id || resolved.event(to)?.id !== destination.id)
       throw failure('BINDING_FRAME', entry.id, 'Selected call/callee IDs must belong to these events. Do not move a note or invocation to a neighboring function.');
     const header = functionParts(destination.code, destination.name.split('::').at(-1))?.header;
     if (!header) throw failure('BINDING_CAPABILITY', entry.id, 'A supplied concrete function is required. An interface or absent runtime implementation cannot be compiled into dispatch.');

@@ -81,7 +81,7 @@ function exactSite(unit, id) {
     ...(namedMember ? { callKind: 'member', failure: actual.failure === 'returns-status' ? 'propagates' : actual.failure } : {}) };
 }
 function covers(entry, unit, range) {
-  return entry?.sourceId === unit?.id && entry.source?.line <= range.line && entry.source?.endLine >= range.endLine;
+  return require('./event-source').covers(entry, unit, range);
 }
 function owner(unit) { return unit?.contract || unit?.name.split('::')[0]; }
 function newType(value, castTypes = [], depth = 0) {
@@ -172,7 +172,7 @@ function localInstance(source, site, destination, supplied, units, evidence, mis
   const name = receiverName(site.receiverExpression); if (!name) return false;
   const sourceParts = functionParts(source.code, source.name.split('::').at(-1));
   if (!sourceParts) return false;
-  const checkedUnits = [...new Set(supplied.map(id => evidence.get(id)?.sourceId))].map(id => units.get(id)).filter(Boolean);
+  const checkedUnits = [...new Set(supplied.map(id => evidence.frameFor?.(id) || units.get(evidence.get(id)?.sourceId)))].filter(Boolean);
   // Straight-line local construction. Anything conditional, shadowed or
   // reassigned needs stronger evidence, not a guessed running implementation.
   const scan = bindingWrites(sourceParts, name, site.span.start), local = scan.active;
@@ -233,7 +233,7 @@ function lineOffset(unit, line) {
 }
 function parameterValue(unit, name, initial, event, evidence) {
   const body = functionParts(unit.code, unit.name.split('::').at(-1)), anchor = evidence.get(event.evidenceId);
-  if (!body || anchor?.sourceId !== unit.id) return { known: false, reason: 'The parameter use is not anchored to its own function.' };
+  if (!body || !covers(anchor, unit, anchor?.source)) return { known: false, reason: 'The parameter use is not anchored to its own acquired/read function bytes.' };
   const until = lineOffset(unit, anchor.source.line), scan = bindingWrites(body, name, Math.max(body.bodyStart, until));
   if (scan.unsafe) return { known: false, reason: 'Assembly may change the invocation parameter.' };
   if (scan.active.id !== `parameter:${name}`) return { known: false, reason: 'A local declaration shadows the invocation parameter.' };
@@ -283,9 +283,9 @@ function callTimeConstraints(event, unit, evidence) {
   }
   return values;
 }
-function checkBooleanPremise(draft, condition, review) {
+function checkBooleanPremise(draft, condition, review, resolved = require('./event-source').resolver(draft)) {
   const events = draft.causal?.events || [], links = draft.causal?.relationships || [];
-  const units = new Map((draft.sources || []).map(unit => [unit.id, unit])), evidence = new Map((draft.evidence || []).map(item => [item.id, item]));
+  const { units, evidence } = resolved;
   const errors = [], allowed = new Set(review.claimIds), name = condition.name;
   const facts = event => [...(event.inputs || []).filter(input => input.name === name).map(input => input.expression),
     ...(event.conditions || []).flatMap(text => {
@@ -294,7 +294,7 @@ function checkBooleanPremise(draft, condition, review) {
     })];
   const scopes = new Map();
   for (const event of events.filter(event => review.eventIds.includes(event.id) && allowed.has(event.claimId))) {
-    const anchor = evidence.get(event.evidenceId), unit = units.get(anchor?.sourceId);
+    const anchor = evidence.get(event.evidenceId), unit = resolved.event(event);
     const body = unit && functionParts(unit.code, unit.name.split('::').at(-1));
     const parameter = body && parameterNames(body.header).includes(name);
     // Merely attaching acknowledgement to an unrelated entry/context event
@@ -311,12 +311,12 @@ function checkBooleanPremise(draft, condition, review) {
     // throughout the project. An exact later assignment can change the value.
     const entering = links.filter(link => ['call', 'callback'].includes(link.kind) && events.find(event => event.id === link.to)?.invocationId === invocationId);
     if (parameter && entering.length === 1) {
-      const link = entering[0], from = events.find(event => event.id === link.from), source = units.get(evidence.get(from?.evidenceId)?.sourceId);
+      const link = entering[0], from = events.find(event => event.id === link.from), source = resolved.event(from);
       const site = exactSite(source, link.callSiteId), actual = site && boundArgument(site, name, body.header);
       const initial = actual == null ? null : booleanValue(actual, callTimeConstraints(from, source, evidence));
       if (initial != null && String(initial) !== condition.value) errors.push(`Invocation ${invocationId} contradicts the applied saved condition ${name} is ${condition.value} at its own entering call.`);
     }
-    for (const event of events.filter(event => allowed.has(event.claimId) && event.invocationId === invocationId && evidence.get(event.evidenceId)?.sourceId === unit.id)) {
+    for (const event of events.filter(event => allowed.has(event.claimId) && event.invocationId === invocationId && resolved.event(event)?.id === unit.id)) {
       const values = facts(event).map(value => expression(value)).filter(value => /^(true|false)$/.test(value));
       if (!values.length) continue;
       const state = parameter ? parameterValue(unit, name, condition.value, event, evidence) : { known: true, value: condition.value };
@@ -326,7 +326,8 @@ function checkBooleanPremise(draft, condition, review) {
   }
   return [...new Set(errors)];
 }
-function validateInvocations({ events, links, units, evidence, fail }) {
+function validateInvocations({ events, links, units, evidence, fail, resolved }) {
+  const frame = event => resolved ? resolved.event(event) : units.get(evidence.get(event?.evidenceId)?.sourceId);
   const entered = new Set(), constraints = new Map();
   const coherent = (event, input, state) => {
     if (!state.known) return false;
@@ -340,7 +341,7 @@ function validateInvocations({ events, links, units, evidence, fail }) {
   };
   for (const entry of links.filter(link => ['call', 'callback'].includes(link.kind))) {
     const from = events.find(event => event.id === entry.from), to = events.find(event => event.id === entry.to);
-    const source = units.get(evidence.get(from?.evidenceId)?.sourceId), unit = units.get(evidence.get(to?.evidenceId)?.sourceId);
+    const source = frame(from), unit = frame(to);
     const site = exactSite(source, entry.callSiteId), body = unit && functionParts(unit.code, unit.name.split('::').at(-1));
     if (!site || !body || !to) continue;
     entered.add(to.invocationId);
@@ -361,8 +362,8 @@ function validateInvocations({ events, links, units, evidence, fail }) {
   // explicitly stated parameter premise still cannot silently change later.
   const initial = new Map();
   for (const event of events.filter(event => !entered.has(event.invocationId))) {
-    const unit = units.get(evidence.get(event.evidenceId)?.sourceId), body = unit && functionParts(unit.code, unit.name.split('::').at(-1));
-    if (!body) continue;
+    const unit = frame(event), body = unit && functionParts(unit.code, unit.name.split('::').at(-1));
+    if (!body) { if (event.effect !== 'read') fail(`${event.title}: no exact callable frame can be resolved for this executable event.`); continue; }
     for (const input of invocationInputs(event, body)) {
       if (!parameterNames(body.header).includes(input.name)) continue;
       const key = `${event.invocationId}:${input.name}`, first = initial.get(key);
@@ -434,7 +435,7 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
   } });
 }
 function failedClass(unit, event, evidence, site, callerValues = new Map(), unresolved = () => {}, units = new Map()) {
-  const anchor = evidence.get(event.evidenceId); if (!unit || anchor?.sourceId !== unit.id) return null;
+  const anchor = evidence.get(event.evidenceId); if (!unit || !covers(anchor, unit, anchor?.source)) return null;
   const code = anchor.quote, clean = lexicalCode(code), body = functionParts(unit.code, unit.name.split('::').at(-1));
   const values = new Map();
   for (const name of parameterNames(body?.header || '')) {
@@ -525,7 +526,7 @@ function validateTransition({ draft, link, from, to, source, destination, units,
       const error = failedClass(source, from, evidence, site, callTimeConstraints(caller, destination, evidence), () => {}, units);
       const clause = site.tryContext.clauses.find(item => item.kind === error) || site.tryContext.clauses.find(item => item.kind === 'any');
       const anchor = evidence.get(to.evidenceId), statement = clause && destination.code.slice(clause.body.start, clause.body.end).trim();
-      if (!clause || to.effect !== 'return' || anchor?.sourceId !== destination.id ||
+      if (!clause || to.effect !== 'return' ||
           !covers(anchor, destination, clause.span) || !/^return\s+[^;]+;\s*$/.test(statement))
         fail(`${to.title}: this handled failure must follow the exact matching catch's caller return, not the statement after try.`, 'material-evidence');
     }
@@ -537,7 +538,7 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   const path = sourcePath(source, site.span.start, callerConstraints(from, source), units,
     { noOverflow: (from.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
   if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`, 'material-evidence');
-  if (anchor?.sourceId !== source.id || anchor.source.line !== site.span.line || anchor.source.endLine !== site.span.endLine) fail(`${from.title}: its checked code must cover exactly this call's lines, not another call or a whole function.`);
+  if (!covers(anchor, source, site.span) || anchor.source.line !== site.span.line || anchor.source.endLine !== site.span.endLine) fail(`${from.title}: its checked code must cover exactly this call's lines, not another call or a whole function.`);
   if (from.invocationId === to.invocationId) fail(`${from.title}: entering another function needs a distinct invocation, even when internal msg.sender is unchanged.`);
   const dispatch = link.dispatch;
   if (!dispatch || !refs(dispatch.evidence) || dispatch.implementation !== destination?.id || !link.evidence.every(id => refs([id]))) {

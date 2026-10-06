@@ -24,6 +24,8 @@ parser.add_argument('--request-limit', type=int, default=12, choices=range(1, 13
 parser.add_argument('--recorded')
 parser.add_argument('--baseline', action='store_true')
 parser.add_argument('--report-preparation', action='store_true')
+parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
+parser.add_argument('--reopens', type=int, default=1, choices=range(1, 6))
 parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
 parser.add_argument('--output', required=True)
@@ -32,6 +34,8 @@ repo = Path(__file__).resolve().parent.parent
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
 command = ['node', str(repo / 'scripts/workflow-host.js'), '--provider', args.provider]
 command += ['--request-limit', str(args.request_limit)]
+if args.production_selection:
+    command += ['--production-selection']
 if args.report_preparation:
     command += ['--report-preparation']
 if args.batch:
@@ -77,13 +81,15 @@ try:
               }
               return results.sort((a,b)=>a.ratio-b.ratio);
             }''')
-        page.add_init_script('''window.sent=[];window.hostMessages=[];
+        page.add_init_script('''window.sent=[];window.hostMessages=[];window.actualFindingClick=null;
+          document.addEventListener('click',event=>{if(event.target.closest('[data-finding-id]'))window.actualFindingClick=performance.now()},true);
           window.acquireVsCodeApi=()=>({postMessage(m){if(!window.closing){window.sent.push(m);return window.__send(m);}}});
           let cursor=0;window.polling=false;window.timer=setInterval(async()=>{if(window.polling||window.closing)return;window.polling=true;
           try{const b=await window.__poll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);window.dispatchEvent(new MessageEvent('message',{data:m}));}}finally{window.polling=false;}},75);''')
         page.goto(host['origin'])
         finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
         page.wait_for_selector(finding_row, timeout=30000)
+        cold_select = time.monotonic()
         page.locator(finding_row).click()
         page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)', arg=args.finding, timeout=120000)
         page.screenshot(path=str(out / 'preparing.png'))
@@ -120,6 +126,25 @@ try:
             page.wait_for_selector('.guide-controls:visible')
             controls = page.locator('.guide-controls')
             steps = draft['causal']['order']; visited = []
+            def verify_readable(identity):
+                current = next(e for e in draft['causal']['events'] if e['id'] == identity)
+                note = visual(current)
+                unit = original_unit(current)
+                page.wait_for_function('''expected=>{
+                  const a=document.querySelector('.guide-annotation'),c=document.querySelector('.guide-active-card'),v=document.querySelector('#flowboard');
+                  if(!a||!c||!v||a.dataset.stepId!==expected.id||!a.textContent.includes(expected.what))return false;
+                  const header=c.querySelector('.card-header'),b=v.getBoundingClientRect(),h=header?.getBoundingClientRect(),ab=a.getBoundingClientRect();
+                  const lines=[...c.querySelectorAll('.triage-claim-line')];
+                  const exact=Array.from({length:expected.endLine-expected.line+1},(_,i)=>expected.line+i);
+                  return header?.innerText.includes(expected.name)&&header.innerText.includes(expected.file)&&c.querySelector(`[data-source-line="${expected.functionEnd}"]`)&&
+                    JSON.stringify(lines.map(l=>Number(l.dataset.sourceLine)))===JSON.stringify(exact)&&h&&h.top>=b.top-1&&h.bottom<=b.bottom+1&&ab.width>100&&ab.height>20&&ab.left>=0&&ab.right<=innerWidth+1&&
+                    lines.some(l=>{const r=l.getBoundingClientRect();return Number(l.dataset.sourceLine)===expected.line&&r.top>=b.top-1&&r.bottom<=b.bottom+1});
+                }''', arg={'id':identity,'what':current['what'],'line':note['source']['line'],'endLine':note['source']['endLine'],
+                    'name':unit['name'].split('::')[-1],'file':Path(unit['source']['file']).name,'functionEnd':unit['source']['endLine']}, timeout=30000)
+                actual = request('/state')['lastLoad']['investigationDraft']
+                assert actual['causal'] == draft['causal'], 'Unchanged-input opening changed accepted causal content.'
+            verify_readable(steps[0])
+            result['coldSelectToVerifiedMs'] = (time.monotonic()-cold_select)*1000
             before_calls = len(state['providerCalls'])
             for i, identity in enumerate(steps):
                 event = next(e for e in draft['causal']['events'] if e['id'] == identity)
@@ -228,16 +253,28 @@ try:
             page.evaluate('persistNow()'); page.wait_for_timeout(300)
             checkpoint = request('/state')['snapshots'][args.finding]['state']
             position = checkpoint['view']['walkthrough']['position']
-            page.evaluate('window.closing=true;clearInterval(window.timer)')
-            request('/action', {'name':'reopen'})
-            page.reload()
-            page.wait_for_selector(finding_row)
-            page.locator(finding_row).click()
-            page.wait_for_selector('.guide-annotation', timeout=30000)
-            assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
-            assert page.evaluate('()=>({scale,panX,panY})') == position['camera']
-            assert len(request('/state')['providerCalls']) == before_calls
-            assert request('/state')['lastLoad']['finding']['status'] == 'unreviewed'
+            result['savedOpenSamples'] = []
+            trace_cursor = len(request('/state').get('productionTrace', []))
+            for sample in range(args.reopens):
+                page.evaluate('window.closing=true;clearInterval(window.timer)')
+                started = time.monotonic()
+                request('/action', {'name':'reopen'})
+                page.reload()
+                page.wait_for_selector(finding_row)
+                click_start = time.monotonic()
+                page.locator(finding_row).click()
+                verify_readable(steps[0])
+                verified = time.monotonic()
+                click_ms = page.evaluate('performance.now()-window.actualFindingClick')
+                assert page.evaluate('()=>({scale,panX,panY})') == position['camera']
+                reopened = request('/state')
+                assert len(reopened['providerCalls']) == before_calls
+                assert reopened['lastLoad']['finding']['status'] == 'unreviewed'
+                traces = reopened.get('productionTrace', [])
+                result['savedOpenSamples'].append({'totalMs':(verified-started)*1000,'automationClickToVerifiedMs':(verified-click_start)*1000,
+                    'actualClickToVerifiedMs':click_ms,'hostTrace':traces[trace_cursor:]})
+                trace_cursor = len(traces)
+            result['productionTrace'] = request('/state').get('productionTrace', [])
             result['checks'].append('A recreated board restores the saved step/camera without a new provider request or changed researcher judgment.')
             # An ordinary native deletion during exploration must not strand
             # the guide on a known-but-no-longer-rendered function.

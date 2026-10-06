@@ -74,7 +74,13 @@ class ReportPreparation {
     Promise.resolve().then(() => { this.statusNotification = false; if (!this.disposed) return this.options.changed?.(this.status()); })
       .catch(error => this.options.log?.(`Report display update: ${error.message}`));
   }
-  localAdmissionFailure(reason) { this.admissionStatus = { mode: 'paused', reason }; this.notifyStatus(); }
+  localAdmissionFailure(reason) {
+    this.admissionStatus = { mode: 'paused', reason, admission: { scope: 'report', project: hash(fs.realpathSync(this.root)),
+      reportHash: this.state?.reportHash || null, revision: this.controlRevision, observedAt: now(),
+      kind: /owner|another.*host|journal/i.test(reason) ? 'ownership' : 'setup', reason,
+      action: 'Reopen after the named host or setup condition changes. No new request was authorized by this refusal.' } };
+    this.notifyStatus();
+  }
   save() { clearTimeout(this.progressTimer); this.progressTimer = null;
     // Controls outside a run also need ownership. Never overwrite another
     // live host's journal merely to display a local admission failure.
@@ -92,12 +98,14 @@ class ReportPreparation {
     this.notifyStatus(); }
   progress() { if (!this.progressTimer) this.progressTimer = setTimeout(() => { if (!this.disposed) this.save(); }, 250); }
   status() {
-    if (!this.state) return this.admissionStatus ? { ...this.admissionStatus, total: 0, ready: 0, counts: {}, jobs: [], active: [], stopped: [], requests: 0, requestLimit: 0 } : null;
+    if (!this.state) return this.admissionStatus ? { ...this.admissionStatus, project: this.admissionStatus.admission.project,
+      reportHash: this.admissionStatus.admission.reportHash, total: 0, ready: 0, counts: {}, jobs: [], active: [], stopped: [], requests: 0, requestLimit: 0 } : null;
     const jobs = Object.values(this.state.jobs), counts = {};
     for (const job of jobs) counts[job.state] = (counts[job.state] || 0) + 1;
     return { version: VERSION, reportName: this.state.reportName, reportHash: this.state.reportHash, project: this.state.project,
       total: jobs.length, ready: jobs.filter(job => this.artifact(job.id)).length, counts, ambiguities: this.state.ambiguities.length,
       published: !!this.state.publication, mode: this.admissionStatus?.mode || this.state.mode, reason: this.admissionStatus?.reason || this.state.reason || '', startedAt: this.state.startedAt,
+      admission: this.admissionStatus?.admission || null,
       requests: this.state.resources.requests, requestLimit: this.state.resources.limit, costUSD: this.state.resources.costUSD,
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
@@ -181,7 +189,6 @@ class ReportPreparation {
     // The catalog provider reconciles content once for this generation; no
     // per-finding scan is required. Reuse is checked below under the report lock.
     const runEpoch = this.epoch, attempted = new Map(this.pendingFindings);
-    this.admissionStatus = null;
     this.loop = this.run(retry).catch(error => {
       if (this.disposed || runEpoch !== this.epoch) return;
       this.localAdmissionFailure(error.message);
@@ -198,6 +205,7 @@ class ReportPreparation {
   }
   async run(retry) {
     this.lock();
+    this.admissionStatus = null; this.notifyStatus();
     const { report, entries, reconciliation } = reconcile(this.root);
     const project = hash(fs.realpathSync(this.root)), identity = hash([VERSION, policy.POLICY, project, report.reportHash, entries.map(item => [item.id, item.title, item.body])]);
     if (!retry && !this.pendingFindings.size && this.state?.publication && this.state.mode === 'completed' && this.state.identity === identity && !this.options.dirty?.()) {
@@ -266,6 +274,9 @@ class ReportPreparation {
       const request = this.request(entry, catalog, report);
       if (!engine.revalidate(saved, catalog, request, this.issue(entry))) {
         job.state = 'queued'; job.publishable = false; job.outcome = null; job.accepted = null; this.accepted.delete(entry.id);
+      } else if (saved.failureCode === 'LOCAL_GATE_WITHDRAWN') {
+        Object.assign(job, { state: 'blocked', stage: 'challenge', publishable: false, accepted: null, reason: saved.error });
+        this.accepted.delete(entry.id);
       } else if (job.publishable && !checked(saved)) {
         job.state = 'queued'; job.publishable = false; job.accepted = null; this.accepted.delete(entry.id);
       } else if (checked(saved)) {
@@ -424,8 +435,13 @@ class ReportPreparation {
     const issue = this.issue(entry), request = this.request(entry, catalog, report);
     const fresh = engine.create({ findingId: entry.id, request, issue, catalog });
     let draft = engine.read(this.root, entry.id);
+    const wasReady = draft?.phase === 'ready';
     if (draft && !engine.revalidate(draft, catalog, request, issue)) { engine.archive(this.root, draft); fresh.storageRevision = draft.revision; fresh.revision = draft.revision + 1; fresh.corrections = draft.corrections; draft = fresh; }
     draft ||= fresh;
+    if (wasReady && draft.failureCode === 'LOCAL_GATE_WITHDRAWN') {
+      Object.assign(job, { state: 'blocked', stage: 'challenge', publishable: false, accepted: null, reason: draft.error });
+      this.accepted.delete(entry.id); this.recoveryStatus(job, draft); this.save(); return;
+    }
     if (checked(draft)) { engine.validateCurrent(catalog, draft); this.accept(entry, draft, job); this.save(); return; }
     const abort = new AbortController(); this.active = { abort, id: entry.id }; this.tasks.set(entry.id, this.active);
     const attemptId = crypto.randomUUID();

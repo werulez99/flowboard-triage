@@ -37,7 +37,11 @@ function functionParts(code, name) {
   const keyword = ['constructor', 'receive', 'fallback'].includes(name) ? escaped(name) : `(?:function|modifier)\\s+${escaped(name)}`;
   const occurrences = [...clean.matchAll(new RegExp(`\\b${keyword}\\s*\\(`, 'g'))];
   if (occurrences.length !== 1) return null;
-  const start = occurrences[0].index, paren = clean.indexOf('(', start), endParams = matching(clean, paren);
+  return functionPartsAt(code, occurrences[0].index, clean);
+}
+// Exact declaration offset, not a name lookup across overloads/contracts.
+function functionPartsAt(code, start, clean = lexicalCode(code)) {
+  const paren = clean.indexOf('(', start), endParams = matching(clean, paren);
   if (endParams < 0) return null;
   let marker = endParams + 1;
   while (marker < clean.length && clean[marker] !== '{' && clean[marker] !== ';') marker++;
@@ -83,4 +87,4 @@ function scanVariables(text, knownTypes, target) {
   const pattern = /\b([A-Za-z_$][\w$]*)\s+(?:(?:public|private|internal|external|constant|immutable|override|memory|storage|calldata|payable)\s+)*([A-Za-z_$][\w$]*)\s*[;=,)]/g;
   for (const match of text.matchAll(pattern)) if (knownTypes.has(match[1]) || /^(?:u?int\d*|bytes\d*|address|bool|string)$/.test(match[1])) target.set(match[2], match[1]);
 }
-module.exports = { lexicalCode, functionParts, guards, escaped, stateStatements, scanVariables, matching };
+module.exports = { lexicalCode, functionParts, functionPartsAt, guards, escaped, stateStatements, scanVariables, matching };

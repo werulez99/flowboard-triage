@@ -51,13 +51,28 @@ function revalidate(draft, catalog, request, issue) {
   // pause interrupted final publication. Re-run the current gate locally;
   // never request the same paid challenge merely to finish host validation.
   const last = draft.runs.at(-1);
+  if (draft.phase === 'ready') {
+    const publication = guidePolicy.gate(draft);
+    if (!publication.ready) {
+      // Local withdrawal is not authorization to buy a new generation. Retain
+      // the paid semantic base and a challenge checkpoint for explicit review.
+      draft.publication = publication; draft.phase = 'blocked';
+      draft.failureCode = 'LOCAL_GATE_WITHDRAWN';
+      draft.failureKind = publication.details?.some(item => item.kind === 'material-evidence') ? 'material-evidence' : 'structural';
+      draft.error = publication.problems[0];
+      draft.checkpoint = { ...draft.checkpoint, stage: 'challenge', snapshot: hash(draft.snapshot),
+        feedback: { ...draft.checkpoint?.feedback, problems: publication.problems, details: publication.details }, locallyWithdrawnAt: now() };
+      draft.revision++; write(catalog.root, draft);
+      return true;
+    }
+  }
   if (draft.phase !== 'ready' && !draft.pendingResponse && draft.checkpoint?.stage === 'challenge' &&
       last?.phase === 'challenge' && last.resultAccepted && last.outcome === 'completed') {
     const publication = guidePolicy.gate(draft);
     if (publication.ready) {
       draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
       draft.publication = publication; draft.publication.digest = guidePolicy.digest(draft);
-      draft.phase = 'ready'; delete draft.error; delete draft.failureKind;
+      draft.phase = 'ready'; delete draft.error; delete draft.failureKind; delete draft.failureCode;
       draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), at: now(), recoveredLocally: true };
       draft.revision++; write(catalog.root, draft);
     } else if (draft.failureKind === 'paused' && (draft.failureCode === 'LOCAL_RECOVERY_PENDING' || draft.yielded && last.reusedResponse)) {
@@ -605,7 +620,7 @@ function accept(output, draft, units) {
     opposingEvidence: evidence.find(item => item.id === presentation.assessment?.opposingEvidence && item.stance === 'contradicts')?.id || ''
   } } : null;
   const inputReviews = structuredClone(output.inputReviews || []);
-  const inputProblems = semanticInput.problems({ ...draft, claims, evidence, causal: output.causal, inputReviews }, false);
+  const inputProblems = semanticInput.problems({ ...draft, sources: units, claims, evidence, causal: output.causal, inputReviews }, false);
   if (inputProblems.length) throw new Error(inputProblems.join('\n'));
   return { property, claims, evidence, transitions, questions, inputReviews, bindingPlan: output.bindingPlan || null, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
     scopedStatus: claims.some(claim => claim.status === 'unresolved') ? 'partial' : text(output.conclusion.status, 100),
@@ -842,6 +857,14 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       } };
       draft.runs.push({ ...response.audit, resultAccepted: false, ...(feedback ? { repair: true } : {}) });
       const validate = value => {
+        // Source supplied in this completed invocation is available to its
+        // interpretation checks, even before committing the reading cursor.
+        // Keep this prospective coverage private; a failed answer must not
+        // mutate the prior checkpoint or certify an unsupplied gap/tail.
+        const reviewUnits = context.units.map(unit => {
+          const supplied = data.sources.find(item => item.id === unit.id), through = unit.readThrough ?? unit.source.line - 1;
+          return supplied && supplied.line <= through + 1 ? { ...unit, readThrough: Math.max(through, supplied.endLine) } : unit;
+        });
         const formatSchema = data.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
         if (data.checkOnly && value?.result) value = challengeFormat.checked(value, data.earlierDraft, formatSchema);
         // Assemble first so independent note/scope failures can be reported
@@ -850,13 +873,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (value?.mode === challengeFormat.PATCH) value = previous ? challengeFormat.assemblePatch(value, data.earlierDraft, formatSchema) : challengeFormat.apply(value, data.earlierDraft, formatSchema);
         else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, formatSchema);
         try {
-        const accepted = accept(value, draft, context.units);
+        const accepted = accept(value, draft, reviewUnits);
         for (const entry of accepted.evidence) {
           const unit = context.units.find(item => item.id === entry.sourceId), supplied = data.sources.find(item => item.id === entry.sourceId);
           const readTo = Math.max(unit?.readThrough || (unit?.source.line || 1) - 1, supplied?.endLine || 0);
           if (entry.source.endLine > readTo) throw Object.assign(new Error(`Evidence ${entry.id} refers to local code not yet supplied: ${entry.source.file}:${entry.source.line}-${entry.source.endLine}. Request that segment before explaining it.`), { code: 'LOCAL_READING_LIMIT' });
         }
-        return previous ? checkExplanations(value, previous, accepted, context.units) : accepted;
+        return previous ? checkExplanations(value, previous, accepted, reviewUnits) : accepted;
         } catch (error) {
           if (!previous) throw error;
           const scope = require('./review-scope'), independent = scope.problems(previous, value);

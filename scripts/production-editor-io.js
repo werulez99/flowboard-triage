@@ -2,15 +2,16 @@
 // Minimal editor IO for the ACTUAL extension activation/selection/cache route.
 // No replacement cache, selection implementation, snapshot or Ready response.
 const fs = require('node:fs'), path = require('node:path'), Module = require('node:module');
-function activateProduct({ extension, upstream, root, api, Board, invoke, onBoard, onCoordinator, onSelection, trace }) {
+function activateProduct({ extension, upstream, root, api, Board, invoke, storage, readOnly, onBoard, onCoordinator, onSelection, trace }) {
   const commands = new Map(), subscriptions = [], disposable = () => ({ dispose() {} });
+  let initialPreparation;
   const watcher = () => ({ ...disposable(), onDidCreate: disposable, onDidChange: disposable, onDidDelete: disposable });
   Object.assign(api, { RelativePattern: class { constructor(_folder, pattern) { this.pattern = pattern; } }, ProgressLocation: { Notification: 15 },
     commands: { registerCommand: (id, callback) => { commands.set(id, callback); return disposable(); } },
     extensions: { getExtension: () => ({ extensionPath: upstream, extensionUri: api.Uri.file(upstream), packageJSON: { version: '1.2.0' }, activate: async () => {} }) } });
   Object.assign(api.workspace, { textDocuments: [], createFileSystemWatcher: watcher, onDidChangeWorkspaceFolders: disposable,
     onDidChangeConfiguration: disposable, onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable });
-  Object.assign(api.window, { createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }),
+  Object.assign(api.window, { createOutputChannel: () => ({ appendLine(message) { trace('extension-log', { message }); }, show() {}, dispose() {} }),
     withProgress: async (_options, action) => action({ report() {} }) });
   const filename = path.join(extension, 'extension.js'), loaded = new Module(filename, module);
   loaded.filename = filename; loaded.paths = Module._nodeModulePaths(extension);
@@ -19,7 +20,7 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, onBoar
     if (name === 'vscode') return api;
     if (name === './board') return { TriageBoard: class extends Board {
       constructor(...args) {
-        super(...args); onBoard(this);
+        super(...args); if (readOnly) this.callbacks.investigationPersistence = false; onBoard(this);
         const select = this.callbacks.select;
         this.callbacks.select = id => { trace('selection-received', { findingId: id }); const work = select(id); onSelection(work); return work; };
       }
@@ -27,8 +28,15 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, onBoar
       async post(message) { if (message.type === 'triage:load') trace('load-send', { findingId: message.issueId, token: message.token }); return super.post(message); }
     } };
     const value = normal(name);
+    if (name === './store' && readOnly) return storage;
+    if (name === './protocol' && readOnly) return { ...value, atomicJson: (project, file, data) => {
+      if (file === '.flowboard/view-status.json') return; // Editor status IO, not source/currentness logic.
+      throw new Error(`Saved-workspace renderer cannot write ${file}`);
+    } };
     if (name === './report-preparation') return { ...value, ReportPreparation: class extends value.ReportPreparation {
-      constructor(project, options) { super(project, { ...options, invoke }); onCoordinator(this); }
+      constructor(project, options) { super(project, { ...options, invoke, ...(readOnly ? {
+        authorizeRequest: () => { throw new Error('Saved-workspace measurement authorizes zero provider reservations.'); }
+      } : {}) }); initialPreparation = this; onCoordinator(this); }
     } };
     if (name === './runner-adapter') return { ...value, analyze: async (...args) => { const start = performance.now(); trace('index-start');
       try { return await value.analyze(...args); } finally { trace('index-end', { durationMs: performance.now() - start }); } } };
@@ -38,6 +46,14 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, onBoar
   };
   loaded._compile(fs.readFileSync(filename, 'utf8'), filename);
   loaded.exports.activate({ extensionPath: extension, extensionUri: api.Uri.file(extension), subscriptions });
-  return { open: () => commands.get('flowboardTriage.report')(), dispose: () => subscriptions.forEach(item => item.dispose()) };
+  return { open: async () => {
+    // In saved-workspace measurements let the real activation-time local
+    // revalidation finish before creating a simulated webview. Otherwise the
+    // harness cannot serve its HTML while synchronous indexing owns the host,
+    // and may time out the handshake before the browser can receive it. Index
+    // time remains in the trace, outside the subsequent cached-open boundary.
+    if (readOnly) await initialPreparation?.loop;
+    return commands.get('flowboardTriage.report')();
+  }, dispose: () => subscriptions.forEach(item => item.dispose()) };
 }
 module.exports = { activateProduct };

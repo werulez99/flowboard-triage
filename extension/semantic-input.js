@@ -40,7 +40,7 @@ function packet(value) {
   const { reportText, ...saved } = value;
   return { ...saved, originalReport: { sha256: hash(reportText), content: 'finding.reportParagraphs' } };
 }
-function problems(draft, final = true) {
+function problems(draft, final = true, resolved) {
   const premises = draft.semanticInput?.premises || [], reviews = draft.inputReviews || [], errors = [];
   if (draft.semanticInput) try { validate(draft.semanticInput); } catch (error) { return [error.message]; }
   const evidence = new Set((draft.evidence || []).map(item => item.id)), claims = new Map((draft.claims || []).map(item => [item.id, item]));
@@ -59,7 +59,7 @@ function problems(draft, final = true) {
     if (!review.evidence.length || !review.eventIds.length) errors.push(`The saved ${premise.field} needs checked code and an affected step, not just acknowledgement.`);
     if (review.status === 'applied') {
       const condition = booleanCondition(premise.text);
-      if (condition) errors.push(...require('./call-bindings').checkBooleanPremise(draft, condition, review));
+      if (condition) errors.push(...require('./call-bindings').checkBooleanPremise(draft, condition, review, resolved));
     }
   }
   return errors;
