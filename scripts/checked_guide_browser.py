@@ -25,7 +25,7 @@ parser.add_argument('--recorded')
 parser.add_argument('--baseline', action='store_true')
 parser.add_argument('--report-preparation', action='store_true')
 parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
-parser.add_argument('--reopens', type=int, default=1, choices=range(1, 6))
+parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
 parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
 parser.add_argument('--output', required=True)
@@ -126,23 +126,15 @@ try:
             page.wait_for_selector('.guide-controls:visible')
             controls = page.locator('.guide-controls')
             steps = draft['causal']['order']; visited = []
+            expected = {event['id']: {'findingId':args.finding,'invocationId':event['invocationId'], 'event':json.dumps(event,separators=(',', ':'),ensure_ascii=False),
+                'what':event['what'],'code':original_unit(event)['code'],'file':original_unit(event)['source']['file'],
+                'start':original_unit(event)['source']['line'],
+                'highlights':list(range(visual(event)['source']['line'],visual(event)['source']['endLine']+1))} for event in draft['causal']['events']}
+            readable_script = (repo / 'scripts/verified-readable.js').read_text() + '\nwindow.installReadable(' + json.dumps(expected) + ');'
+            page.add_init_script(readable_script)
+            page.evaluate(readable_script)
             def verify_readable(identity):
-                current = next(e for e in draft['causal']['events'] if e['id'] == identity)
-                note = visual(current)
-                unit = original_unit(current)
-                page.wait_for_function('''expected=>{
-                  const a=document.querySelector('.guide-annotation'),c=document.querySelector('.guide-active-card'),v=document.querySelector('#flowboard');
-                  if(!a||!c||!v||a.dataset.stepId!==expected.id||!a.textContent.includes(expected.what))return false;
-                  const header=c.querySelector('.card-header'),b=v.getBoundingClientRect(),h=header?.getBoundingClientRect(),ab=a.getBoundingClientRect();
-                  const lines=[...c.querySelectorAll('.triage-claim-line')];
-                  const exact=Array.from({length:expected.endLine-expected.line+1},(_,i)=>expected.line+i);
-                  return header?.innerText.includes(expected.name)&&header.innerText.includes(expected.file)&&c.querySelector(`[data-source-line="${expected.functionEnd}"]`)&&
-                    JSON.stringify(lines.map(l=>Number(l.dataset.sourceLine)))===JSON.stringify(exact)&&h&&h.top>=b.top-1&&h.bottom<=b.bottom+1&&ab.width>100&&ab.height>20&&ab.left>=0&&ab.right<=innerWidth+1&&
-                    lines.some(l=>{const r=l.getBoundingClientRect();return Number(l.dataset.sourceLine)===expected.line&&r.top>=b.top-1&&r.bottom<=b.bottom+1});
-                }''', arg={'id':identity,'what':current['what'],'line':note['source']['line'],'endLine':note['source']['endLine'],
-                    'name':unit['name'].split('::')[-1],'file':Path(unit['source']['file']).name,'functionEnd':unit['source']['endLine']}, timeout=30000)
-                actual = request('/state')['lastLoad']['investigationDraft']
-                assert actual['causal'] == draft['causal'], 'Unchanged-input opening changed accepted causal content.'
+                page.wait_for_function('id=>window.isReadable(id)', arg=identity, timeout=30000)
             verify_readable(steps[0])
             result['coldSelectToVerifiedMs'] = (time.monotonic()-cold_select)*1000
             before_calls = len(state['providerCalls'])
@@ -234,19 +226,19 @@ try:
             page.locator('.guide-report-links').get_by_role('button', name='Step 1: ' + first_event['title'], exact=True).click()
             assert page.locator('.guide-annotation').get_attribute('data-step-id') == steps[0]
             result['checks'].append('Keyboard steps and original-report-to-step navigation use the same prepared route.')
-            # Measure actual renderer click-to-next-paint, excluding Python and
-            # simulated editor round trips. These are warm local playback data.
+            # Exact browser-readable boundary, not two animation frames.
             if len(steps) > 1:
-                result['playbackMs'] = page.evaluate('''async () => {
+                result['playbackMs'] = page.evaluate('''async steps => {
                   const values=[];
                   for(let i=0;i<30;i++) {
                     const label=i%2?'Previous step':'Next step';
                     const control=[...document.querySelectorAll('.guide-controls button')].find(b=>b.textContent===label);
+                    window.armReadable(steps[i%2?0:1]);
                     const start=performance.now();control.click();
-                    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-                    values.push(performance.now()-start);
+                    await new Promise((resolve,reject)=>{const end=performance.now()+30000;const poll=()=>{if(window.readableResult)resolve();else if(performance.now()>end)reject(new Error('Next step not readable'));else requestAnimationFrame(poll)};poll()});
+                    values.push(window.readableResult.at-start);
                   }return values;
-                }''')
+                }''', steps)
                 assert len(request('/state')['providerCalls']) == before_calls
             # Recreate the controller and renderer, not merely hide/show a panel.
             # Persisting is a normal automatic product action, not JSON setup.
@@ -261,18 +253,22 @@ try:
                 request('/action', {'name':'reopen'})
                 page.reload()
                 page.wait_for_selector(finding_row)
+                page.evaluate('id=>window.armReadable(id)', steps[0])
                 click_start = time.monotonic()
                 page.locator(finding_row).click()
+                page.wait_for_function('()=>window.readableResult !== null', timeout=30000)
+                endpoint = page.evaluate('window.readableResult')
                 verify_readable(steps[0])
                 verified = time.monotonic()
-                click_ms = page.evaluate('performance.now()-window.actualFindingClick')
+                click_ms = endpoint['at'] - endpoint['clickAt']
                 assert page.evaluate('()=>({scale,panX,panY})') == position['camera']
                 reopened = request('/state')
+                assert reopened['lastLoad']['investigationDraft']['causal'] == draft['causal'], 'Unchanged-input opening changed accepted causal content.'
                 assert len(reopened['providerCalls']) == before_calls
                 assert reopened['lastLoad']['finding']['status'] == 'unreviewed'
                 traces = reopened.get('productionTrace', [])
                 result['savedOpenSamples'].append({'totalMs':(verified-started)*1000,'automationClickToVerifiedMs':(verified-click_start)*1000,
-                    'actualClickToVerifiedMs':click_ms,'hostTrace':traces[trace_cursor:]})
+                    'actualClickToVerifiedMs':click_ms,'browserEndpoint':endpoint,'diagnosticsCompletedMs':(time.monotonic()-started)*1000,'hostTrace':traces[trace_cursor:]})
                 trace_cursor = len(traces)
             result['productionTrace'] = request('/state').get('productionTrace', [])
             result['checks'].append('A recreated board restores the saved step/camera without a new provider request or changed researcher judgment.')

@@ -194,6 +194,18 @@ test('extension.activate reuses only fresh source catalogs and invalidates added
   assert.equal(analysis.count, 7, 'Saving an edited buffer cannot revive the previous catalog.');
 });
 
+test('warm selection detects same-size source edits and documentation changes without watcher delivery', { skip: !native }, async t => {
+  const env = await setup(t); await env.select('I-01');
+  const file = path.join(env.root, 'src/Demo.sol'), original = fs.readFileSync(file, 'utf8'), stat = fs.statSync(file);
+  fs.writeFileSync(file, original.replace('counter += amount', 'counter -= amount')); fs.utimesSync(file, stat.atime, stat.mtime);
+  const opened = env.opened.length; await env.select('I-02');
+  assert.equal(env.opened.length, opened, 'Changed mapped source is refused before exposure.');
+  assert.match(env.board.unmapped.error, /Stale|changed/i);
+  fs.writeFileSync(file, original); fs.utimesSync(file, stat.atime, stat.mtime);
+  fs.writeFileSync(path.join(env.root, 'SPECIFICATION.md'), '# Saved input\nA newly supplied rule.\n');
+  await env.select('I-01'); assert.equal(env.analysis.count, 2);
+});
+
 test('editing finding B in an actual extension buffer preserves accepted A and pauses only B', { skip: !native }, async t => {
   const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation'), requests = [];
   const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'),

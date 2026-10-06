@@ -40,6 +40,14 @@ test('existing valid citations do not suppress alternative description search or
   assert.match(prepared.contexts[0].source.sourceHash, /^[a-f0-9]{64}$/);
   assert.equal(draft.request.finding.triage.evidence.length, 0);
   assert.ok(prepared.missing.some(text => text.includes('code version')));
+  let calls = 0; const callLinks = catalog.callLinks.bind(catalog);
+  catalog.callLinks = (...args) => { calls++; return callLinks(...args); };
+  const again = prepareInvestigation(catalog, { ...draft.request, id: 'new-delivery' }, draft);
+  assert.deepEqual(again, prepared); assert.equal(calls, 0, 'A delivery UUID does not redo exploration work.');
+  again.contexts.length = 0;
+  assert.ok(prepareInvestigation(catalog, draft.request, draft).contexts.length, 'Consumers cannot mutate cached context.');
+  prepareInvestigation(catalog, { ...draft.request, finding: { ...draft.request.finding, preconditions: ['A new researcher premise.'] } }, draft);
+  assert.ok(calls > 0, 'Changed researcher inputs invalidate context reuse.');
 });
 test('reported actual behavior is a hypothesis, not automatically an inspected source observation', { skip: !native }, async t => {
   const root = workspace(t), { runner, result } = await analyze(native, root);

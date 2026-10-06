@@ -35,9 +35,18 @@ function archiveDraft(root, id, request) {
   if (!fs.existsSync(path.join(root, relative))) p.atomicJson(root, relative, request);
   return relative;
 }
-function readReport(root) {
+function readReportIndex(root) {
   const bundle = p.readWorkspaceJson(root, '.flowboard/report.json', 12 * 1024 * 1024);
   if (!Array.isArray(bundle.issues) || bundle.issues.length > 1000) throw new Error('Invalid report index: expected at most 1,000 findings.');
+  for (const issue of bundle.issues) p.identifier(issue?.id, 'report finding ID');
+  return bundle;
+}
+function readIssue(root, id) {
+  p.identifier(id, 'report finding ID');
+  return readReportIndex(root).issues.find(issue => issue.id === id);
+}
+function readReport(root) {
+  const bundle = readReportIndex(root);
   for (const issue of bundle.issues) {
     p.identifier(issue?.id, 'report finding ID');
     try { issue.request = readDraft(root, issue.id); issue.status = issue.request.finding.status; issue.mappingPending = false; }
@@ -48,14 +57,30 @@ function readReport(root) {
   }
   return bundle;
 }
+const summaries = new Map();
 function library(root) {
-  try { return readReport(root).issues.map(issue => {
-    const finding = issue.request?.finding, ready = finding?.triage ? review.readiness(finding) : null;
-    const anchors = (issue.request?.cards || []).map(card => ({ file: card.file, line: card.line, function: card.function || '' }));
+  // List display does not need hydrated sibling requests. Validate exact current
+  // bytes (not mtime/watchers/TTL); reuse only their derived small summaries.
+  // Selected analysis separately reads and validates its complete draft.
+  try { return readReportIndex(root).issues.map(issue => {
+    let data = null, error = null;
+    try {
+      const raw = p.readWorkspaceText(root, draftPath(issue.id)), key = `${fs.realpathSync(root)}:${issue.id}`;
+      const digest = crypto.createHash('sha256').update(raw).digest('hex'), cached = summaries.get(key);
+      if (cached?.digest === digest) data = cached.data;
+      else {
+        const request = p.validate(JSON.parse(raw)), finding = request.finding, ready = finding.triage ? review.readiness(finding) : null;
+        data = { status: finding.status, reviewGaps: ready?.gaps.length || 0, staleEvidence: ready?.outdated || 0,
+          anchors: request.cards.map(card => ({ file: card.file, line: card.line, function: card.function || '' })) };
+        if (summaries.size >= 2000) summaries.delete(summaries.keys().next().value);
+        summaries.set(key, { digest, data });
+      }
+    } catch (caught) { error = caught; }
+    const anchors = data?.anchors || [];
     return { id: issue.id, displayId: issue.displayId, title: issue.title, severity: issue.severity,
-      status: issue.status || 'unreviewed', mapped: !!issue.request, mappingPending: !!issue.mappingPending && !issue.draftError, unresolved: issue.unresolved?.length || 0,
-      reviewGaps: ready?.gaps.length || 0, staleEvidence: ready?.outdated || 0,
-      files: [...new Set(anchors.map(card => card.file))], anchors };
+      status: data?.status || issue.status || 'unreviewed', mapped: !!data, mappingPending: !!issue.mappingPending && error?.code === 'ENOENT', unresolved: issue.unresolved?.length || 0,
+      reviewGaps: data?.reviewGaps || 0, staleEvidence: data?.staleEvidence || 0,
+      files: [...new Set(anchors.map(card => card.file))], anchors: structuredClone(anchors) };
   }); }
   catch { return []; }
 }
@@ -198,4 +223,4 @@ function reviewPrompt(id) {
   p.identifier(id, 'finding ID');
   return `Use $solidity-flowboard-triage to review ${id} in .flowboard/findings/${id}.json. Read the skill, original report and relevant source. Identify the intended rule before assessing the reported deviation; record its provenance in finding.triage.ruleOrigin, distinguishing report assertions from independently checked specifications/tests/implementation. Split the report into focused statements in finding.triage.claims, preserving its meaning. For each claim, record observed behavior, permissions/state, consequence/uncertainty, decision reason and remaining questions. Link actual ledger evidence IDs with a claim-specific supports/contradicts/context stance and an explanation of relevance. Claim states are unreviewed/supported/contradicted/mixed/unresolved; they do not set the finding verdict. Inspect version, permissions/state, actual reads/writes and call targets; actively look for guards/specification/implementations that contradict the claim. If no usable citations exist, check description-search candidates against source; search scores are not bug confidence. Add explained supports/contradicts/context entries to finding.triage.evidence with real relative source lines/hashes or specification/test references, checkpoint reasoning and a decisionReason. Write visible explanations in simple English using short sentences: what this code does, why it matters to the report, and what is still unknown. Avoid internal labels such as provenance, ledger, source binding or semantic verification in displayed text. Keep quotations, code, names, paths, IDs and enum values unchanged. Explanations appear below continuous code. For code explanations, use short notes at the exact original statement line with category behavior, claim, impact, guard or question; distinguish report assertions from source observations. Do not guess a source line from summary prose. Fill expectedBehavior, actualBehavior and openQuestions for the finding-level Review story. Annotate each relevant source card/connection so the reviewer can navigate the argument. Keep unchecked areas and deployment/specification uncertainty explicit. This is source review, not exploit execution or speculative attack-chain generation. Save the draft first, then submit a fresh delivery and report actual rendering. Distinguish confirmed, invalid, design-decision, insufficient-evidence and already-fixed; a graph or checkmark is not proof. Unsaved UI edits are not included; read the saved draft and respect concurrent edits.`;
 }
-module.exports = { findingKey, selectedDraft, draftPath, readDraft, writeDraft, archiveDraft, sameDraft, readReport, library, readBoard, writeBoard, archiveBoard, archiveBoardFile, saveReview, reviewPrompt, editable };
+module.exports = { findingKey, selectedDraft, draftPath, readDraft, writeDraft, archiveDraft, sameDraft, readReportIndex, readIssue, readReport, library, readBoard, writeBoard, archiveBoard, archiveBoardFile, saveReview, reviewPrompt, editable };

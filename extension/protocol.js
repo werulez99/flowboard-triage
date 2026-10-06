@@ -82,13 +82,14 @@ function validate(request) {
   if (Buffer.byteLength(JSON.stringify(request)) > MAX_BYTES) fail(`Finding request limit: ${MAX_BYTES} bytes.`);
   return request;
 }
-function readWorkspaceJson(root, relative, maxBytes = MAX_BYTES) {
+function readWorkspaceText(root, relative, maxBytes = MAX_BYTES) {
   const absolute = fs.realpathSync(path.resolve(root, relative));
   if (!contained(fs.realpathSync(root), absolute)) fail('Workspace data must resolve inside the project.');
   const stat = fs.statSync(absolute);
   if (!stat.isFile() || stat.size > maxBytes) fail(`Workspace JSON limit: ${maxBytes} bytes.`);
-  return JSON.parse(fs.readFileSync(absolute, 'utf8'));
+  return fs.readFileSync(absolute, 'utf8');
 }
+function readWorkspaceJson(root, relative, maxBytes = MAX_BYTES) { return JSON.parse(readWorkspaceText(root, relative, maxBytes)); }
 function readJson(file) {
   const stat = fs.statSync(file);
   if (!stat.isFile() || stat.size > MAX_BYTES) fail(`JSON input must be a file of at most ${MAX_BYTES} bytes.`);
@@ -178,4 +179,4 @@ function noteText(request, analysis, git) {
   lines.push('\nSource navigation can misresolve overloaded/interface/dynamic calls. Verify all targets. No exploit execution or automatic verdict.');
   return lines.join('\n');
 }
-module.exports = { REQUEST, STATUS, MAX_BYTES, STATUSES, validate, readJson, readWorkspaceJson, sources, evidenceSources, gitState, checkRevision, writableDirectory, atomicJson, noteText, contained, identifier };
+module.exports = { REQUEST, STATUS, MAX_BYTES, STATUSES, validate, readJson, readWorkspaceText, readWorkspaceJson, sources, evidenceSources, gitState, checkRevision, writableDirectory, atomicJson, noteText, contained, identifier };

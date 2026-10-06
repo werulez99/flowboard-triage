@@ -545,13 +545,27 @@ function makeContext(catalog, request, issue) {
   return { compiler, units, add, act, complete, prime, restore, prioritize, gaps, unread,
     documentation: workspaceSnapshot.docs(catalog, [semantic.title, queryText].join('\n')) };
 }
+function canonicalEvidence(items, units) {
+  const known = new Map(units.map(unit => [unit.id, unit]));
+  return items.map(item => {
+    const unit = known.get(item.sourceId);
+    if (!unit) throw new Error('Model evidence has an unknown source.');
+    if (!Number.isSafeInteger(item.line) || !Number.isSafeInteger(item.endLine) || item.line < unit.source.line || item.endLine < item.line || item.endLine > unit.source.endLine || item.endLine - item.line > 80) throw new Error('Model evidence span is outside its supplied source.');
+    const exact = unit.code.split('\n').slice(item.line - unit.source.line, item.endLine - unit.source.line + 1).join('\n');
+    if (typeof item.quote !== 'string' || exact.trim() !== item.quote.trim()) throw new Error(`Evidence ${item.id} does not quote its complete source span exactly. It was not accepted.`);
+    return { ...item, quote: exact };
+  });
+}
 function accept(output, draft, units) {
   if (output?.bindingFormat !== undefined && output.bindingFormat !== require('./source-bindings').VERSION)
     throw Object.assign(new Error('This source-binding representation is not supported.'), { code: 'BINDING_VERSION' });
   if (output?.bindingFormat === require('./source-bindings').VERSION) {
     if (!challengeFormat.valid(output, require('./source-bindings').schema(reviewSchema))) throw new Error('The source-binding response does not satisfy its full versioned schema.');
-    output = require('./source-bindings').compile(output, units);
   }
+  // Validate the established quote equivalence ONCE, before selectors resolve
+  // callable frames. Never mutate the raw paid response or fuzzy-match frames.
+  if (Array.isArray(output?.evidence)) output = { ...output, evidence: canonicalEvidence(output.evidence, units) };
+  if (output?.bindingFormat) output = require('./source-bindings').compile(output, units);
   if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > limits.claims || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
   for (const key of ['claims', 'evidence', 'transitions', 'questions']) capacity.assertLength(output[key] || [], limits[key], key);
   if (output.walkthrough?.steps !== undefined) capacity.assertLength(output.walkthrough.steps, limits.steps, 'walkthrough steps');
@@ -574,13 +588,10 @@ function accept(output, draft, units) {
     const id = text(item.id, 100), unit = known.get(item.sourceId);
     if (!/^[\w-]+$/.test(id) || evidenceIds.has(id) || !unit || item.claimId && !ids.has(item.claimId)) throw new Error('Model evidence has an unknown/duplicate identity or source.');
     evidenceIds.add(id);
-    if (!Number.isSafeInteger(item.line) || !Number.isSafeInteger(item.endLine) || item.line < unit.source.line || item.endLine < item.line || item.endLine > unit.source.endLine || item.endLine - item.line > 80) throw new Error('Model evidence span is outside its supplied source.');
-    const exact = unit.code.split('\n').slice(item.line - unit.source.line, item.endLine - unit.source.line + 1).join('\n');
-    if (typeof item.quote !== 'string' || exact.trim() !== item.quote.trim()) throw new Error(`Evidence ${id} does not quote its complete source span exactly. It was not accepted.`);
     if (!text(item.explanation)) throw new Error('Evidence must explain how the source bears on the claim.');
     if (!item.claimId && ['supports', 'contradicts'].includes(item.stance)) throw new Error('A supporting or challenging note must name its report statement. Shared code context is not a statement result.');
     return { id, findingId: draft.findingId, claimId: item.claimId || '', sourceId: unit.id, function: unit.contextKind ? null : { name: unit.name, signature: unit.signature || '', line: unit.source.line, endLine: unit.declarationEndLine || unit.source.endLine }, source: { ...unit.source, line: item.line, endLine: item.endLine },
-      quote: exact, note: text(item.explanation, 4000), stance: ['supports', 'contradicts'].includes(item.stance) ? item.stance : 'context',
+      quote: item.quote, note: text(item.explanation, 4000), stance: ['supports', 'contradicts'].includes(item.stance) ? item.stance : 'context',
       origin: 'model-interpretation', quoteVerified: true, interpretationVerified: false,
       basis: unit.kind === 'test-source' ? 'test-reference' : 'inference' };
   });

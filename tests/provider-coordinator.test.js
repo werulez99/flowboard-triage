@@ -322,6 +322,23 @@ test('reviewed enclosing source resolves an exact original native function witho
   unit.readThrough = unit.source.endLine; unit.contextKind = 'state'; assert.equal(policy.gate(accepted).ready,false,'A storage declaration is still not an executed function.');
   assert.equal(f.calls.length,2);
 });
+test('Ready playback observes the actual coordinator without reconciling or admitting paused siblings', { skip: !native }, async t => {
+  const f = await fixture(t, 2), { TriageBoard } = require('../extension/board');
+  const config = f.options.configuration;
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 20 }); await f.runner.ensure();
+  f.options.configuration = config; await f.runner.continueFinding('I-1'); await f.runner.control('pause');
+  assert.equal(f.runner.state.jobs['I-2'].requests, 0);
+  const draft = engine.read(f.root, 'I-1'), model = { id: 'I-1', investigationDraft: draft, displayedArtifact: f.runner.artifact('I-1') };
+  const messages = [], board = Object.assign(Object.create(TriageBoard.prototype), { activeId: 'I-1', models: new Map([['I-1', model]]),
+    callbacks: { reportPreparation: () => f.runner }, investigationCurrent: () => true, post: async m => messages.push(m) });
+  const run = f.runner.run.bind(f.runner); let reconciliations = 0;
+  f.runner.run = (...args) => { reconciliations++; return run(...args); };
+  const before = JSON.stringify(f.runner.state), calls = f.calls.length;
+  for (let i = 0; i < 3; i++) await board.startInvestigation(model);
+  assert.equal(reconciliations, 0); assert.equal(f.calls.length, calls); assert.equal(JSON.stringify(f.runner.state), before);
+  assert.ok(board.exposed(draft).causal); assert.equal(messages.length, 0, 'Initial load already carries status; no duplicate full progress payload.');
+});
+
 test('sealed projected input drift is withdrawn durably on first reopen without reserving generation; good sibling survives', { skip: !native }, async t => {
   const f = await fixture(t, 2), policy = require('../extension/guide-policy'); await f.runner.ensure();
   const draft = engine.read(f.root, 'I-1'), doc = f.catalog.document('src/Guard.sol');

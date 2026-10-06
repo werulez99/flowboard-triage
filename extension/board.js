@@ -286,10 +286,10 @@ class TriageBoard {
     this.native.panel.reveal(this.native.panel.viewColumn, true);
     model.investigation = prepareInvestigation(catalog, request, issue);
     try {
-      const fresh = investigationEngine.create({ findingId: id, request, issue, catalog });
       const saved = investigationEngine.read(this.root, id);
       if (saved && investigationEngine.compatible(saved, catalog, request, issue)) { investigationEngine.validateCurrent(catalog, saved); model.investigationDraft = saved; }
       else {
+        const fresh = investigationEngine.create({ findingId: id, request, issue, catalog });
         if (saved && this.callbacks.investigationPersistence !== false) investigationEngine.archive(this.root, saved);
         // Corrections survive as explicitly unsupported researcher premises.
         if (saved) { fresh.corrections = saved.corrections; fresh.previousSnapshot = saved.snapshot; fresh.storageRevision = saved.revision; fresh.revision = saved.revision; }
@@ -369,7 +369,7 @@ class TriageBoard {
     let draftCurrent = true;
     try {
       draftCurrent = investigationEngine.hash(store.readDraft(this.root, model.id)) === model.draftFingerprint;
-      if (model.issue) draftCurrent &&= store.readReport(this.root).issues.find(issue => issue.id === model.id)?.reportText === model.issue.reportText;
+      if (model.issue) draftCurrent &&= store.readIssue(this.root, model.id)?.reportText === model.issue.reportText;
       if (model.investigationDraft) draftCurrent &&= (model.investigationDraft.snapshot.documentation || null) === localDocumentation.inspect(this.root, model.request.finding.title).digest;
     } catch { draftCurrent = false; }
     return draftCurrent && this.isActive({ issueId: model.id, token: model.token }) && this.models.get(model.id) === model &&
@@ -381,7 +381,7 @@ class TriageBoard {
       let changed = false;
       try {
         changed = investigationEngine.hash(store.readDraft(this.root, model.id)) !== model.draftFingerprint ||
-          !!model.issue && store.readReport(this.root).issues.find(issue => issue.id === model.id)?.reportText !== model.issue.reportText ||
+          !!model.issue && store.readIssue(this.root, model.id)?.reportText !== model.issue.reportText ||
           !!model.investigationDraft && (model.investigationDraft.snapshot.documentation || null) !== localDocumentation.inspect(this.root, model.request.finding.title).digest;
       } catch { changed = true; }
       if (dirtyFile && p.contained(this.root, dirtyFile)) {
@@ -472,6 +472,10 @@ class TriageBoard {
     if (this.callbacks.reportPreparation) {
       const report = this.callbacks.reportPreparation();
       if (!this.investigationCurrent(model)) return;
+      // Ready playback is not authority to reconcile/restart paused siblings.
+      // Background work continues independently; explicit retry and changed or
+      // rejected artifacts still use the normal owned recovery path below.
+      if (!retry && this.exposed(model.investigationDraft)?.phase === 'ready') return;
       const work = retry ? report?.continueFinding(model.id) : report?.ensure();
       work?.catch(error => this.vscode.window.showErrorMessage(error.message)); // backend-owned, not view-owned
       return this.reportProgress();

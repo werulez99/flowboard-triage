@@ -22,6 +22,26 @@ test('review assessments persist with evidence and history', t => {
   assert.equal(next.finding.status, 'invalid'); assert.equal(store.readDraft(root, 'I-01').finding.status, 'invalid');
   assert.equal(p.readWorkspaceJson(root, '.flowboard/history/I-01.json').entries.length, 1);
 });
+test('selected report lookup never hydrates siblings and library summaries are current-byte bound', t => {
+  const root = workspace(t), request = structuredClone(fixture);
+  store.writeDraft(root, 'I-01', request); store.writeDraft(root, 'I-02', request);
+  p.atomicJson(root, '.flowboard/report.json', { issues: [{ id:'I-01',title:'First' },{ id:'I-02',title:'Second' }] });
+  const read = p.readWorkspaceJson, validate = p.validate; let draftReads = 0, validations = 0;
+  p.readWorkspaceJson = (...args) => { if (args[1].includes('/findings/')) draftReads++; return read(...args); };
+  p.validate = (...args) => { validations++; return validate(...args); };
+  t.after(() => { p.readWorkspaceJson = read; p.validate = validate; });
+  assert.equal(store.readIssue(root, 'I-02').title, 'Second'); assert.equal(draftReads, 0);
+  const first = store.library(root); assert.equal(validations, 2);
+  assert.deepEqual(store.library(root), first); assert.equal(validations, 2, 'Unchanged bytes do not repeat whole-draft validation.');
+  first[0].anchors.length = 0; assert.ok(store.library(root)[0].anchors.length);
+  const file = path.join(root, '.flowboard/findings/I-02.json'), stat = fs.statSync(file);
+  const raw = fs.readFileSync(file, 'utf8'); fs.writeFileSync(file, raw.replaceAll('Demo.sol', 'Dema.sol')); fs.utimesSync(file, stat.atime, stat.mtime);
+  assert.ok(store.library(root)[1].files.includes('src/Dema.sol')); assert.equal(validations, 3, 'Same-size edits without watcher delivery invalidate summaries.');
+  fs.unlinkSync(file); assert.equal(store.library(root)[1].mapped, false);
+  p.atomicJson(root, '.flowboard/report.json', { issues: [{ id:'I-01',title:'Edited' }] });
+  assert.equal(store.readIssue(root,'I-01').title,'Edited'); assert.equal(store.library(root).length,1);
+});
+
 test('concurrent draft edit is not overwritten by an old review form', t => {
   const root = workspace(t), request = structuredClone(fixture);
   store.writeDraft(root, 'I-01', request);

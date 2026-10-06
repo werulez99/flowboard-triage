@@ -490,6 +490,28 @@ test('native reviewed direct/enclosing callable frames have identical root param
     }
   }
 });
+test('selector compilation canonicalizes permitted outer whitespace before resolving direct or enclosing frames', async () => {
+  for (const enclosing of [false, true]) for (const trimmed of [true, false]) {
+    const draft = callDraft('    finish(false);'), callee = draft.sources[1];
+    if (enclosing) {
+      const code = `contract Guard {\n${callee.code}\n}`;
+      draft.sources.push({ ...callee, id: 'whole', name: 'Code details', contextKind: 'excerpt', code,
+        source: { ...callee.source, line: 9, endLine: 13 }, readThrough: 13 });
+      draft.evidence[1].sourceId = 'whole';
+    }
+    const result = checkedPipeline(draft, wire => {
+      if (trimmed) for (const note of wire.evidence) note.quote = note.quote.trim();
+    });
+    assert.equal(result.gate.ready, true, `${enclosing}/${trimmed}: ${result.gate.problems}`);
+    assert.ok(result.exposed.causal);
+    assert.equal(result.accepted.evidence[1].quote, '    require(accepted, "rejected");');
+    assert.throws(() => checkedPipeline(draft, wire => { wire.evidence[1].quote = 'require(accepted, "changed");'; }), /quote.*span exactly/);
+    const unread = structuredClone(result.accepted);
+    unread.sources.find(u => u.id === draft.evidence[1].sourceId).readThrough = 10;
+    assert.equal(policy.gate(unread).ready, false);
+  }
+});
+
 test('enclosing callee evidence preserves entered bindings, ordered mutations, units and typed failure semantics', { skip: !native }, async t => {
   for (const options of [{ drift: true }, { drift: true, reassign: true }, { catches: 'catch Error(string memory) {}' },
     { catches: 'catch Panic(uint256) {}' }, { catches: 'catch Error(string memory) { return false; }', catchReturn: true, returns: true }]) {

@@ -141,7 +141,8 @@ function activate(context) {
       boards.set(root, board);
     }
     if (fs.existsSync(path.join(root, '.flowboard/report.json'))) board.callbacks.reportPreparation = () => reportPreparation(folder);
-    scheduleReport(folder);
+    // Activation, input watchers and explicit controls own preparation. Merely
+    // creating/revealing a board must not reconcile every paused sibling.
     return board;
   }
   async function rebuildFinding(folder, id, expectedFingerprint, work = operation(folder, 'selection', id)) {
@@ -222,7 +223,7 @@ function activate(context) {
   async function openFinding(folder, id, work = operation(folder, 'selection', id)) {
     if (!current(work)) return;
     trust(); let issue;
-    try { issue = store.readReport(folder.uri.fsPath).issues.find(value => value.id === id); } catch { /* individual finding */ }
+    try { issue = store.readIssue(folder.uri.fsPath, id); } catch { /* individual finding */ }
     if (issue) reportPreparation(folder)?.prioritize(id);
     let draft;
     try { draft = store.readDraft(folder.uri.fsPath, id); }

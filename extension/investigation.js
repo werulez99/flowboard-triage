@@ -23,7 +23,23 @@ function preparedReview(finding) {
   if (!finding.triage) profile.claims = reportClaims(finding);
   return profile;
 }
+const prepared = new WeakMap();
 function prepareInvestigation(catalog, request, issue = null) {
+  // Pure exploration context, never an accepted semantic artifact. The caller
+  // validates catalog content/configuration before playback. Retain all actual
+  // researcher/report inputs; only the ephemeral delivery ID is omitted.
+  const { id, _draftFingerprint, ...input } = request;
+  const key = crypto.createHash('sha256').update(JSON.stringify([input, issue])).digest('hex');
+  let cache = prepared.get(catalog);
+  if (!cache) { cache = new Map(); prepared.set(catalog, cache); }
+  if (!cache.has(key)) {
+    const value = buildInvestigation(catalog, request, issue);
+    if (cache.size >= 32) cache.delete(cache.keys().next().value);
+    cache.set(key, value);
+  }
+  return structuredClone(cache.get(key));
+}
+function buildInvestigation(catalog, request, issue = null) {
   const fns = request.cards.map(card => catalog.resolveCard(card));
   const reference = (fn, line = fn.startLine) => {
     const file = catalog.relative(fn.file), doc = catalog.document(file);
