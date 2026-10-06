@@ -48,7 +48,9 @@ class EvaluationPlanGuard {
     if (this.approval?.authorized !== true || this.approval.manifestHash !== engine.hash(this.manifest) || this.approval.maximumRequests !== this.manifest.maximumRequests || this.root !== this.manifest.root)
       deny('No trusted evaluation phase plan for this workspace/approval.');
     const item = this.manifest.cases.find(c => c.findingId === findingId);
-    if (!item) deny('Finding is outside the approved phase plan.');
+    // Accounting observes paused siblings too. An empty plan denies their
+    // dispatch without making a read-only debt scan fail the selected case.
+    if (!item) return [];
     return [...item.phases];
   }
   authorize(input) {

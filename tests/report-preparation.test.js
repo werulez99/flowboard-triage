@@ -633,10 +633,10 @@ test('a 301-entry import schedules every legitimate entry independently before r
 module.exports = { response };
 
 test('authorized two pairs plus generation-only observation consumes exactly five without orphan challenge debt', { skip: !native }, async t => {
-  const f = await fixture(t, 3), { EvaluationPlanGuard, packetIdentity } = require('../scripts/evaluation-plan-guard');
+  const f = await fixture(t, 4), { EvaluationPlanGuard, packetIdentity } = require('../scripts/evaluation-plan-guard');
   f.options.configuration = () => ({ provider: 'none', requestLimit: 5, workers: 1 }); await f.runner.ensure();
   const catalog = await f.options.catalog(), { report, entries } = reconcile(f.root), cases = [];
-  for (const entry of entries) {
+  for (const entry of entries.slice(0, 3)) {
     const request = f.runner.request(entry, catalog, report), issue = f.runner.issue(entry); let packet;
     await engine.advance({ root: f.root, catalog, request, issue, findingId: entry.id, draft: engine.create({ findingId: entry.id, catalog, request, issue }),
       provider: 'codex', persist: false, current: () => true, publish: async () => {}, invoke: async input => { packet = input; throw Object.assign(Error('offline capture'), { code: 'REPORT_PAUSED' }); } });
@@ -658,6 +658,7 @@ test('authorized two pairs plus generation-only observation consumes exactly fiv
     t.diagnostic(JSON.stringify({ id: c.findingId, reason: f.runner.state.jobs[c.findingId].reason, receipts: ledger.receipts.map(r => ({ phase: r.phase, completeGeneration: r.completeGeneration })) })); }
   assert.deepEqual(f.calls, [['I-1','generate'],['I-1','challenge'],['I-2','generate'],['I-2','challenge'],['I-3','generate']]);
   assert.equal(ledger.used, 5); assert.equal(f.runner.status().requests, 5);
+  assert.equal(f.runner.state.jobs['I-4'].requests, 0); assert.deepEqual(guard.phasePlan('I-4'), []);
   for (const id of ['I-1', 'I-2']) assert.ok(f.runner.published(engine.read(f.root, id)));
   const observation = engine.read(f.root, 'I-3'); assert.ok(observation.claims.length); assert.equal(observation.checkpoint.stage, 'challenge');
   assert.equal(f.runner.published(observation), false); assert.equal(f.runner.state.jobs['I-3'].state, 'blocked');
