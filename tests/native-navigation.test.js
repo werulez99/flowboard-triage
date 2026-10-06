@@ -34,7 +34,7 @@ test('new report list observes current coordinator without scheduling and orders
   assert.equal(delivered.length,2); assert.equal(reads,1,'Superseded/closed panels do not observe or deliver status.');
   const text=fs.readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
   const fn=text.slice(text.indexOf('  function observePreparation'),text.indexOf('  let guideAvailability'));
-  const context={reportObservation:0,reportPreparation:null,reportContext:null}; const vm=require('node:vm');
+  const context={reportObservation:0,reportContextObservation:0,reportPreparation:null,reportContext:null}; const vm=require('node:vm');
   vm.runInNewContext(fn,context); context.observePreparation(delivered[1],delivered[1].report);
   context.observePreparation(delivered[0],delivered[0].reportPreparation);
   assert.equal(context.reportPreparation.mode,'paused','Late initial delivery cannot replace the live status.');
@@ -44,6 +44,13 @@ test('new report list observes current coordinator without scheduling and orders
   context.observePreparation(delivered[2],null);
   context.observePreparation({reportObservation:4},status);
   assert.equal(context.reportPreparation,null,'Late progress from the old coordinator cannot restore stale Ready rows.');
+  const replacement={...status,reportHash:'replacement',mode:'paused'};
+  const load={type:'triage:load',...board.libraryObservation(),reportPreparation:replacement,reportObservation:5};
+  context.observePreparation(load,replacement);
+  context.observePreparation({reportObservation:99},status);
+  assert.equal(context.reportPreparation,replacement,'Old report progress cannot clear the current observation or advance its sequence.');
+  context.observePreparation({reportObservation:6},{...replacement,mode:'completed'});
+  assert.equal(context.reportPreparation.mode,'completed');
 });
 
 test('actual preparation renderer retains selected job reason and shows current host refusal in dock and expanded view', () => {

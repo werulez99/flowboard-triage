@@ -292,6 +292,62 @@ test('fixed finding evaluation enforces identity, one generation/challenge, fini
   const before = f.calls.length; await f.runner.continueFinding('I-2'); assert.equal(f.calls.length, before);
   assert.equal(f.runner.state.resources.requests, 2);
 });
+test('inactive packet-bound evaluation admits one generation only and refuses challenge/retry before normal reservation', { skip: !native }, async t => {
+  const {EvaluationPlanGuard,packetIdentity}=require('../scripts/evaluation-plan-guard');
+  let guard,ledger,manifest,first,seenDeadline;
+  const f=await fixture(t,2,(input,options)=>{
+    const receipt=guard.dispatch(input,options.requestId);seenDeadline=receipt.timeoutMs;
+    assert.throws(()=>guard.dispatch(input,options.requestId),/unused exact/);
+    const result={value:require('../scripts/fixtures/source-bound-output').encode(response(input),input),audit:{outcome:'completed',requestId:options.requestId}};
+    guard.result(receipt,input,result);return result;
+  });
+  f.options.configuration=()=>({provider:'none',requestLimit:5,workers:1});await f.runner.ensure();
+  f.options.configuration=()=>({provider:'codex',requestLimit:5,workers:1});
+  f.options.authorizeRequest=({input})=>{
+    if(!guard){first=structuredClone(input);manifest={root:f.root,maximumRequests:1,referenceHash:'independent',cases:[{findingId:'I-1',phases:['generate'],timeoutMs:600000,snapshotHash:engine.hash(input.snapshot),firstPacket:packetIdentity(input)}]};
+      ledger={manifestHash:engine.hash(manifest),used:0,receipts:[]};
+      const args={manifest,ledger,save:l=>fs.writeFileSync(path.join(f.root,'evaluation-ledger.json'),JSON.stringify(l)),root:f.root,acceptedBase:id=>engine.read(f.root,id)};
+      assert.throws(()=>new EvaluationPlanGuard(args).check(input),/Inactive/);
+      guard=new EvaluationPlanGuard({...args,approval:{authorized:true,manifestHash:engine.hash(manifest),maximumRequests:1}});
+      assert.throws(()=>guard.check({...input,codeGaps:['changed']}),/packet drifted/);
+      assert.equal(f.runner.state.resources.requests,0);
+    }
+    guard.authorize(input);
+  };
+  await f.runner.continueFinding('I-1');
+  assert.equal(seenDeadline,600000);assert.deepEqual(f.calls.map(c=>c.phase),['generate']);
+  assert.equal(f.runner.state.resources.requests,1);assert.equal(ledger.used,1);
+  assert.equal(engine.read(f.root,'I-1').checkpoint.stage,'challenge');assert.equal(f.runner.published(engine.read(f.root,'I-1')),false);
+  await f.runner.continueFinding('I-1');await f.runner.continueFinding('I-2');
+  assert.equal(f.calls.length,1);assert.equal(f.runner.state.resources.requests,1);assert.equal(f.runner.state.jobs['I-2'].requests,0);
+  const saved=path.join(f.root,'evaluation-ledger.json'), envelope=path.join(f.root,'evaluation-control.json');
+  fs.writeFileSync(envelope,JSON.stringify({manifest,input:first}));
+  const script=`const fs=require('fs'),{EvaluationPlanGuard}=require(${JSON.stringify(require.resolve('../scripts/evaluation-plan-guard'))}),{hash}=require(${JSON.stringify(require.resolve('../extension/investigation-engine'))});const {manifest,input}=JSON.parse(fs.readFileSync(process.argv[1]));const ledger=JSON.parse(fs.readFileSync(process.argv[2]));try{new EvaluationPlanGuard({manifest,ledger,root:manifest.root,save(){throw Error('No writes');},approval:{authorized:true,manifestHash:hash(manifest),maximumRequests:1}}).check(input);process.exit(9)}catch(e){if(!/Aggregate/.test(e.message))throw e;console.log(ledger.used)}`;
+  assert.equal(require('node:child_process').execFileSync(process.execPath,['-e',script,envelope,saved],{encoding:'utf8'}).trim(),'1');
+});
+test('packet-bound pair challenges only the engine-accepted compiled base; consumed failure never retries', { skip: !native }, async t => {
+  const {EvaluationPlanGuard,packetIdentity}=require('../scripts/evaluation-plan-guard');let guard,ledger,manifest;
+  const f=await fixture(t,1,(input,options)=>{
+    const receipt=guard.dispatch(input,options.requestId);assert.equal(receipt.timeoutMs,600000);
+    const value=input.checkOnly?response(input):require('../scripts/fixtures/source-bound-output').encode(response(input),input);
+    const result={value,audit:{outcome:'completed',requestId:options.requestId}};guard.result(receipt,input,result);return result;
+  });
+  f.options.configuration=()=>({provider:'none',requestLimit:5,workers:1});await f.runner.ensure();
+  f.options.configuration=()=>({provider:'codex',requestLimit:5,workers:1});
+  f.options.authorizeRequest=({input})=>{
+    if(!guard){manifest={root:f.root,maximumRequests:2,referenceHash:'independent',cases:[{findingId:'I-1',phases:['generate','challenge'],timeoutMs:600000,snapshotHash:engine.hash(input.snapshot),firstPacket:packetIdentity(input)}]};
+      ledger={manifestHash:engine.hash(manifest),used:0,receipts:[]};guard=new EvaluationPlanGuard({manifest,ledger,root:f.root,save(){},acceptedBase:id=>engine.read(f.root,id),approval:{authorized:true,manifestHash:engine.hash(manifest),maximumRequests:2}});
+    }
+    if(input.phase==='challenge'){
+      assert.throws(()=>guard.check({...input,earlierDraft:{}}),/exact compiled/);
+      const prior=ledger.receipts[0].outcome;ledger.receipts[0].outcome='failed';assert.throws(()=>guard.check(input),/complete structured/);ledger.receipts[0].outcome=prior;
+    }
+    guard.authorize(input);
+  };
+  await f.runner.continueFinding('I-1');
+  assert.deepEqual(f.calls.map(c=>c.phase),['generate','challenge']);assert.equal(ledger.used,2);assert.equal(f.runner.state.resources.requests,2);
+  assert.ok(f.runner.published(engine.read(f.root,'I-1')),engine.read(f.root,'I-1').error);
+});
 test('reviewed enclosing source resolves an exact original native function without moving the note or buying another answer', { skip: !native }, async t => {
   const f = await fixture(t), policy = require('../extension/guide-policy'), { TriageBoard } = require('../extension/board');
   await f.runner.ensure(); const draft = engine.read(f.root, 'I-1'), original = structuredClone(draft.evidence[0]), doc = f.catalog.document('src/Guard.sol');

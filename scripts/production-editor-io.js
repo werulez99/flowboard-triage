@@ -21,7 +21,9 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
       }
     }
   };
-  const watcher = () => ({ ...disposable(), onDidCreate: disposable, onDidChange: disposable, onDidDelete: disposable });
+  const watchers = [];
+  const watcher = pattern => { const callbacks=[]; const value={pattern:pattern.pattern,callbacks}; watchers.push(value);
+    return { ...disposable(), onDidCreate: disposable, onDidChange: callback => {callbacks.push(callback);return disposable();}, onDidDelete: disposable }; };
   Object.assign(api, { RelativePattern: class { constructor(_folder, pattern) { this.pattern = pattern; } }, ProgressLocation: { Notification: 15 },
     commands: { registerCommand: (id, callback) => { commands.set(id, callback); return disposable(); } },
     extensions: { getExtension: () => ({ extensionPath: upstream, extensionUri: api.Uri.file(upstream), packageJSON: { version: '1.2.0' }, activate: async () => {} }) } });
@@ -71,6 +73,8 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
     // time remains in the trace, outside the subsequent cached-open boundary.
     if (readOnly) await initialPreparation?.loop;
     return commands.get('flowboardTriage.report')();
-  }, dispose: () => { fs.readFileSync=originalRead; subscriptions.forEach(item => item.dispose()); } };
+  }, reportChanged: file => { const match=watchers.find(w=>w.pattern.includes('.flowboard/report.json')); if(!match)throw Error('Actual report watcher is unavailable');
+    for(const callback of match.callbacks) callback(api.Uri.file(file)); },
+  dispose: () => { fs.readFileSync=originalRead; subscriptions.forEach(item => item.dispose()); } };
 }
 module.exports = { activateProduct };

@@ -29,7 +29,8 @@ window.installReadable = expected => {
     const e = expected[id], session = globalThis.__flowboardTriageSession;
     const load = window.hostMessages.findLast(m => m.type === 'triage:load');
     if (!e || !session || session.issueId !== e.findingId || session.token !== load?.token || load.issueId !== e.findingId) return false;
-    const event = load.investigationDraft?.causal?.events.find(v => v.id === id);
+    const update = window.hostMessages.findLast(m => m.type === 'triage:investigation' && m.issueId === e.findingId && m.token === session.token);
+    const event = (update ? update.draft : load.investigationDraft)?.causal?.events.find(v => v.id === id);
     if (event?.invocationId !== e.invocationId || JSON.stringify(event) !== e.event) return false;
     const a = document.querySelector('.guide-annotation'), c = document.querySelector('.guide-active-card'), v = document.querySelector('#flowboard');
     const card = [...cards.values()].find(item => item.el === c);

@@ -16,10 +16,12 @@ from playwright.sync_api import sync_playwright
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True)
 parser.add_argument('--local-retry', action='store_true')
+parser.add_argument('--selected-publication', action='store_true')
+parser.add_argument('--external-reimport', action='store_true')
 args = parser.parse_args()
 repository = Path(__file__).resolve().parent.parent
 output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
-process = subprocess.Popen(['node', str(repository/'scripts/workflow-host.js'), '--mixed-fixture', '--defer-mapping'] + (['--local-retry-fixture'] if args.local_retry else []),
+process = subprocess.Popen(['node', str(repository/'scripts/workflow-host.js'), '--mixed-fixture', '--defer-mapping'] + (['--local-retry-fixture'] if args.local_retry else []) + (['--production-selection'] if args.external_reimport else []),
     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=repository)
 result = {'boundary':'Real importer, native parser, coordinator, engine, host gate, storage and native renderer. Fixed fictional model responses; simulated editor IO; no external provider calls.', 'checks':[]}
 try:
@@ -95,6 +97,45 @@ try:
             result['checks'].append('The actual Continue this finding button resumes only B’s saved challenge while the report stays paused; A/C/D and their preparation states are unchanged.')
         else:
             assert state['reportPreparation']['mode']=='running'
+        if args.selected_publication:
+            open_finding('I-2', ready=False)
+            page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
+            before=request('/state'); used=len(before['providerCalls']); selected_token=before['token']
+            # Freeze expectations from the accepted generation, not from a DOM
+            # placeholder. This fixed challenge retains its causal statements.
+            draft=before['privatePreparationDraft']
+            expected={}
+            for event in draft['causal']['events']:
+                anchor=event.get('anchor') or next(n for n in draft['evidence'] if n['id']==event['evidenceId'])
+                unit=next(u for u in draft['sources'] if u['id']==anchor['sourceId'])
+                expected[event['id']]={'findingId':'I-2','invocationId':event['invocationId'],'event':json.dumps(event,separators=(',',':'),ensure_ascii=False),
+                    'what':event['what'],'code':unit['code'],'file':unit['source']['file'],'start':unit['source']['line'],
+                    'highlights':list(range(anchor['source']['line'],anchor['source']['endLine']+1))}
+            page.evaluate((repository/'scripts/verified-readable.js').read_text())
+            page.evaluate('expected=>window.installReadable(expected)',expected)
+            # Bound the offset rather than subtracting unrelated clocks. Host
+            # sample occurred between browser request start and response end.
+            page.expose_function('__publicationClock',lambda:request('/clock'))
+            sync=page.evaluate('async()=>{const start=performance.now();const host=await window.__publicationClock();return {start,end:performance.now(),host:host.monotonicMs}}')
+            first=draft['causal']['order'][0]
+            page.evaluate('id=>window.armReadable(id)',first)
+            request('/action',{'name':'release-mixed'})
+            page.wait_for_function('()=>window.readableResult !== null',timeout=30000)
+            readable=page.evaluate('window.readableResult')
+            after=request('/state')
+            published=next(t for t in after['productionTrace'] if t['event']=='finding-published' and t['findingId']=='I-2')
+            low=readable['at']-(published['monotonicMs']+sync['end']-sync['host'])
+            high=readable['at']-(published['monotonicMs']+sync['start']-sync['host'])
+            assert after['token']==selected_token and after['activeId']=='I-2'
+            assert job(after,'I-2')['publishable'] and job(after,'I-3')['state']=='blocked'
+            assert len(after['providerCalls'])==used and not after['errors'] and not errors
+            result.update({'publicationToExactReadableMsBounds':[low,high],'clockCalibrationRoundTripMs':sync['end']-sync['start'],
+                'hostPublication':published,'browserReadable':readable,'externalProviderRequests':0,'controlledRequests':used,'pageErrors':errors,'hostErrors':after['errors']})
+            result['checks'].append('Selected B publishes through the real coordinator and reaches its exact first native step without reselection; C remains blocked. The timestamp precedes diagnostics; separate monotonic clocks use a measured offset interval.')
+            page.screenshot(path=str(output/'selected-publication.png'))
+            stop_polling(); browser.close()
+            print(json.dumps(result,indent=2))
+            raise SystemExit(0)
         opened_at=time.monotonic(); open_finding('I-1'); first_readable_ms=(time.monotonic()-opened_at)*1000
         state=request('/state'); draft=state['investigation']
         if args.local_retry:
@@ -133,6 +174,23 @@ try:
         assert 'no usable claim/evidence structure' in page.locator('[data-finding-id="I-4"]').inner_text()
         page.screenshot(path=str(output/'mixed-ready-rows.png'))
         result['checks'].append('B becomes independently Ready through challenge and host validation; A keeps its function, highlight, camera, manual text and caret. B enables without refresh.')
+        if args.external_reimport:
+            old_status=state['reportPreparation']; used=len(state['providerCalls'])
+            request('/action',{'name':'external-reimport'})
+            current=wait(lambda s:s['reportPreparation']['reportHash']!=old_status['reportHash'] and job(s,'I-2')['publishable'])
+            open_finding('I-2')
+            page.locator('#triage-bar').get_by_role('button',name='Findings',exact=True).click()
+            assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').inner_text()=='Ready'
+            page.evaluate('status=>window.dispatchEvent(new MessageEvent("message",{data:{type:"triage:reportPreparation",report:status,reportObservation:999999}}))',old_status)
+            assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
+            assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
+            page.get_by_label('Finding queue filter').select_option('preparation:ready')
+            assert page.locator('[data-finding-id="I-2"]').is_visible() and not page.locator('[data-finding-id="I-3"]').is_visible()
+            assert len(request('/state')['providerCalls'])==used
+            result.update({'externalProviderRequests':0,'controlledRequests':used,'pageErrors':errors,'hostErrors':request('/state')['errors']})
+            assert not errors and not result['hostErrors']
+            result['checks'].append('Actual CLI re-import and product report watcher -> reused finding load -> local Findings recovers R2 labels/actions/count/filter without host Report. Delayed R1 progress cannot clear R2; zero extra controlled requests.')
+            stop_polling();browser.close();print(json.dumps(result,indent=2));raise SystemExit(0)
         # A return after free exploration and B's first guide are both local.
         page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
         assert position()==original

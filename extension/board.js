@@ -361,9 +361,9 @@ class TriageBoard {
       recoveryState: cached && cached.fingerprint !== fingerprint ? { workingCopy: cached.state.workingCopy, recoveries: cached.state.recoveries, view: cached.state.view } : null,
       state, connections: edges,
       finding: displayedFinding, readOnly: reviewStale, sourceStale: reviewStale, historicalAssessment,
-      library: store.library(this.root), reportText: issue?.reportText || '',
+      ...this.libraryObservation(), reportText: issue?.reportText || '',
       investigation: model.investigation,
-      investigationDraft: exposed, guideAvailability: this.guideAvailability(model), reportPreparation: this.callbacks?.reportPreparation?.()?.status(),
+      investigationDraft: exposed, guideAvailability: this.guideAvailability(model),
       semanticEnabled: ['claude', 'codex'].includes(this.vscode.workspace.getConfiguration?.('flowboardTriage', this.vscode.Uri.file(this.root))?.get('semanticProvider', 'none')),
       retrieval: issue?.retrieval || null, validation: { cards: nodes.length, sourceCalls: checked.sourceCalls, downgradedCalls: checked.warnings.length, semanticVerified: false },
       unresolved: issue?.unresolved || [], warnings,
@@ -773,19 +773,21 @@ class TriageBoard {
     const next = store.saveReview(this.root, model.id, message.patch, model.draftFingerprint);
     model.request = next; model.draftFingerprint = crypto.createHash('sha256').update(JSON.stringify(next)).digest('hex');
     await this.post({ type: 'triage:reviewSaved', ...scope,
-      editVersion: message.editVersion, draftFingerprint: model.draftFingerprint, finding: next.finding, library: store.library(this.root) });
+      editVersion: message.editVersion, draftFingerprint: model.draftFingerprint, finding: next.finding, ...this.libraryObservation() });
     return this.notify('Review saved locally. This is your assessment, not an automatic tool verdict.', false, scope);
+  }
+  libraryObservation() {
+    let index; try { index = store.readReportIndex(this.root); } catch { /* No imported report yet. */ }
+    const reportContext = { project: crypto.createHash('sha256').update(fs.realpathSync(this.root)).digest('hex'), reportHash: index?.reportHash || null };
+    const status = this.callbacks?.reportPreparation?.()?.status() || null;
+    const matches = status && status.project === reportContext.project && status.reportHash === reportContext.reportHash;
+    return { library: store.library(this.root, index), reportContext, reportPreparation: matches ? status : null };
   }
   async showLibrary(canPublish = () => true) {
     await this.ready;
     if (this.disposed || !canPublish()) return;
     this.native.panel.reveal(this.native.panel.viewColumn, true);
-    let index; try { index = store.readReportIndex(this.root); } catch { /* No imported report yet. */ }
-    const reportContext = { project: crypto.createHash('sha256').update(fs.realpathSync(this.root)).digest('hex'), reportHash: index?.reportHash || null };
-    const status = this.callbacks.reportPreparation?.()?.status() || null;
-    const matches = status && status.project === reportContext.project && status.reportHash === reportContext.reportHash;
-    return this.post({ type: 'triage:library', library: store.library(this.root, index), reportContext,
-      reportPreparation: matches ? status : null });
+    return this.post({ type: 'triage:library', ...this.libraryObservation() });
   }
   async showUnmapped(id, issue, error, canPublish = () => true) {
     await this.ready; if (!canPublish()) return;
@@ -797,7 +799,7 @@ class TriageBoard {
     return this.post({ type: 'triage:load', issueId: id, token: this.activeToken,
       finding: issue?.request?.finding || { title: `${issue?.displayId || id}: ${issue?.title || 'Unmapped finding'}`, status: 'unreviewed' },
       state: { cards: [], edges: [], notes: [], camera: { scale: 1, panX: 0, panY: 0 } }, connections: [], hints: {},
-      library: store.library(this.root), reportText: issue?.reportText || '', unresolved: issue?.unresolved || [],
+      ...this.libraryObservation(), reportText: issue?.reportText || '', unresolved: issue?.unresolved || [],
       preparation: { state: 'blocked', reason: error, attempted: ['Checked report definitions against this project. No missing implementation was replaced.'] },
       retrieval: issue?.retrieval || null,
       warnings: [error, 'This finding needs source/revision review before it can show a current flow. No missing functions were guessed.'],

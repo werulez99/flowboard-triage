@@ -23,12 +23,27 @@
   let reportPreparation = null;
   let reportObservation = 0;
   let reportContext = null;
+  let reportContextObservation = 0;
   function observePreparation(message, value) {
+    // Only library-bearing host observations may change context. A delayed
+    // progress callback from a replaced report cannot erase current status or
+    // consume its sequence number, even if it was sent more recently.
+    const authority = Array.isArray(message.library) && message.reportContext;
+    const same = (a, b) => a?.project === b?.project && a?.reportHash === b?.reportHash;
+    if (!authority && value && reportContext && !same(value, reportContext)) return false;
+    if (authority) {
+      if (Number.isSafeInteger(message.reportObservation) && message.reportObservation <= reportContextObservation) return false;
+      const changed = reportContext ? !same(authority, reportContext) : reportPreparation && !same(authority, reportPreparation);
+      reportContext = authority;
+      reportContextObservation = message.reportObservation || 0;
+      if (changed) { reportObservation = 0; reportPreparation = null; }
+      // Keep newer same-context progress, while accepting the current library.
+      if (message.reportObservation <= reportObservation) return true;
+    }
     if (Number.isSafeInteger(message.reportObservation)) {
       if (message.reportObservation <= reportObservation) return false;
       reportObservation = message.reportObservation;
     } else if (reportObservation) return false; // Do not replace a sequenced observation with legacy data.
-    if (message.reportContext) reportContext = message.reportContext;
     if (value && reportContext && (value.project !== reportContext.project || value.reportHash !== reportContext.reportHash)) value = null;
     reportPreparation = value || null;
     return true;
@@ -1761,7 +1776,7 @@
   window.addEventListener('message', event => {
     const message = event.data;
     if (message?.type === 'triage:reportPreparation') {
-      observePreparation(message, message.report);
+      if (!observePreparation(message, message.report)) return;
       // Aggregate status never grants or revokes a selected finding artifact.
       // Its host-validated investigation event owns that atomic transition.
       // Update small row badges only, preserving note nodes/caret and camera.
@@ -1769,7 +1784,7 @@
       return;
     }
     if (message?.type === 'triage:load') {
-      observePreparation(message, message.reportPreparation);
+      if (!observePreparation(message, message.reportPreparation) && message.reportContext) return;
       if (active) persistNow();
       if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
       active = message.issueId; token = message.token; finding = message.finding; library = message.library || [];
@@ -1966,6 +1981,7 @@
       renderGuide();
     }
     else if (message?.type === 'triage:reviewSaved' && message.issueId === active && message.token === token) {
+      if (!observePreparation(message, message.reportPreparation) && message.reportContext) return;
       finding = message.finding; library = message.library;
       draftFingerprint = message.draftFingerprint || draftFingerprint;
       // Keep edits typed while the preceding save was in flight.

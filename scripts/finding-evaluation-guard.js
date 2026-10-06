@@ -10,7 +10,7 @@ class FindingEvaluationGuard {
     const l = this.ledger, deny = message => { throw Object.assign(new Error(message), { code: 'REPORT_PAUSED' }); };
     if (!l.eligible || !l.referenceHash || !l.frozenSnapshot || hash(input.snapshot) !== l.frozenSnapshot || input.finding?.id !== l.findingId)
       deny('Evaluation identity/evidence preflight does not match. No request is authorized.');
-    if (!Array.isArray(l.phases) || ![['generate', 'challenge'].join(), ['challenge'].join()].includes(l.phases.join()) || l.limit !== l.phases.length || l.used >= l.limit)
+    if (!Array.isArray(l.phases) || ![['generate', 'challenge'].join(), ['challenge'].join(), ['generate'].join()].includes(l.phases.join()) || l.limit !== l.phases.length || l.used >= l.limit)
       deny('The fixed finding evaluation allowance is exhausted or invalid. No retry, replacement or repair is authorized.');
     if (input.phase !== l.phases[l.used]) deny('This evaluation permits only its next specified phase, never regeneration or siblings.');
     if (input.phase === 'challenge' && l.used === 1 && (!l.receipts[0]?.completeGeneration || l.receipts[0]?.outcome !== 'completed'))

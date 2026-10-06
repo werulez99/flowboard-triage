@@ -201,7 +201,9 @@ async function start(options = {}) {
     coordinatorOptions = {
       configuration: () => ({ provider: configuration.semanticProvider, requestLimit: options.requestLimit || 12 }),
       catalog: async () => { if (!cached) { const result = await analyze(upstream, root, { mode: 'source' }); cached = new SourceCatalog(root, result.runner, result.result); } return cached; },
-      invoke, changed: () => board?.reportProgress(), log: text => logs.push(text)
+      invoke, changed: status => { for (const job of status.jobs || []) if (job.publishable && !productionTrace.some(item => item.event === 'finding-published' && item.findingId === job.id))
+        trace('finding-published', { findingId: job.id, monotonicMs: performance.now() });
+        return board?.reportProgress(); }, log: text => logs.push(text)
     };
     reportPreparation = new Coordinator(root, coordinatorOptions);
   }
@@ -308,6 +310,7 @@ async function start(options = {}) {
       const after = Math.max(0, Number(address.searchParams.get('after')) || 0);
       return json({ cursor: pending.length, messages: pending.slice(after) });
     }
+    if (request.method === 'GET' && address.pathname === '/clock') return json({ monotonicMs: performance.now() });
     if (request.method === 'GET' && address.pathname === '/state') {
       const snapshots = {};
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
@@ -335,6 +338,15 @@ async function start(options = {}) {
         await selection; panel.dispose(); pending.length = 0; await createBoard();
       } else if (message.name === 'release-mixed' && options.mixedFixture) {
         releaseMixed();
+      } else if (message.name === 'external-reimport' && options.mixedFixture && productionEditor) {
+        await reportPreparation.loop;
+        reportPreparation.control('pause'); configuration.semanticProvider='none';
+        const previous=store.readReport(root), replacement=path.join(root,'replacement-report.md');
+        fs.writeFileSync(replacement, '# Replaced report context\n\n'+previous.originalReport);
+        await new Promise((resolve,reject)=>require('node:child_process').execFile(process.execPath,
+          [path.join(__dirname,'../cli.js'),'import',replacement,'--root',root,'--flowboard',upstream],
+          {timeout:30000,maxBuffer:1024*1024},error=>error?reject(error):resolve()));
+        productionEditor.reportChanged(path.join(root,'.flowboard/report.json'));
       } else if (message.name === 'restart-mixed-coordinator' && options.mixedFixture) {
         await selection; reportPreparation.dispose(); await reportPreparation.loop;
         panel.dispose(); pending.length = 0;
