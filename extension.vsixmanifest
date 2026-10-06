@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
-    <Identity Language="en-US" Id="flowboard-triage" Version="0.19.8" Publisher="local" />
+    <Identity Language="en-US" Id="flowboard-triage" Version="0.19.9" Publisher="local" />
     <DisplayName>Flowboard Triage</DisplayName>
     <Description xml:space="preserve">Source-linked collaborative Solidity finding review.</Description>
     <Properties>

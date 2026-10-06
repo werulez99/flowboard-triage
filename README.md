@@ -2,7 +2,7 @@
 
 A source-linked Solidity review workspace for developers and auditors, built on the original Solidity Flowboard canvas.
 
-Import an audit report, read the code and compare the evidence for and against its findings. Version **0.19.8** prepares all imported findings in a durable background queue when a provider is enabled. Each complete, checked walkthrough becomes available immediately; other findings continue preparing in the background. **Previous step** and **Next step** guide the original Solidity Flowboard function cards, exact lines and adjacent explanations; they do not replace the native graph. Navigation, notes, positions and Undo remain available. An AI interpretation is not a verified finding.
+Import an audit report, read the code and compare the evidence for and against its findings. Version **0.19.9** prepares all imported findings in a durable background queue when a provider is enabled. Each complete, checked walkthrough becomes available immediately; other findings continue preparing in the background. **Previous step** and **Next step** guide the original Solidity Flowboard function cards, exact lines and adjacent explanations; they do not replace the native graph. Navigation, notes, positions and Undo remain available. An AI interpretation is not a verified finding.
 
 This is an independent, MIT-licensed companion, not an official Anchabadze release. Source indexing is heuristic. A diagram helps you understand a claim; it does not establish vulnerability validity or runtime reachability.
 
@@ -13,7 +13,7 @@ Download the installation ZIP from [GitHub Releases](https://github.com/werulez9
 For an unreleased checkout, run `npm run package` and use its versioned files in `dist/`. A locally built version is not necessarily published on GitHub Releases.
 
 1. Extract the release ZIP. Open your Solidity project in Cursor or VS Code.
-2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.19.8.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live. Installation does not reload an already running extension; reload the editor when your work is saved.
+2. Run **Extensions: Install from VSIX…**. Install both files from `install/`: `anchabadze.solidity-flowboard-1.2.0.vsix`, then `flowboard-triage-0.19.9.vsix`. For WSL, SSH or containers, install into the remote workspace host where the sources live. Installation does not reload an already running extension; reload the editor when your work is saved.
 3. Reload the editor window. Open only a workspace you trust.
 4. Run **Flowboard Triage: Import Report** and choose a `.txt` or `.md` report. The findings list opens first. With a configured provider, every legitimate finding is queued without needing selection; indexing runs in a worker and is reused. Re-importing retains saved reviews.
 5. Choose a **Ready** finding, then **Walkthrough** or **Read code**. Its selected function opens at readable scale with its checked explanation, without waiting for the rest of the report. An unfinished finding shows compact progress or a specific stopping reason; the existing code canvas stays available. **Read report** retains the complete original text. Optional edits live in **More → Edit review**.

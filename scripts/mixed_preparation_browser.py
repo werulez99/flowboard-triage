@@ -148,6 +148,21 @@ try:
             saved_before=request('/state')['snapshots'].get('I-1')
             stop_polling(); request('/action',{'name':action}); page.reload()
             page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:library")')
+            if action == 'reopen':
+                # Idle coordinator -> brand new panel. No selection or later
+                # progress is allowed to repair this initial list observation.
+                assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').inner_text() == 'Ready'
+                assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
+                assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
+                assert 'supplied remote receiver' in page.locator('[data-finding-id="I-3"]').inner_text()
+                page.get_by_label('Finding queue filter').select_option('preparation:ready')
+                assert page.locator('[data-finding-id="I-1"]').is_visible()
+                assert not page.locator('[data-finding-id="I-3"]').is_visible()
+                page.get_by_label('Finding queue filter').select_option('all')
+                initial=page.evaluate('window.hostMessages.find(m=>m.type==="triage:library")')
+                assert initial['reportPreparation']['project'] == state['reportPreparation']['project']
+                assert len(request('/state')['providerCalls']) == used
+                result['checks'].append('An idle mixed report opens in a new panel with Ready actions/counts/filter before any selection; no preparation request is started.')
             open_finding('I-1'); assert position()==original
             page.locator('.guide-active-card .triage-line-number').first.click()
             actual_note=page.locator('#triage-evidence-note').input_value()

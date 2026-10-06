@@ -201,7 +201,10 @@ function activate(context) {
       catalog.resolveCard(request.cards[i]);
     }
     p.sources(root, { ...request, cards: request.cards.map((card, i) => ({ ...card, sourceHash: refs[i].hash })) });
-    p.checkRevision(request, p.gitState(root)); catalog.assertFresh();
+    catalog.assertFresh();
+    // board.open rechecks Git and exact sources after its final ready await.
+    // Do not perform a duplicate Git pair here, before board activation can
+    // yield. The authoritative final revision check remains in that method.
     const board = await boardFor(folder); assertSelected(work);
     const nodes = await board.open(request, catalog, diagnostics, git, issue, () => current(work));
     // A newer selection can arrive while the old view acknowledges rendering.

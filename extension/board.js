@@ -62,7 +62,15 @@ class TriageBoard {
       });
     });
   }
-  async post(message) { return this.native.panel.webview.postMessage(message); }
+  async post(message) {
+    if (Object.hasOwn(message, 'reportPreparation') || message.type === 'triage:reportPreparation') {
+      // Order observations at capture/delivery, not when an async webview ACK
+      // arrives. A delayed initial library must not roll back a live update.
+      this.reportObservation = (this.reportObservation || 0) + 1;
+      message = { ...message, reportObservation: this.reportObservation };
+    }
+    return this.native.panel.webview.postMessage(message);
+  }
   exposed(draft) {
     const report = this.callbacks?.reportPreparation?.();
     const status = report?.status();
@@ -770,9 +778,14 @@ class TriageBoard {
   }
   async showLibrary(canPublish = () => true) {
     await this.ready;
-    if (!canPublish()) return;
+    if (this.disposed || !canPublish()) return;
     this.native.panel.reveal(this.native.panel.viewColumn, true);
-    return this.post({ type: 'triage:library', library: store.library(this.root) });
+    let index; try { index = store.readReportIndex(this.root); } catch { /* No imported report yet. */ }
+    const reportContext = { project: crypto.createHash('sha256').update(fs.realpathSync(this.root)).digest('hex'), reportHash: index?.reportHash || null };
+    const status = this.callbacks.reportPreparation?.()?.status() || null;
+    const matches = status && status.project === reportContext.project && status.reportHash === reportContext.reportHash;
+    return this.post({ type: 'triage:library', library: store.library(this.root, index), reportContext,
+      reportPreparation: matches ? status : null });
   }
   async showUnmapped(id, issue, error, canPublish = () => true) {
     await this.ready; if (!canPublish()) return;

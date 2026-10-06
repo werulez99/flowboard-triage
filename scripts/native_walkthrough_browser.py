@@ -97,6 +97,31 @@ try:
         page.goto(origin); page.wait_for_function('window.sent.some(x=>x.type==="triage:ready")')
         def emit(value):
             page.evaluate('data=>window.dispatchEvent(new MessageEvent("message",{data}))', value)
+        initial_status={'project':'controlled-project','reportHash':'controlled-report','mode':'paused','jobs':[
+            {'id':'I-01','state':'completed','publishable':True},
+            {'id':'I-03','state':'blocked','publishable':False,'reason':'Missing receiver evidence'},
+            {'id':'I-04','state':'paused','publishable':False,'reason':'Explicitly paused'}]}
+        initial_list={'type':'triage:library','library':base['library'],'reportPreparation':initial_status,'reportObservation':1,
+                      'reportContext':{'project':'controlled-project','reportHash':'controlled-report'}}
+        emit(initial_list)
+        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').inner_text()=='Ready'
+        assert page.locator('[data-finding-id="I-03"] .triage-preparation-badge').inner_text()=='Blocked'
+        assert page.locator('[data-finding-id="I-04"] .triage-preparation-badge').inner_text()=='Paused'
+        assert page.locator('[data-finding-id="I-01"] .triage-ready-action').is_visible()
+        page.get_by_label('Finding queue filter').select_option('preparation:ready')
+        assert not page.locator('[data-finding-id="I-03"]').is_visible()
+        changed=copy.deepcopy(initial_status); changed['jobs'][1]={'id':'I-03','state':'completed','publishable':True}
+        emit({'type':'triage:reportPreparation','report':changed,'reportObservation':2}); emit(initial_list)
+        assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
+        assert page.locator('[data-finding-id="I-03"] .triage-ready-action').is_visible()
+        emit({**initial_list,'reportObservation':3,'reportPreparation':None,'reportContext':{'project':'controlled-project','reportHash':'replacement'}})
+        emit({'type':'triage:reportPreparation','report':changed,'reportObservation':4})
+        page.get_by_label('Finding queue filter').select_option('all')
+        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').inner_text()=='Status not loaded'
+        assert not page.locator('[data-finding-id="I-01"] .triage-ready-action').is_visible()
+        assert not any(m['type'] in ['triage:select','triage:investigationRetry','triage:reportControl'] for m in page.evaluate('window.sent'))
+        result['checks'].append('Initial mixed Ready/Paused/Blocked rows, actions/counts/filter work without selection; a late initial observation cannot overwrite live status.')
+        page.reload(); page.wait_for_function('window.sent.some(x=>x.type==="triage:ready")')
         loads = 0
         def load():
             global loads

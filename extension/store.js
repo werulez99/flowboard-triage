@@ -58,11 +58,11 @@ function readReport(root) {
   return bundle;
 }
 const summaries = new Map();
-function library(root) {
+function library(root, currentIndex = null) {
   // List display does not need hydrated sibling requests. Validate exact current
   // bytes (not mtime/watchers/TTL); reuse only their derived small summaries.
   // Selected analysis separately reads and validates its complete draft.
-  try { return readReportIndex(root).issues.map(issue => {
+  try { return (currentIndex || readReportIndex(root)).issues.map(issue => {
     let data = null, error = null;
     try {
       const raw = p.readWorkspaceText(root, draftPath(issue.id)), key = `${fs.realpathSync(root)}:${issue.id}`;

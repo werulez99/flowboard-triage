@@ -3,6 +3,49 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { TriageBoard } = require('../extension/board');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
+test('board final revision check rejects a Git change during its ready await before any view publication', async t => {
+  const fs=require('node:fs'), path=require('node:path'), cp=require('node:child_process');
+  const root=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'board-final-revision-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  fs.cpSync(path.join(__dirname,'../examples/project'),root,{recursive:true});
+  const git=(...args)=>cp.execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  git('init','-q');git('add','.');
+  const commit=()=>git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','Fixture');commit();
+  const request=structuredClone(require('../examples/finding.json'));request.sourceRevision=git('rev-parse','HEAD');
+  let release; const board=Object.assign(Object.create(TriageBoard.prototype),{root,models:new Map(),ready:new Promise(r=>release=r),post:()=>assert.fail('No stale view delivery')});
+  const opened=board.open(request,{assertFresh(){}},{},{},null,()=>true);
+  commit();release();await assert.rejects(opened,/revision|HEAD|commit/i);
+});
+
+test('new report list observes current coordinator without scheduling and orders status delivery', async t => {
+  const fs = require('node:fs'), path = require('node:path'), store = require('../extension/store');
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'library-observation-'));
+  t.after(() => fs.rmSync(root, { recursive:true, force:true }));
+  store.writeDraft(root, 'A', structuredClone(require('../examples/finding.json')));
+  const p=require('../extension/protocol'); p.atomicJson(root,'.flowboard/report.json',{reportHash:'report',issues:[{id:'A'}]});
+  const status = { project:require('node:crypto').createHash('sha256').update(fs.realpathSync(root)).digest('hex'), reportHash:'report', jobs:[{id:'A',state:'completed',publishable:true},{id:'B',state:'paused',publishable:false},{id:'C',state:'blocked',publishable:false}] };
+  const delivered = []; let reads = 0;
+  const board = Object.assign(Object.create(TriageBoard.prototype), {root, ready:Promise.resolve(), callbacks:{reportPreparation:()=>({status:()=>{reads++;return status;},ensure:()=>assert.fail('Observation must not start preparation')})},
+    native:{panel:{reveal(){},webview:{postMessage:m=>{delivered.push(m);return true;}}}}});
+  await board.showLibrary(); assert.equal(reads,1); assert.deepEqual(delivered[0].reportPreparation,status);
+  await board.post({type:'triage:reportPreparation',report:{...status,mode:'paused'}});
+  assert.equal(delivered[1].reportObservation, delivered[0].reportObservation+1);
+  await board.showLibrary(()=>false); board.disposed=true; await board.showLibrary();
+  assert.equal(delivered.length,2); assert.equal(reads,1,'Superseded/closed panels do not observe or deliver status.');
+  const text=fs.readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+  const fn=text.slice(text.indexOf('  function observePreparation'),text.indexOf('  let guideAvailability'));
+  const context={reportObservation:0,reportPreparation:null,reportContext:null}; const vm=require('node:vm');
+  vm.runInNewContext(fn,context); context.observePreparation(delivered[1],delivered[1].report);
+  context.observePreparation(delivered[0],delivered[0].reportPreparation);
+  assert.equal(context.reportPreparation.mode,'paused','Late initial delivery cannot replace the live status.');
+  board.disposed=false;
+  p.atomicJson(root,'.flowboard/report.json',{reportHash:'replacement',issues:[{id:'A'}]});
+  await board.showLibrary(); assert.equal(delivered[2].reportPreparation,null,'A former report status must not describe a replacement report with reused finding IDs.');
+  context.observePreparation(delivered[2],null);
+  context.observePreparation({reportObservation:4},status);
+  assert.equal(context.reportPreparation,null,'Late progress from the old coordinator cannot restore stale Ready rows.');
+});
+
 test('actual preparation renderer retains selected job reason and shows current host refusal in dock and expanded view', () => {
   const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
   const definitions = source.slice(source.indexOf('  const preparationJob'), source.indexOf('  const readyDraft'));

@@ -21,6 +21,18 @@
   let guideDetour = null, guideError = null, guideRequest = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true;
   let reportPreparation = null;
+  let reportObservation = 0;
+  let reportContext = null;
+  function observePreparation(message, value) {
+    if (Number.isSafeInteger(message.reportObservation)) {
+      if (message.reportObservation <= reportObservation) return false;
+      reportObservation = message.reportObservation;
+    } else if (reportObservation) return false; // Do not replace a sequenced observation with legacy data.
+    if (message.reportContext) reportContext = message.reportContext;
+    if (value && reportContext && (value.project !== reportContext.project || value.reportHash !== reportContext.reportHash)) value = null;
+    reportPreparation = value || null;
+    return true;
+  }
   let guideAvailability = null;
   let preparationExpanded = false;
   const guidePositions = new Map();
@@ -45,7 +57,7 @@
     return !localAdmission() && job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
-  const jobLabel = job => job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
+  const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
     job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
@@ -1749,7 +1761,7 @@
   window.addEventListener('message', event => {
     const message = event.data;
     if (message?.type === 'triage:reportPreparation') {
-      reportPreparation = message.report || null;
+      observePreparation(message, message.report);
       // Aggregate status never grants or revokes a selected finding artifact.
       // Its host-validated investigation event owns that atomic transition.
       // Update small row badges only, preserving note nodes/caret and camera.
@@ -1757,7 +1769,7 @@
       return;
     }
     if (message?.type === 'triage:load') {
-      reportPreparation = message.reportPreparation || null;
+      observePreparation(message, message.reportPreparation);
       if (active) persistNow();
       if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
       active = message.issueId; token = message.token; finding = message.finding; library = message.library || [];
@@ -1849,6 +1861,7 @@
         if (cards.has(selectedCard)) cards.get(selectedCard).codeEl.parentElement.scrollTop = savedGuide?.position?.codeScroll || 0;
       }
     } else if (message?.type === 'triage:library') {
+      if (Object.hasOwn(message, 'reportPreparation') && !observePreparation(message, message.reportPreparation)) return;
       library = message.library || []; renderBar(); show('findings');
     } else if (message?.type === 'triage:requestRefresh' && message.token === token) {
       if (!(dirtyReview || hasEvidenceDraft()) || window.confirm('Refresh the source map? Your unfinished review will be preserved for comparison.')) { persistNow(); send('triage:refresh'); }

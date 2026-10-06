@@ -163,6 +163,12 @@ try:
         assert len(request('/state')['providerCalls'])==2
         timed_navigation=False
         result['checks'].append('All 15 checked events traverse five actual native functions, exact call occurrences, repeated arguments, four returns and an uncaught rollback; complete long helper and late return stay readable.')
+        # Outline is the same native route, not a second tutorial surface.
+        for target in [order[-1],order[0]]:
+            controls.get_by_role('button',name='Step outline',exact=True).click()
+            page.locator('.guide-outline').get_by_role('button',name=events[target]['title'],exact=True).click()
+            verify(target)
+        result['checks'].append('Outline jumps across the route retain the exact event/source identity in the original native cards.')
         # Cross-function evidence detour opens the exact caller argument and
         # returns to the same helper invocation, camera, scroll and highlight.
         for identity in order[1:8]:click_step('Next step',identity)

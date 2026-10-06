@@ -5,6 +5,22 @@ const fs = require('node:fs'), path = require('node:path'), Module = require('no
 function activateProduct({ extension, upstream, root, api, Board, invoke, storage, readOnly, onBoard, onCoordinator, onSelection, trace }) {
   const commands = new Map(), subscriptions = [], disposable = () => ({ dispose() {} });
   let initialPreparation;
+  let selectedIO = null;
+  const originalRead = fs.readFileSync;
+  // Instrument only this disposable editor host. Count actual reads, not
+  // inferred snapshot boundaries; never include private paths/content.
+  fs.readFileSync = function(file, ...args) {
+    const start=performance.now(); let result;
+    try { return result=originalRead.call(this,file,...args); }
+    finally {
+      if (selectedIO) {
+        const name=String(file).replaceAll('\\','/');
+        const kind=name.endsWith('.sol')?'source':name.includes('/.flowboard/findings/')?'findingDraft':name.includes('/.flowboard/investigations/')?'investigation':name.endsWith('/.flowboard/report.json')?'report':'other';
+        const row=selectedIO[kind] ||= {reads:0,bytes:0,ms:0}; row.reads++;
+        row.bytes+=typeof result==='string'?Buffer.byteLength(result):result?.byteLength||0;row.ms+=performance.now()-start;
+      }
+    }
+  };
   const watcher = () => ({ ...disposable(), onDidCreate: disposable, onDidChange: disposable, onDidDelete: disposable });
   Object.assign(api, { RelativePattern: class { constructor(_folder, pattern) { this.pattern = pattern; } }, ProgressLocation: { Notification: 15 },
     commands: { registerCommand: (id, callback) => { commands.set(id, callback); return disposable(); } },
@@ -22,10 +38,11 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
       constructor(...args) {
         super(...args); if (readOnly) this.callbacks.investigationPersistence = false; onBoard(this);
         const select = this.callbacks.select;
-        this.callbacks.select = id => { trace('selection-received', { findingId: id }); const work = select(id); onSelection(work); return work; };
+        this.callbacks.select = id => { selectedIO={}; trace('selection-received', { findingId: id }); const work = select(id); onSelection(work); return work; };
       }
       async open(...args) { trace('board-open', { cache: args[2]?.cache, findingId: args[0].findingId }); const result = await super.open(...args); trace('board-shell-ack', { findingId: this.activeId, token: this.activeToken }); return result; }
-      async post(message) { if (message.type === 'triage:load') trace('load-send', { findingId: message.issueId, token: message.token }); return super.post(message); }
+      async post(message) { if (message.type === 'triage:load') { trace('selected-input-io', {findingId:message.issueId,reads:selectedIO}); selectedIO=null;
+        trace('load-send', { findingId: message.issueId, token: message.token }); } return super.post(message); }
     } };
     const value = normal(name);
     if (name === './store' && readOnly) return storage;
@@ -54,6 +71,6 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
     // time remains in the trace, outside the subsequent cached-open boundary.
     if (readOnly) await initialPreparation?.loop;
     return commands.get('flowboardTriage.report')();
-  }, dispose: () => subscriptions.forEach(item => item.dispose()) };
+  }, dispose: () => { fs.readFileSync=originalRead; subscriptions.forEach(item => item.dispose()); } };
 }
 module.exports = { activateProduct };

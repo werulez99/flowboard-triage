@@ -25,6 +25,7 @@ parser.add_argument('--recorded')
 parser.add_argument('--baseline', action='store_true')
 parser.add_argument('--report-preparation', action='store_true')
 parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
+parser.add_argument('--outline-check', action='store_true', help='Additional functional-only initial-list and per-function outline/detour checks; keep separate from compared timing batches.')
 parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
 parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
@@ -89,6 +90,13 @@ try:
         page.goto(host['origin'])
         finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
         page.wait_for_selector(finding_row, timeout=30000)
+        if args.outline_check:
+            assert page.locator(finding_row+' .triage-preparation-badge').inner_text() == 'Ready'
+            assert page.locator(finding_row+' .triage-ready-action').is_visible()
+            page.get_by_label('Finding queue filter').select_option('preparation:ready')
+            assert page.locator('[data-finding-id]:visible').count() == 1
+            page.get_by_label('Finding queue filter').select_option('all')
+            result['checks'].append('The real saved Ready guide is discoverable in the initial report list/filter before selection, beside paused siblings.')
         cold_select = time.monotonic()
         page.locator(finding_row).click()
         page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)', arg=args.finding, timeout=120000)
@@ -134,11 +142,42 @@ try:
             page.add_init_script(readable_script)
             page.evaluate(readable_script)
             def verify_readable(identity):
-                page.wait_for_function('id=>window.isReadable(id)', arg=identity, timeout=30000)
+                try:
+                    page.wait_for_function('id=>window.isReadable(id)', arg=identity, timeout=30000)
+                except Exception:
+                    page.screenshot(path=str(out / 'readable-failure.png'))
+                    result['readableFailure']={'expected':identity,'actual':page.locator('.guide-annotation').get_attribute('data-step-id'),
+                        'panes':page.evaluate('''()=>({aside:document.querySelector('.guide-aside')?.scrollTop,explanation:window.readableIntersection(document.querySelector('.guide-explanation')),code:window.readableIntersection(document.querySelector('.guide-active-card .triage-claim-line'))})''')}
+                    raise
             verify_readable(steps[0])
+            clipping = page.evaluate('''id => {
+              const aside=document.querySelector('.guide-aside'), line=document.querySelector('.guide-active-card .triage-claim-line');
+              const explanation=document.querySelector('.guide-explanation');
+              const visible=window.isReadable(id), saved=aside.style.cssText;
+              // Real DOM clipping ancestors, with the same identity/content.
+              // Position the clipping top below the explanation without
+              // changing the explanation's window coordinates.
+              const top=aside.getBoundingClientRect().top, bottom=explanation.getBoundingClientRect().bottom;
+              aside.style.clipPath='none'; aside.style.overflow='hidden';
+              aside.style.paddingTop='0'; aside.style.top=(bottom+5)+'px';
+              aside.style.transform='none'; explanation.style.transform=`translateY(-${bottom+5-top}px)`;
+              const clippedExplanation=window.isReadable(id);
+              aside.style.cssText=saved; explanation.style.transform='';
+              let pane=line.parentElement;
+              while(pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane=pane.parentElement;
+              if(!pane)throw new Error('No native code scroll viewport');
+              const scroll=pane.scrollTop, style=pane.style.cssText;
+              for(const [key,value] of [['height','1px'],['min-height','0'],['max-height','1px'],['overflow','hidden'],['flex','none']]) pane.style.setProperty(key,value,'important');
+              const clippedCode=window.isReadable(id);
+              pane.style.cssText=style;pane.scrollTop=scroll;
+              return {visible,clippedExplanation,clippedCode,restored:window.isReadable(id)};
+            }''', steps[0])
+            assert clipping == {'visible':True,'clippedExplanation':False,'clippedCode':False,'restored':True}, clipping
+            result['checks'].append('Real DOM clipping of the explanation pane and native code viewport is rejected; unchanged visible content passes.')
             result['coldSelectToVerifiedMs'] = (time.monotonic()-cold_select)*1000
             before_calls = len(state['providerCalls'])
             for i, identity in enumerate(steps):
+                verify_readable(identity)
                 event = next(e for e in draft['causal']['events'] if e['id'] == identity)
                 entry = visual(event)
                 assert page.locator('.guide-annotation').get_attribute('data-step-id') == identity
@@ -171,6 +210,27 @@ try:
                         assert page.evaluate('()=>({scale,panX,panY})') == camera_before
             result['visited'] = visited
             result['checks'].append('Every event has its exact range, full original function and faithful report paragraph.')
+            if args.outline_check:
+                distinct={}
+                for identity in steps:
+                    e=expected[identity]; distinct.setdefault((e['file'],e['start']),identity)
+                for identity in [*distinct.values(),steps[-1]]:
+                    event=next(e for e in draft['causal']['events'] if e['id']==identity)
+                    controls.get_by_role('button',name='Step outline',exact=True).click()
+                    page.locator('.guide-outline').get_by_role('button',name=event['title'],exact=True).click()
+                    verify_readable(identity)
+                    # Opening a long annotation's bottom source link is an
+                    # intentional scroll. Return must retain that position,
+                    # not force its introductory explanation back on screen.
+                    page.locator('.guide-file-link').scroll_into_view_if_needed()
+                    position='()=>({scale,panX,panY,aside:document.querySelector(".guide-aside").scrollTop,code:document.querySelector(".guide-active-card .card-code").parentElement.scrollTop})'
+                    before=page.evaluate(position)
+                    page.locator('.guide-file-link').click()
+                    controls.get_by_role('button',name='Return to step',exact=True).click()
+                    assert page.evaluate(position) == before
+                    page.evaluate('document.querySelector(".guide-aside").scrollTop=0')
+                    verify_readable(identity)
+                result['checks'].append('Outline jumps and source detour/Return from every original function preserve exact event, highlight, readable scroll and camera.')
             # The end result is reachable in the same reading surface, without
             # a new model request or a camera jump. This is not a human verdict.
             result_camera = page.evaluate('()=>({scale,panX,panY})')
@@ -199,8 +259,13 @@ try:
             assert len(request('/state')['providerCalls']) == before_calls
             result['checks'].append('Editor link, detour return and free exploration preserve the step and camera; navigation makes no provider calls.')
             result['darkContrast'] = contrast()[:6]
+            if args.outline_check:
+                # Return deliberately restored the bottom-link reading point.
+                # The separate resize control starts by reading the intro.
+                page.evaluate('document.querySelector(".guide-aside").scrollTop=0')
             for width, height in [(1440,900),(1280,800),(1366,768),(1051,800),(1050,800),(801,800),(800,800),(799,800),(761,800),(760,800),(759,800),(640,800)]:
                 page.set_viewport_size({'width':width,'height':height}); page.wait_for_timeout(150)
+                if args.outline_check: verify_readable(current_step)
                 code = page.locator('#flowboard').bounding_box(); aside = page.locator('.guide-aside').bounding_box()
                 assert code['x'] + code['width'] <= aside['x'] + 1 if width > 800 else code['y'] + code['height'] <= aside['y'] + 1
                 visible = page.locator('.guide-active-card .triage-claim-line').first.bounding_box()
@@ -228,17 +293,21 @@ try:
             result['checks'].append('Keyboard steps and original-report-to-step navigation use the same prepared route.')
             # Exact browser-readable boundary, not two animation frames.
             if len(steps) > 1:
-                result['playbackMs'] = page.evaluate('''async steps => {
+                result['playbackTransitions'] = page.evaluate('''async steps => {
                   const values=[];
-                  for(let i=0;i<30;i++) {
-                    const label=i%2?'Previous step':'Next step';
+                  let current=0;
+                  for(let round=0;round<3;round++) for(const direction of [1,-1]) for(let i=0;i<steps.length-1;i++) {
+                    const next=current+direction, label=direction>0?'Next step':'Previous step';
                     const control=[...document.querySelectorAll('.guide-controls button')].find(b=>b.textContent===label);
-                    window.armReadable(steps[i%2?0:1]);
+                    window.armReadable(steps[next]);
                     const start=performance.now();control.click();
                     await new Promise((resolve,reject)=>{const end=performance.now()+30000;const poll=()=>{if(window.readableResult)resolve();else if(performance.now()>end)reject(new Error('Next step not readable'));else requestAnimationFrame(poll)};poll()});
-                    values.push(window.readableResult.at-start);
+                    const a=window.readableExpected[steps[current]],b=window.readableExpected[steps[next]];
+                    values.push({from:steps[current],to:steps[next],crossFunction:a.file!==b.file||a.start!==b.start,ms:window.readableResult.at-start});
+                    current=next;
                   }return values;
                 }''', steps)
+                result['playbackMs']=[value['ms'] for value in result['playbackTransitions']]
                 assert len(request('/state')['providerCalls']) == before_calls
             # Recreate the controller and renderer, not merely hide/show a panel.
             # Persisting is a normal automatic product action, not JSON setup.

@@ -268,6 +268,7 @@ async function start(options = {}) {
       }
     }
   };
+  const startedCoordinators = new WeakSet();
   function createBoard() {
     if (options.productionSelection) {
       const available = new Promise(resolve => { materializeBoard = resolve; });
@@ -287,7 +288,10 @@ async function start(options = {}) {
         refresh: async () => { throw new Error('Use the product refresh command in the editor; this harness does not manufacture a refreshed review.'); }
       }, { appendLine: text => logs.push(text) });
     board.showLibrary().catch(record);
-    reportPreparation?.ensure();
+    // Activation/recovery starts preparation, not panel recreation.
+    if (reportPreparation && !startedCoordinators.has(reportPreparation)) {
+      startedCoordinators.add(reportPreparation); reportPreparation.ensure();
+    }
   }
   const server = http.createServer(async (request, response) => {
     const address = new URL(request.url, origin || 'http://127.0.0.1');
