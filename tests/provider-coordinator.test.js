@@ -64,6 +64,30 @@ test('production coordinator waits for shared capacity without reserving, then g
   assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   await f.runner.ensure(); assert.equal(f.calls.length, 2, 'Opening a ready artifact does not acquire or dispatch another provider request.');
 });
+test('batch expiry aborts a real capacity wait without a reservation or protective-state reset', { skip: !native }, async t => {
+  const f = await fixture(t), first = await slots.acquire('codex', null, { directory: f.directory }), second = await slots.acquire('codex', null, { directory: f.directory });
+  t.after(() => { first(); second(); });
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, batchDeadlineMs: 180 });
+  await f.runner.ensure();
+  assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0);
+  assert.equal(f.runner.state.batch.outcome, 'deadline-exceeded'); assert.equal(f.runner.tasks.size, 0);
+  assert.equal(fs.readdirSync(f.directory).filter(file => /-wait-/.test(file)).length, 0);
+});
+
+test('transient service pressure gets one finite backoff; authentication does not retry', { skip: !native }, async t => {
+  for (const category of ['rate-limit', 'authentication']) {
+    let failures = 0;
+    const f = await fixture(t, 1, (input, options) => {
+      if (!failures++) throw Object.assign(new Error('Controlled service failure'), { audit: { phase: input.phase, outcome: 'failed', requestId: options.requestId,
+        failureKind: 'provider-exit', diagnostics: { lastReportedError: { category, code: category === 'rate-limit' ? 'rate_limit_exceeded' : 'authentication_error' } } } });
+      return { value: response(input), audit: { phase: input.phase, requestId: options.requestId, outcome: 'completed' } };
+    });
+    const started = Date.now(); await f.runner.ensure();
+    assert.equal(f.calls.length, category === 'rate-limit' ? 3 : 1);
+    if (category === 'rate-limit') { assert.ok(Date.now() - started >= 1000); assert.ok(f.runner.state.jobs['I-1'].retryAfter); assert.equal(f.runner.status().ready, 1); }
+    else assert.equal(f.runner.status().ready, 0);
+  }
+});
 test('explicit guarded pair changes only its generation deadline; challenge/default and exact two-call allowance remain', { skip: !native }, async t => {
   const { EventEmitter } = require('node:events'), { PassThrough } = require('node:stream');
   const provider = require('../extension/semantic-provider'); let dispatched = 0; const audits = [];
@@ -494,7 +518,7 @@ test('an actual launcher/descendant timeout records one terminal receipt and rel
       return child;
     }
   }));
-  f.options.configuration = () => ({ provider: 'codex', requestLimit: 1, workers: 1 });
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 2, findingRequestLimit: 1, workers: 1 });
   t.after(() => { if (descendant) { const state = ownership.processIdentity(descendant); if (state && !['Z', 'X'].includes(state.state)) process.kill(descendant, 'SIGKILL'); } });
   await f.runner.ensure();
   assert.equal(f.calls.length, 1); assert.equal(f.runner.state.resources.requests, 1);

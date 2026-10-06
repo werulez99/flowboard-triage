@@ -746,7 +746,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // pass, crowding out the relevant code without adding evidence.
     draft.semanticInput ||= semanticInput.input(request, issue);
     const input = phase => ({ phase, semanticInput: semanticInput.packet(draft.semanticInput), finding: { id: findingId, title: request.finding.title,
-      reportSections: content(issue?.reportText || request.finding.summary).sections.map(({ field, proposed }) => ({ field, proposed })),
+      reportSections: content(issue?.reportText || request.finding.summary).sections.map(({ field, proposed, role }) => ({ field, proposed, role })),
       reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary) },
       snapshot: draft.snapshot, corrections: draft.corrections, previousScopes: draft.claims.map(({ id, allegation, implementation, conditions }) => ({ id, allegation, implementation, conditions })), sources: modelSources(context.units),
       compiler: draft.compiler, experiments: draft.experiments, codeGaps: context.gaps, documentation: context.documentation,
@@ -755,7 +755,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       ...(phase === 'challenge' ? { earlierDraft: draft.bindingPlan ? require('./source-bindings').wire(challengeFormat.earlier(draft, reviewSchema), draft.bindingPlan) : challengeFormat.earlier(draft, reviewSchema),
         ...(draft.bindingPlan ? { assembledEarlier: require('./source-bindings').derived(draft) } : {}),
         evidenceScopes: require('./review-scope').manifest(draft), actions: draft.actions.slice(-5) } : {}) });
-    let repairUsed = resumeChallenge && !!draft.checkpoint?.repairUsed;
+    // One response repair per finding attempt, not one extra repair after
+    // each generation/challenge yield or interrupted generation.
+    let repairUsed = !!draft.checkpoint?.repairUsed;
     let followups = resumeChallenge && !resumeQuestions ? draft.checkpoint?.followups || 0 : 0;
     const readQuestions = result => {
       let progress = false; const priorUnits = [...context.units], alreadyRead = new Set(priorUnits.map(unit => unit.id));
@@ -811,7 +813,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         try {
           if (transport) health.check(provider, healthOptions);
           ensure(); release.markDispatching?.();
-          reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)), input });
+          reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)), input, capacity: release.capacity });
           const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
             onProcessStart: details => release.attachProcess?.(details) });
           terminalAudit = result.audit || {};
@@ -935,7 +937,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     Object.assign(draft, parsed); draft.sources = context.units; draft.phase = 'checking-source'; await save();
     readQuestions(draft);
     ensure(); const completion = context.complete(draft); draft.actions.push(completion);
-    draft.checkpoint = { stage: 'challenge', newContext: completion.sourceIds.length > 0 || draft.actions.some(action => action.kind !== 'source-preparation' && action.outcome === 'source-returned'), at: now() };
+    draft.checkpoint = { stage: 'challenge', repairUsed, followups, newContext: completion.sourceIds.length > 0 || draft.actions.some(action => action.kind !== 'source-preparation' && action.outcome === 'source-returned'), at: now() };
     draft.readingLimits = [...context.unread].slice(0, 40);
     if (draft.readingLimits.length) context.gaps.push(`Available locally but not read within this review's limit: ${draft.readingLimits.join('; ')}. Do not describe these as missing implementations.`);
     draft.sources = context.units; draft.phase = 'challenging';
@@ -1006,7 +1008,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     if (error.code === 'LOCAL_RECOVERY_PENDING') draft.yielded = true;
     draft.failureCode = error.code || null;
     draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' :
-      ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE', 'PROVIDER_TEARDOWN_UNCONFIRMED', 'PROVIDER_RESOURCE_UNAVAILABLE', 'PROVIDER_OWNERSHIP_UNAVAILABLE'].includes(error.code) || error.audit?.teardown?.confirmed === false ? 'provider-health' :
+      ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE', 'PROVIDER_TEARDOWN_UNCONFIRMED', 'PROVIDER_RESOURCE_UNAVAILABLE', 'PROVIDER_OWNERSHIP_UNAVAILABLE', 'PROVIDER_CAPACITY_CONFIGURATION'].includes(error.code) || error.audit?.teardown?.confirmed === false ? 'provider-health' :
       ['REPORT_PAUSED', 'LOCAL_RECOVERY_PENDING'].includes(error.code) ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : ['LOCAL_READING_LIMIT', 'LOCAL_PACKET_LIMIT'].includes(error.code) ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
     if (error.audit) draft.runs.push(error.audit);
     // A failed provider/schema/challenge must not erase a usable earlier draft.

@@ -22,6 +22,14 @@ function checked() {
       relationships: [], order: ['e1'], checks: [...obligations.map(item => item.id), 'e1'].map(target => ({ target, reason: evidence.note, evidence: ['guard'], documentation: [] })) } };
   draft.publication = policy.gate(draft); draft.publication.digest = policy.digest(draft); return draft;
 }
+test('a wrong literal displayed comparison remains withheld even with fresh event/evidence checks', () => {
+  const draft = checked();
+  draft.causal.events[0].changes = [{ name: 'illustrative quotient', before: '135', operation: '/ 100', after: '2', units: 'integer quote units', evidence: ['guard'] }];
+  const result = policy.gate(draft);
+  assert.equal(result.ready, false); assert.ok(result.problems.some(problem => problem.includes('rounds down')));
+  draft.publication = result; draft.publication.digest = policy.digest(draft);
+  assert.equal(policy.expose(draft).causal, undefined);
+});
 test('only a complete checked snapshot crosses the publication boundary, including older results', () => {
   const ready = checked(); assert.equal(ready.publication.ready, true);
   assert.equal(policy.expose(ready).causal.order[0], 'e1');

@@ -12,14 +12,16 @@ function parseReport(text, options = {}) {
   if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('Report limit: 4 MiB.');
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const headings = [], sections = [];
-  let fence = false;
+  let fence = null;
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s*(`{3,}|~{3,})/.test(lines[i])) { fence = !fence; continue; }
+    const delimiter = lines[i].match(/^\s*(`{3,}|~{3,})/);
+    if (delimiter) { if (!fence) fence = delimiter[1]; else if (delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length) fence = null; continue; }
     if (fence) continue;
     const clean = lines[i].trim().replace(/^#{1,6}\s+/, '').replace(/^\*\*(.*?)\*\*$/, '$1');
     const heading = lines[i].match(/^#{1,4}\s+(.+)$/);
     if (heading) sections.push({ line: i + 1, level: lines[i].match(/^#+/)[0].length, title: heading[1], classification: 'context', reason: 'Report heading or structured finding field.' });
     let match = clean.match(/^\[?([HMLICG]-?\d+)\]?[\s:.)-]+(.+)$/i);
+    if (!match) match = clean.match(/^(?:Issue|Finding)\s*[:#]?\s*\[?([HMLICG]-?\d+)\]?[\s:.)-]+(.+)$/i);
     if (!match) match = clean.match(/^(?:Issue|Finding)\s*(?:[:#]\s*)?(\d+)[\s:.)-]+(.+)$/i)?.map((x, n) => n === 1 ? `F-${x}` : x);
     if (match) { headings.push({ line: i, level: heading ? lines[i].match(/^#+/)[0].length : 4, id: match[1], title: match[2] });
       if (!heading) sections.push({ line: i + 1, level: 4, title: clean, classification: 'finding', reason: 'Explicit finding identifier.' }); continue; }
@@ -167,6 +169,7 @@ function draftIssue(issue, root, runner, result, sourceRevision, catalog = new S
       definitions: applicability.selected.map(fn => ({ file: catalog.relative(fn.file), line: fn.startLine, name: fn.name, contract: fn.contract })) }, request, citationCount: issue.locations.length };
 }
 async function importReport(reportPath, root, extensionPath, options = {}) {
+  const importedAt = new Date().toISOString(); // include parsing/mapping in the new run's window
   const stat = fs.statSync(reportPath);
   if (!stat.isFile() || stat.size > 4 * 1024 * 1024) throw new Error('Report must be a file of at most 4 MiB.');
   const text = fs.readFileSync(reportPath, 'utf8');
@@ -194,7 +197,7 @@ async function importReport(reportPath, root, extensionPath, options = {}) {
     const { runner, result } = await analyze(extensionPath, fs.realpathSync(root), { mode: 'source' });
     catalog = new SourceCatalog(root, runner, result);
   }
-  const bundle = { version: 1, importedAt: new Date().toISOString(), sourceRevision: git.head,
+  const bundle = { version: 1, importedAt, sourceRevision: git.head,
     reportRevision: options.reportRevision || null, reportNamespace: namespace, issueIdentities,
     reportName: path.basename(reportPath), reportHash, originalReport: text, reconciliation: manifest,
     issues: issues.map(issue => catalog ? draftIssue({ ...issue, id: issueIdentities[issue.id] }, root, catalog.runner, catalog.result, git.head, catalog) : {

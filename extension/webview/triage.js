@@ -216,7 +216,10 @@
       const details = element('details'); details.append(element('summary', '', 'Progress and stopped checks'));
       details.append(element('p', '', Object.entries(progress.counts || {}).map(([state, count]) => `${state}: ${count}`).join(' · ')));
       if (progress.plan) details.append(element('p', '', `${progress.plan.eligible} queued findings · about ${progress.plan.estimatedRequests} further requests before repairs · ${progress.plan.remainingAllowance} requests left.`),
+        element('p', '', `Used ${progress.requests} / maximum allowed ${progress.requestLimit} reserved attempts. Remaining bounded stage demand: up to ${progress.plan.maximumRequests ?? 'unknown'}. Monetary cost: ${progress.costUSD == null ? 'unknown' : '$' + progress.costUSD}.`),
         element('p', 'triage-muted', progress.plan.basis));
+      if (progress.plan?.scenario) details.append(element('p', 'triage-muted', `${progress.plan.scenario.label}: at 60 active seconds/request and ${progress.plan.effectiveConcurrency} configured effective slots, at least ${Math.ceil(progress.plan.scenario.lowerBoundMinutes)} minutes. At least ${progress.plan.scenario.requiredConcurrency20}/${progress.plan.scenario.requiredConcurrency30} slots for 20/30 minutes, before overhead. ${progress.plan.scenario.excludes}`));
+      if (progress.batch) details.append(element('p', '', `Run started ${progress.batch.startedAt}; deadline ${progress.batch.deadlineAt}. ${progress.batch.outcome}. Elapsed ${Math.floor(progress.batch.elapsedMs / 1000)} seconds (includes queue/local work).`));
       if (progress.plan?.estimatedRequests > progress.plan?.remainingAllowance) details.append(element('p', 'triage-warning', 'The current allowance is unlikely to finish this report. No extra requests are authorized automatically.'));
       if (progress.concurrency) details.append(element('p', 'triage-muted', `${progress.concurrency.configured} configured workers · ${progress.active?.length || 0} active tasks · ${(progress.jobs || []).filter(job => job.state === 'waiting-for-provider-capacity').length} waiting for provider capacity. Task count is not provider concurrency.`));
       for (const job of progress.stopped || []) details.append(element('p', '', `${job.id} · ${job.stage || job.state}: ${job.reason || job.state}`));
@@ -592,7 +595,19 @@
     if (focusedControl) ([...guideControls.querySelectorAll('button')].find(item => item.textContent === focusedControl && !item.disabled) || next.disabled && back || next).focus({ preventScroll: true });
     measureGuideControls();
     guideAside.append(element('small', 'triage-muted', `${issueIdentifier()} · Checked against saved code, not an executed trace`));
-    const mechanism = element('details', 'guide-mechanism'); mechanism.append(element('summary', '', 'Finding explanation'), element('p', '', guide.summary));
+    const mechanism = element('details', 'guide-mechanism');
+    const orientationKey = `orientation:${guide.key}:${step.id}`;
+    const orientationScrollKey = `${orientationKey}:scroll`;
+    mechanism.open = disclosureState.has(orientationKey) ? disclosureState.get(orientationKey) : guideIndex === 0;
+    mechanism.ontoggle = () => disclosureState.set(orientationKey, mechanism.open);
+    mechanism.onscroll = () => { disclosureState.set(orientationScrollKey, mechanism.scrollTop); schedulePersist(); };
+    requestAnimationFrame(() => { if (mechanism.isConnected) mechanism.scrollTop = Number(disclosureState.get(orientationScrollKey)) || 0; });
+    mechanism.append(element('summary', '', 'Mechanism and starting scenario'), element('p', '', guide.teaching.mechanism),
+      element('h3', '', 'Expected rule'), element('p', '', guide.teaching.rule), element('small', 'triage-muted', guide.teaching.basis),
+      element('p', '', `Actor: ${guide.teaching.actor}`));
+    if (guide.teaching.conditions.length) mechanism.append(element('p', '', guide.teaching.conditions.join('; ')));
+    evidenceActions(mechanism, guide.teaching.ruleEvidence, 'Read rule basis');
+    if (guideIndex === 0) guideAside.append(mechanism);
     const outline = element('details', 'guide-outline'); outline.open = disclosureState.get('guide-outline') === true;
     outline.append(element('summary', '', 'Step outline'));
     const order = element('ol');
@@ -611,7 +626,7 @@
     note.append(element('h2', '', step.title));
     if (guideError) note.append(element('p', 'triage-warning', `Could not open this step's code. ${guideError}`),
       button('Retry opening code', retryGuideNavigation), button('Explore freely', guidePause));
-    if (guideMode === 'guided' && step.role && !guide.steps.slice(0, guideIndex).some(prior => prior.unit?.id === step.unit?.id)) note.append(element('p', 'guide-function-role', step.role));
+    if (guideMode === 'guided' && step.role && step.role !== guide.teaching.mechanism && !guide.steps.slice(0, guideIndex).some(prior => prior.unit?.id === step.unit?.id)) note.append(element('p', 'guide-function-role', step.role));
     if (guidePending) { const loading = element('p', 'triage-muted', 'Opening the checked code…'); loading.setAttribute('role', 'status'); note.append(loading); }
     let statement;
     if (step.claim) {
@@ -685,7 +700,14 @@
       if (step.source) note.append(element('p', 'guide-line-link', `${step.source.file}:${step.source.line}`));
     } else if (step.kind === 'gap') note.append(element('p', 'triage-warning', step.text), button('Read statement details', () => { guidePause(); show('claims'); }));
     else note.append(element('p', '', 'Compare the evidence on both sides. These steps do not decide your final judgment.'), button('Read report', () => { guidePause(); show('report'); }));
-    guideAside.append(note, outline, mechanism);
+    guideAside.append(note, outline);
+    if (guideIndex !== 0) guideAside.append(mechanism);
+    if (guideMode === 'guided' && guideIndex === guide.steps.length - 1) {
+      const conclusion = element('section', 'guide-conclusion'); conclusion.append(element('h3', '', 'Practical conclusion'), element('p', '', guide.teaching.conclusion));
+      for (const claim of guide.teaching.claims) conclusion.append(element('p', '', `${claim.id} · ${FlowboardReading.statement(claim.status)}: ${claim.reason}`));
+      for (const text of guide.teaching.limitations) conclusion.append(element('p', '', text));
+      guideAside.append(conclusion);
+    }
     const watched = guideMode === 'guided' ? FlowboardWalkthrough.watchedChanges(guide, guideIndex) : [];
     if (watched.length) {
       const watch = element('details', 'guide-state-watch'); watch.append(element('summary', '', 'Values in this invocation'),

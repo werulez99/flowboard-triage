@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.19.10",
+  "version": "0.19.11",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
@@ -42,12 +42,24 @@
           "description": "Maximum Claude budget per request. Each preparation uses generation, challenge, at most one response repair and two new-code checks, subject to the shared report request limit. Resume retains accepted stages."
         },
         "flowboardTriage.reportRequestLimit": {
-          "type": "integer", "default": 12, "minimum": 1, "maximum": 10000, "scope": "resource",
-          "description": "Shared model-request allowance for the entire imported report, not each finding. Preparation pauses at this limit and saves accepted stages. Resume explicitly adds another allowance. Claude's per-request USD cap also applies; Codex account charges/limits still apply."
+          "type": "integer", "default": 0, "minimum": 0, "maximum": 10000, "scope": "resource",
+          "description": "NEW reports: 0 derives a finite maximum from unfinished finding plans; a positive value is an explicit shared cap. Existing ledgers are never replenished by changing this default. Counts durably reserved attempts, including later spawn failure, not tokens, concurrency or money. Expected demand is usually two requests per cold finding; maximum includes bounded repairs. Unknown cost is not zero. Explicit Resume adds the configured allowance."
         },
         "flowboardTriage.preparationWorkers": {
-          "type": "integer", "default": 2, "minimum": 1, "maximum": 4, "scope": "resource",
+          "type": "integer", "default": 2, "minimum": 1, "maximum": 32, "scope": "resource",
           "description": "Concurrent source-review stages for this report. Does not increase any request or spending allowance. A shared local provider limit also applies."
+        },
+        "flowboardTriage.findingRequestLimit": {
+          "type": "integer", "default": 6, "minimum": 2, "maximum": 6, "scope": "resource",
+          "description": "Maximum reserved attempts per new finding: generation, mandatory challenge, one response repair total, up to two new-code follow-ups and bounded transport recovery. Stage yields/reloads retain counters. Does not enlarge an existing shared report allowance."
+        },
+        "flowboardTriage.providerConcurrency": {
+          "type": "integer", "default": 2, "minimum": 1, "maximum": 32, "scope": "machine",
+          "description": "Configured shared local capacity per OS user/provider across projects, not discovered remote account quota or cross-machine coordination. Conflicting active capacity settings are refused; change when the shared pool is idle. Configure only supported host/account capacity. Does not grant request or monetary allowance."
+        },
+        "flowboardTriage.reportDeadlineMinutes": {
+          "type": "integer", "default": 30, "minimum": 1, "maximum": 30, "scope": "resource",
+          "description": "Acceptance window for NEW report runs, measured from import acceptance including local work and capacity waits. Expiry stops new dispatch and cancels owned work with finite cleanup; accepted guides/checkpoints survive. Reload never restarts the clock."
         },
         "flowboardTriage.analysisMode": {
           "type": "string", "enum": ["source", "slither"], "default": "source",

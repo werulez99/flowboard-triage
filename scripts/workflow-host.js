@@ -61,13 +61,15 @@ function boardClass(storage, invoke, trace) {
 }
 
 async function start(options = {}) {
+  if (options.teachingFixture && !['time', 'lifecycle', 'accounting'].includes(options.teachingFixture)) throw Error('Unknown controlled teaching fixture');
+  const teachingFolder = options.teachingFixture && path.join(__dirname, 'fixtures/teaching-preparation', options.teachingFixture);
   const upstream = fs.realpathSync(options.upstream || process.env.FLOWBOARD_EXTENSION_PATH || '');
   const extension = productionExtension;
   const readOnly = !!options.workspace;
   const configuration = { semanticProvider: options.provider || 'none' };
-  if (options.productionSelection && !options.routeFixture && !options.mixedFixture && !(readOnly && configuration.semanticProvider === 'none')) throw new Error('Production selection requires a controlled fixture or an existing workspace with provider disabled.');
+  if (options.productionSelection && !options.teachingFixture && !options.routeFixture && !options.mixedFixture && !(readOnly && configuration.semanticProvider === 'none')) throw new Error('Production selection requires a controlled fixture or an existing workspace with provider disabled.');
   if(options.mixedFixture&&options.routeFixture)throw new Error('Choose one controlled fixture.');
-  if (options.mixedFixture || options.routeFixture) {
+  if (options.mixedFixture || options.routeFixture || options.teachingFixture) {
     if (readOnly || options.invoke || options.qualityCase || options.qualityBatch || options.qualityResponses || options.qualityRecording) throw new Error('Controlled preparation is an isolated fictional fixture.');
     configuration.semanticProvider = 'codex'; options.reportPreparation = true;
   }
@@ -77,8 +79,8 @@ async function start(options = {}) {
   const qualityFolder = options.qualityCase && path.join(__dirname, 'fixtures/quality-cases', options.qualityCase);
   const root = readOnly ? fs.realpathSync(options.workspace) : fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-workflow-'));
   if (!readOnly) {
-    if (options.mixedFixture || options.routeFixture) {
-      fs.cpSync(path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/project' : 'fixtures/mixed-preparation/project'), root, { recursive: true });
+    if (options.mixedFixture || options.routeFixture || options.teachingFixture) {
+      fs.cpSync(teachingFolder ? path.join(teachingFolder, 'project') : path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/project' : 'fixtures/mixed-preparation/project'), root, { recursive: true });
       if (options.productionSelection) {
         const git = (...args) => require('node:child_process').execFileSync('git', args, { cwd: root, stdio: 'pipe', timeout: 10000 });
         git('init', '-q'); git('add', '.');
@@ -89,7 +91,7 @@ async function start(options = {}) {
       for (const name of ['d3', 'd7']) fs.cpSync(path.join(base, name, 'project'), root, { recursive: true });
       fs.writeFileSync(path.join(root, 'report.md'), fs.readFileSync(path.join(base, 'd3/report.md'), 'utf8') + '\n\n' + fs.readFileSync(path.join(base, 'd7/report.md'), 'utf8').replace('[I-01]', '[I-02]'));
     } else fs.cpSync(qualityFolder ? path.join(qualityFolder, 'project') : path.resolve(__dirname, options.reading ? 'fixtures/reading-project' : options.complex ? '../examples/complex-project' : '../examples/project'), root, { recursive: true });
-    await importReport(options.mixedFixture || options.routeFixture ? path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/report.md' : 'fixtures/mixed-preparation/report.md') : options.qualityBatch ? path.join(root, 'report.md') : qualityFolder ? path.join(qualityFolder, 'report.md') : path.join(__dirname, options.reading ? 'fixtures/reading-report.md' : options.complex ? 'fixtures/complex-report.md' : 'fixtures/workflow-report.md'), root, upstream, { deferMapping: !!options.deferMapping });
+    await importReport(teachingFolder ? path.join(teachingFolder, 'report.md') : options.mixedFixture || options.routeFixture ? path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/report.md' : 'fixtures/mixed-preparation/report.md') : options.qualityBatch ? path.join(root, 'report.md') : qualityFolder ? path.join(qualityFolder, 'report.md') : path.join(__dirname, options.reading ? 'fixtures/reading-report.md' : options.complex ? 'fixtures/complex-report.md' : 'fixtures/workflow-report.md'), root, upstream, { deferMapping: !!options.deferMapping });
     if (options.qualityRecording) {
       const recorded = JSON.parse(fs.readFileSync(options.qualityRecording, 'utf8'));
       if (recorded.case !== options.qualityCase || recorded.draft?.phase !== 'ready') throw new Error('Recording does not match the selected fictional case.');
@@ -140,7 +142,7 @@ async function start(options = {}) {
   const providerCalls = [];
   let releaseMixed, mixedHeld = false, localChallengeFailed = false;
   const mixedWait = options.mixedFixture && new Promise(resolve => { releaseMixed = resolve; });
-  const mixedInvoke = options.mixedFixture || options.routeFixture ? async (input, settings) => {
+  const mixedInvoke = options.mixedFixture || options.routeFixture || options.teachingFixture ? async (input, settings) => {
     const record = { input: structuredClone(input), fixture: options.routeFixture ? 'controlled-route-preparation' : 'controlled-mixed-preparation' }; providerCalls.push(record);
     if (input.finding.id === 'I-2' && input.phase === 'challenge') {
       if (options.localRetryFixture && !localChallengeFailed) {
@@ -154,7 +156,7 @@ async function start(options = {}) {
       })]);
       mixedHeld = false;
     }
-    const result = { value: require(options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input), audit: { provider: options.routeFixture ? 'controlled-route-fixture' : 'controlled-mixed-fixture', phase: input.phase, outcome: 'completed' } };
+    const result = { value: require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
     record.result = structuredClone(result); return result;
   } : undefined;
   let replay;
@@ -395,6 +397,7 @@ if (require.main === module) {
     mixedFixture: process.argv.includes('--mixed-fixture'),
     localRetryFixture: process.argv.includes('--local-retry-fixture'),
     routeFixture: process.argv.includes('--route-fixture'),
+    teachingFixture: process.argv.includes('--teaching-fixture') ? process.argv[process.argv.indexOf('--teaching-fixture') + 1] : null,
     productionSelection: process.argv.includes('--production-selection'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,

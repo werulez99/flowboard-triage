@@ -5,6 +5,7 @@
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const p = require('./protocol'), store = require('./store'), reports = require('./report');
 const engine = require('./investigation-engine'), policy = require('./guide-policy');
+const batch = require('./batch-plan');
 const FILE = '.flowboard/report-preparation.json';
 const LOCK = '.flowboard/report-preparation.lock.json';
 const VERSION = 2, now = () => new Date().toISOString();
@@ -107,6 +108,7 @@ class ReportPreparation {
       published: !!this.state.publication, mode: this.admissionStatus?.mode || this.state.mode, reason: this.admissionStatus?.reason || this.state.reason || '', startedAt: this.state.startedAt,
       admission: this.admissionStatus?.admission || null,
       requests: this.state.resources.requests, requestLimit: this.state.resources.limit, costUSD: this.state.resources.costUSD,
+      batch: this.state.batch ? { ...this.state.batch, elapsedMs: Date.now() - Date.parse(this.state.batch.startedAt) } : null,
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
@@ -195,6 +197,7 @@ class ReportPreparation {
       if (this.state && this.locked) { this.state.mode = 'paused'; this.state.reason = error.message; this.save(); }
       this.options.log?.(`Report preparation stopped: ${error.message}`);
     }).finally(() => {
+      clearTimeout(this.deadlineTimer); this.deadlineTimer = null;
       // Setup may stop before admission. Consume only the intents this run
       // attempted, not a genuinely new action received while it was awaiting.
       for (const [id, intent] of attempted) if (this.pendingFindings.get(id) === intent) this.pendingFindings.delete(id);
@@ -222,18 +225,20 @@ class ReportPreparation {
     this.savedJournalHash = old ? hash(old) : null;
     if (old && old.identity !== identity) p.atomicJson(this.root, `.flowboard/recovery/preparation-${old.identity}.json`, old);
     const config = this.options.configuration();
-    const concurrency = Math.max(1, Math.min(4, Number.isInteger(config.workers) ? config.workers : 2));
+    const concurrency = batch.capacity(config.workers);
     if (config.executable && !path.isAbsolute(config.executable)) throw new Error('The configured model CLI path must be absolute, without shell arguments.');
     const sameProject = old?.project === project;
     this.state = old?.identity === identity ? old : { version: VERSION, identity, project, reportHash: report.reportHash, reportName: report.reportName,
       startedAt: sameProject ? old.startedAt : now(), mode: sameProject && ['paused', 'cancelled'].includes(old.mode) ? old.mode : 'running',
       jobs: sameProject ? old.jobs : {}, publication: null,
-      resources: sameProject ? old.resources : { requests: 0, limit: Math.max(1, Math.min(10000, config.requestLimit || 12)), costUSD: null } };
+      resources: sameProject ? old.resources : { requests: 0, limit: Math.min(10000, config.requestLimit > 0 ? config.requestLimit : entries.length * (config.findingRequestLimit || batch.DEFAULT_ATTEMPTS)),
+        allowanceMode: config.requestLimit > 0 ? 'explicit' : 'automatic', costUSD: null },
+      ...(!sameProject ? { batch: { startedAt: report.importedAt, deadlineAt: new Date(Date.parse(report.importedAt) + Math.min(batch.DEADLINE_MS, config.batchDeadlineMs || batch.DEADLINE_MS)).toISOString(), outcome: 'pending' } } : old.batch ? { batch: old.batch } : {}) };
     this.state.version = VERSION;
     const currentIds = new Set(entries.map(entry => entry.id));
     for (const id of Object.keys(this.state.jobs)) if (!currentIds.has(id)) { delete this.state.jobs[id]; this.accepted.delete(id); }
     this.state.resources.receipts ||= {};
-    this.state.concurrency = { configured: concurrency, achieved: 0 };
+    this.state.concurrency = { configured: concurrency, providerCapacity: batch.capacity(config.providerCapacity), achieved: this.state.concurrency?.achieved || 0 };
     this.state.ambiguities = reconciliation.ambiguities;
     for (const entry of entries) {
       const job = this.state.jobs[entry.id] ||= { id: entry.id, state: 'queued', attempt: 0, requests: 0, publishable: false, outcome: null };
@@ -246,10 +251,18 @@ class ReportPreparation {
       if (['running', 'waiting-for-provider-capacity'].includes(job.state)) { job.state = 'queued'; job.interruptedAt = now(); job.reason = 'The previous host stopped. Resume from the last valid checkpoint.'; }
       if (retry && !job.publishable) { job.state = 'queued'; job.requestLimit = job.requests + (config.findingRequestLimit || 6); delete job.reason; }
     }
-    if (retry) { this.state.mode = 'running'; this.state.reason = ''; this.state.resources.limit = Math.max(this.state.resources.limit, this.state.resources.requests + Math.max(1, config.requestLimit || 12)); }
+    if (retry) { this.state.mode = 'running'; this.state.reason = ''; this.state.resources.limit = Math.max(this.state.resources.limit, this.state.resources.requests + Math.max(1, config.requestLimit || entries.filter(entry => !this.state.jobs[entry.id].publishable).length * (config.findingRequestLimit || 6))); }
     if (retry && ['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
       await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable });
     this.save();
+    if (this.expired()) {
+      this.expire();
+      // Expiry forbids fresh work, not reading already paid compatible guides.
+      // A new host must still rebuild their current-source publication map.
+      if (!fs.existsSync(path.join(this.root, '.flowboard/investigations'))) return;
+    }
+    clearTimeout(this.deadlineTimer);
+    if (this.state.batch && !this.expired()) this.deadlineTimer = setTimeout(() => this.expire(), Math.max(1, Date.parse(this.state.batch.deadlineAt) - Date.now()));
     // Disabled providers must not make ordinary import eagerly index code.
     // Existing private/accepted artifacts still take the local revalidation
     // path below, including migration while report work is paused.
@@ -259,6 +272,7 @@ class ReportPreparation {
     const epoch = this.epoch;
     this.indexAbort = new AbortController();
     const catalog = await this.validatedCatalog(this.indexAbort.signal);
+    if (this.expired()) this.expire();
     if (epoch !== this.epoch || this.disposed) return;
     const currentReport = store.readReport(this.root);
     if (currentReport.reportHash !== report.reportHash || entries.some(entry => !currentReport.issues.some(item => item.id === entry.id)))
@@ -271,6 +285,7 @@ class ReportPreparation {
       try {
       const saved = engine.read(this.root, entry.id);
       if (!saved) { this.accepted.delete(entry.id); if (job.publishable) job.state = 'queued'; job.publishable = false; job.accepted = null; continue; }
+      job.checkpoint = saved.checkpoint || null;
       const request = this.request(entry, catalog, report);
       if (!engine.revalidate(saved, catalog, request, this.issue(entry))) {
         job.state = 'queued'; job.publishable = false; job.outcome = null; job.accepted = null; this.accepted.delete(entry.id);
@@ -338,9 +353,13 @@ class ReportPreparation {
     const ordered = priority.length ? [...priority.flatMap(id => entries.filter(entry => entry.id === id)), ...entries.filter(entry => !priority.includes(entry.id))] : entries;
     const allowed = id => this.state.mode === 'running' || this.localEligible.has(id);
     const queue = ordered.filter(entry => allowed(entry.id) && ['queued', 'retry-scheduled'].includes(this.state.jobs[entry.id].state));
-    const estimatedRequests = queue.reduce((n, entry) => n + (this.state.jobs[entry.id].checkpoint?.stage === 'challenge' ? 1 : 2), 0);
-    this.state.plan = { eligible: queue.length, estimatedRequests, remainingAllowance: this.state.resources.limit - this.state.resources.requests,
-      basis: 'One generation and one challenge for each cold finding, one challenge for a reusable draft; repairs may need more. This is an estimate, not a completion guarantee.' };
+    this.state.plan = batch.plan(queue.map(entry => this.state.jobs[entry.id]), this.state.resources, concurrency, config.providerCapacity);
+    if (!old && this.state.resources.allowanceMode === 'automatic') this.state.resources.limit = this.state.plan.maximumRequests;
+    if (!old && this.state.plan.expectedRequests > this.state.resources.limit - this.state.resources.requests) {
+      this.state.mode = 'paused'; this.state.reason = `The explicit report cap cannot cover the planned ${this.state.plan.expectedRequests} requests (generation plus mandatory challenge); ${this.state.resources.limit} allowed. No request was reserved. Choose an explicit sufficient allowance before starting.`;
+      for (const entry of queue) { this.state.jobs[entry.id].state = 'paused'; this.state.jobs[entry.id].reason = this.state.reason; }
+      this.save(); return;
+    }
     this.save();
     // Alternate untouched work with durable continuations. Appending every
     // challenge behind a large cold manifest prevents any useful result within
@@ -365,6 +384,7 @@ class ReportPreparation {
     };
     const worker = async () => {
       while ((freshQueue.length || continuedQueue.length || retryQueue.length || this.pendingFindings.size) && !this.disposed && epoch === this.epoch) {
+        if (this.expired()) { this.expire(); break; }
         for (const entry of await admitPending()) if (![...freshQueue, ...continuedQueue, ...retryQueue].some(item => item.id === entry.id)) continuedQueue.push(entry);
         if (this.state.resources.requests >= this.state.resources.limit) {
           if (this.state.mode === 'running') this.pauseForBudget();
@@ -374,6 +394,12 @@ class ReportPreparation {
         if (!freshQueue.length && !continuedQueue.length && !retryQueue.length) break;
         const entry = next(), job = this.state.jobs[entry.id];
         if (!allowed(entry.id) || !['queued', 'retry-scheduled'].includes(job.state)) continue;
+        // A persisted short backoff never consumes a slot or a reservation.
+        // Other workers and already readable findings remain independent.
+        while (Date.parse(job.retryAfter || '') > Date.now() && allowed(entry.id) && !this.expired() && !this.disposed)
+          await new Promise(resolve => setTimeout(resolve, Math.min(100, Date.parse(job.retryAfter) - Date.now())));
+        if (this.expired()) { this.expire(); break; }
+        if (!allowed(entry.id) || this.disposed || epoch !== this.epoch) continue;
         try { await this.work(entry, catalog, report, job, epoch, config); }
         catch (error) {
           if (epoch === this.epoch) { Object.assign(job, { state: 'failed', publishable: false, reason: error.message, finishedAt: now() }); this.save(); }
@@ -400,10 +426,22 @@ class ReportPreparation {
       this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
     }
     if (this.state.mode === 'running') this.state.mode = this.state.publication ? 'completed' : 'incomplete';
+    if (this.state.batch && !this.expired()) Object.assign(this.state.batch, { outcome: this.state.publication ? 'completed' : 'incomplete', finishedAt: now() });
     this.localEligible.clear();
     this.save();
   }
   issue(entry) { return { ...entry, reportText: entry.body }; }
+  expired() { return !!this.state?.batch && Date.now() >= Date.parse(this.state.batch.deadlineAt); }
+  expire() {
+    if (!this.expired() || this.disposed || this.state.batch.outcome === 'completed') return;
+    this.state.batch.outcome = 'deadline-exceeded'; this.state.batch.finishedAt ||= now();
+    this.state.batch.unfinished = Object.values(this.state.jobs).filter(job => !job.publishable).map(job => job.id);
+    this.state.mode = 'paused'; this.state.reason = `Preparation deadline reached; ${this.state.batch.unfinished.length} findings lack an accepted walkthrough. Completed guides and paid checkpoints are retained. This run did not meet its acceptance window.`;
+    this.controlRevision++; this.pendingFindings.clear(); this.localEligible.clear();
+    this.indexAbort?.abort(); for (const task of this.tasks.values()) task.abort.abort();
+    for (const job of Object.values(this.state.jobs)) if (['queued', 'retry-scheduled', 'waiting-for-provider-capacity'].includes(job.state)) { job.state = 'paused'; job.reason = this.state.reason; }
+    this.save();
+  }
   request(entry, catalog, report) {
     let cached = this.requests.get(catalog); if (!cached) { cached = new Map(); this.requests.set(catalog, cached); }
     const key = entryHash(entry);
@@ -449,7 +487,7 @@ class ReportPreparation {
       attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
     const current = () => {
-      if (this.disposed || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
+      if (this.disposed || this.expired() || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
       try {
         return p.readWorkspaceJson(this.root, '.flowboard/report.json', 12 * 1024 * 1024).reportHash === report.reportHash &&
           engine.findingInputHash(this.request(entry, catalog, report), issue) === fresh.snapshot.reportHash;
@@ -458,20 +496,28 @@ class ReportPreparation {
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
-        providerResources: this.options.providerResources, yieldAfterStage: true, localOnly,
+        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly,
         beforeRequest: async data => {
           if (this.state.mode !== 'running' && !this.localEligible.has(entry.id)) throw Object.assign(new Error('Paused after the current request. Resume will reuse the accepted stage.'), { code: 'REPORT_PAUSED' });
           if (!current()) throw Object.assign(new Error('Preparation inputs changed before dispatch.'), { code: 'INVESTIGATION_SUPERSEDED' });
           if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error(`Report request allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). Accepted stages are saved.`), { code: 'REPORT_BUDGET' });
           if (job.requests >= job.requestLimit) throw Object.assign(new Error(`Finding ${job.id} request allowance exhausted (${job.requests}/${job.requestLimit}). Other findings may continue.`), { code: 'FINDING_BUDGET' });
+          const challengeCapacity = () => {
+            const owed = batch.owedChallenges(Object.values(this.state.jobs), entry.id) + (data.phase === 'generate' ? 1 : 0);
+            if (this.state.resources.limit - this.state.resources.requests <= owed) throw Object.assign(new Error(`Remaining allowance is reserved for ${owed} mandatory challenges of admitted findings; no new request was reserved.`), { code: 'FINDING_BUDGET' });
+          };
+          challengeCapacity();
           await this.options.authorizeRequest?.({ ...data, findingId: entry.id });
           if (!current()) throw Object.assign(new Error('Preparation superseded during request authorization.'), { code: 'INVESTIGATION_SUPERSEDED' });
           if (this.state.mode !== 'running' && !this.localEligible.has(entry.id)) throw Object.assign(new Error('Paused during request authorization; no request was reserved.'), { code: 'REPORT_PAUSED' });
           // Another worker may reserve while an explicit authorization hook
           // awaits. Recheck shared accounting immediately before incrementing.
           if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error('Shared report allowance exhausted before reservation.'), { code: 'REPORT_BUDGET' });
+          challengeCapacity();
           this.state.resources.requests++; job.requests++; job.stage = data.phase; job.inputBytes = data.inputBytes; job.state = 'running';
           job.lastReservation = { id: `${attemptId}:${job.requests}`, phase: data.phase, at: now(), inputBytes: data.inputBytes };
+          job.lastReservation.timing = { stageStartedAt: job.startedAt, capacityWaitMs: data.capacity?.waitMs || 0,
+            preparationAndHostSchedulingMs: Math.max(0, Date.now() - Date.parse(job.startedAt) - (data.capacity?.waitMs || 0)) };
           this.state.resources.receipts[job.lastReservation.id] = { ...job.lastReservation, findingId: job.id, outcome: 'reserved', costUSD: null };
           this.dispatched.add(job.lastReservation.id);
           this.state.concurrency.achieved = Math.max(this.state.concurrency.achieved, this.dispatched.size);
@@ -490,6 +536,7 @@ class ReportPreparation {
         onResult: (audit, reservation) => {
           if (!reservation || this.state.reportHash !== report.reportHash || this.state.resources.receipts[reservation.id]?.finishedAt) return;
           this.state.resources.receipts[reservation.id] = { ...reservation, findingId: job.id, finishedAt: now(), outcome: audit.outcome,
+            hostInvocationElapsedMs: Date.now() - Date.parse(reservation.at),
             audit,
             costUSD: Number.isFinite(audit.costUSD) ? audit.costUSD : null, outputBytes: audit.outputBytes ?? null, usage: audit.usage || null,
             elapsedMs: audit.startedAt && audit.finishedAt ? Date.parse(audit.finishedAt) - Date.parse(audit.startedAt) : null };
@@ -499,7 +546,7 @@ class ReportPreparation {
         },
         onAccepted: audit => {
           const receipt = audit.requestId && this.state.resources.receipts[audit.requestId];
-          if (receipt) { receipt.hostAcceptedAt = audit.hostAcceptedAt; receipt.audit = audit; job.lastUsefulActivity = audit.hostAcceptedAt; this.save(); }
+          if (receipt) { receipt.hostAcceptedAt = audit.hostAcceptedAt; receipt.audit = audit; receipt.localIngestionElapsedMs = Date.parse(audit.hostAcceptedAt) - Date.parse(receipt.finishedAt); job.lastUsefulActivity = audit.hostAcceptedAt; this.save(); }
         },
         onDispatchEnd: reservation => { if (reservation) this.dispatched.delete(reservation.id); },
         publish: async value => { if (!current()) return; job.stage = value.phase; job.checkpoint = value.checkpoint || null; job.revision = value.revision; this.save(); }
@@ -511,7 +558,12 @@ class ReportPreparation {
         finishedAt: now(), elapsedMs: Date.now() - Date.parse(job.startedAt), runs: draft.runs.slice(-12) });
       if (checked(draft)) this.accept(entry, draft, job);
       else this.recoveryStatus(job, draft);
-      if (draft.failureKind === 'provider' && (job.providerFailures = (job.providerFailures || 0) + 1) < 2 && job.requests < job.requestLimit && this.state.mode === 'running') job.state = 'retry-scheduled';
+      const diagnostic = draft.runs.at(-1)?.diagnostics?.lastReportedError;
+      const nonRetryable = ['authentication', 'authorization', 'request-format', 'context-limit', 'model-unavailable'].includes(diagnostic?.category) || diagnostic?.code === 'insufficient_quota';
+      if (draft.failureKind === 'provider' && !nonRetryable && (job.providerFailures = (job.providerFailures || 0) + 1) < 2 && job.requests < job.requestLimit && this.state.mode === 'running') {
+        job.state = 'retry-scheduled';
+        if (['rate-limit', 'provider-unavailable'].includes(diagnostic?.category)) job.retryAfter = new Date(Date.now() + 1000).toISOString();
+      }
       this.save();
       if (draft.failureKind === 'report-budget') this.pauseForBudget();
       if (draft.failureKind === 'provider-health') {
@@ -600,7 +652,7 @@ class ReportPreparation {
     }
     this.save();
   }
-  dispose() { this.disposed = true; this.controlRevision++; this.admitting.clear(); this.pendingFindings.clear(); this.localEligible.clear(); clearTimeout(this.progressTimer); for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); if (this.state) {
+  dispose() { this.disposed = true; clearTimeout(this.deadlineTimer); this.controlRevision++; this.admitting.clear(); this.pendingFindings.clear(); this.localEligible.clear(); clearTimeout(this.progressTimer); for (const task of this.tasks.values()) task.abort.abort(); this.indexAbort?.abort(); if (this.state) {
     for (const job of Object.values(this.state.jobs)) if (['running', 'waiting-for-provider-capacity'].includes(job.state)) job.state = 'queued';
     try { this.save(); } catch (error) { if (error.code !== 'ENOENT') this.options.log?.(`Could not checkpoint host shutdown: ${error.message}`); }
   } }

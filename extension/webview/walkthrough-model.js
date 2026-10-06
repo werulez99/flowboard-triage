@@ -93,7 +93,21 @@
     if (!steps.length) return null;
     // No invented closing step: the last checked event stays beside its code.
     return { key: [draft.findingId, draft.snapshot.sourceDigest, draft.snapshot.reportHash, draft.revision].join(':'), findingId: draft.findingId,
-      report, snapshot: draft.snapshot, steps, draft, summary: draft.causal.summary, scope: draft.causal.scope };
+      report, snapshot: draft.snapshot, steps, draft, summary: draft.causal.summary, scope: draft.causal.scope,
+      teaching: teaching(draft, steps) };
+  }
+  // Projection only: every displayed sentence already belongs to the accepted
+  // property, claim, event or conclusion covered by the publication digest.
+  // No second event order, new premise, numeric evaluation or attestation.
+  function teaching(draft, steps) {
+    const first = steps[0], claim = first.claim;
+    return { mechanism: draft.causal.summary, rule: draft.property.text,
+      basis: ({ 'report-assumption': 'Reported expectation (not independent proof)', 'source-contract': 'Source-linked rule',
+        'test-expectation': 'Supplied test expectation', 'local-documentation': 'Supplied documentation', unresolved: 'Unresolved expected rule' })[draft.property.basis],
+      ruleEvidence: draft.property.evidence || [], ruleDocumentation: draft.property.documentation || [],
+      actor: first.actor || claim.actor, conditions: [...new Set([...(claim.conditions || []), ...(first.conditions || [])])],
+      conclusion: draft.conclusion?.text || '', claims: draft.claims.map(({ id, status, reason }) => ({ id, status, reason })),
+      limitations: draft.conclusion?.limitations || [] };
   }
   function relationship(previous, next, connections, cardFor) {
     if (next?.handoff) return `${({call:'Call', callback:'Callback', return:'Return', branch:'Branch', data:'Data dependency', 'later-transaction':'Later transaction', context:'Context detour'})[next.handoff.kind]} · ${next.handoff.explanation}${next.handoff.binding ? ' ' + next.handoff.binding : ''}`;

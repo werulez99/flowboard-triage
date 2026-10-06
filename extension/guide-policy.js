@@ -116,7 +116,11 @@ function gate(draft) {
     if (eventUnit?.contextKind && event.effect !== 'read') fail(`${event.title}: a declaration is context, not evidence of an executed operation or committed change. Anchor the operation in its function and keep the declaration as a read step.`);
     if (event.effect !== 'read' && (!nonempty(event.actor) || !nonempty(event.caller) || !nonempty(event.receiver))) fail(`${event.title}: the relevant caller and receiver are missing.`);
     for (const input of list(event.inputs)) if (!['name', 'expression', 'type', 'units', 'origin'].every(key => nonempty(input[key])) || !refs(input.evidence)) fail(`${event.title}: an input has no checked origin or units.`);
-    for (const change of list(event.changes)) if (!['name', 'before', 'operation', 'after', 'units'].every(key => nonempty(change[key])) || !refs(change.evidence)) fail(`${event.title}: a displayed value change lacks evidence.`);
+    for (const change of list(event.changes)) {
+      if (!['name', 'before', 'operation', 'after', 'units'].every(key => nonempty(change[key])) || !refs(change.evidence)) fail(`${event.title}: a displayed value change lacks evidence.`);
+      const calculation = require('./checked-calculation').problem(change);
+      if (calculation) fail(`${event.title}: ${calculation}`, 'structural', capacity.target('event', event));
+    }
   }
   for (const link of links) {
     if (!eventIds.has(link.from) || !eventIds.has(link.to) || !nonempty(link.explanation) || !refs(link.evidence) || !check(capacity.target('relationship', link), link.evidence) || !['call', 'callback', 'return', 'branch', 'data', 'later-transaction', 'context'].includes(link.kind)) fail('An explanation handoff is missing, unchecked or points outside this scenario.');

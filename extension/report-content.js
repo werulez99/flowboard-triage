@@ -2,17 +2,32 @@
 // Keep the complete report, but never mistake a proposed edit for current code.
 const normalize = text => text.toLowerCase().replace(/[^a-z]/g, '');
 const fieldNames = new Set(['severity', 'location', 'locations', 'references', 'summary', 'summarydescription', 'description', 'rootcause', 'conditions', 'preconditions', 'impact', 'mitigation', 'recommendation', 'recommendations', 'attackpath', 'expectedbehavior', 'actualbehavior']);
-const proposed = new Set(['mitigation', 'recommendation', 'recommendations']);
+const proposed = new Set(['mitigation', 'recommendation', 'recommendations', 'recommendedmitigationsteps', 'recommendedmitigation', 'suggestedfix', 'proposedfix']);
+const discussion = new Set(['discussion', 'adjudication', 'counterarguments', 'sponsorresponse', 'judgeresponse']);
+for (const name of [...proposed, ...discussion, 'proofofconcept', 'poc', 'output', 'code', 'vulnerablecode', 'currentcode']) fieldNames.add(name);
 function content(body = '') {
-  const sections = [], fields = {}; let active = '', lines = [], fence = false;
+  const sections = [], fields = {}; let active = '', lines = [], fence = null, role = 'reporter-allegation';
+  const headings = [];
   const flush = () => {
     const text = lines.join('\n').trim();
-    if (text) { sections.push({ field: active, text, proposed: proposed.has(active) }); if (active) fields[active] = [fields[active], text].filter(Boolean).join('\n\n'); }
+    if (text) { sections.push({ field: active, text, proposed: role === 'proposed-change', role });
+      // A nested "Description" under a proposed edit is not the finding's
+      // current baseline/expected behavior field. Raw sections remain intact.
+      if (active && (role !== 'proposed-change' || proposed.has(active))) fields[active] = [fields[active], text].filter(Boolean).join('\n\n'); }
   };
   for (const line of body.split(/\r?\n/)) {
-    if (/^\s*(`{3,}|~{3,})/.test(line)) fence = !fence;
+    const delimiter = line.match(/^\s*(`{3,}|~{3,})/);
+    if (delimiter) { if (!fence) fence = delimiter[1]; else if (delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length) fence = null; lines.push(line); continue; }
     const marker = !fence && (line.match(/^\s*\*\*([^*]+)\*\*\s*:?\s*(.*)$/) || line.match(/^#{2,6}\s+(.+)$/) || line.match(/^\s*([A-Za-z][A-Za-z /-]{2,30}):\s*(.*)$/));
-    if (marker && (fieldNames.has(normalize(marker[1])) || /^\s*(?:\*\*|#{2,6}\s)/.test(line))) { flush(); active = normalize(marker[1]); lines = [marker[2] || '']; }
+    if (marker && (fieldNames.has(normalize(marker[1])) || /^\s*(?:\*\*|#{2,6}\s)/.test(line))) {
+      flush(); active = normalize(marker[1]);
+      const level = line.match(/^(#{2,6})\s/)?.[1].length || 2;
+      while (headings.length && headings.at(-1).level >= level) headings.pop();
+      const inherited = headings.at(-1)?.role;
+      role = inherited === 'proposed-change' ? inherited : proposed.has(active) ? 'proposed-change' : discussion.has(active) ? 'discussion' :
+        ['proofofconcept', 'poc', 'output'].includes(active) ? 'reported-poc-output' : ['code', 'vulnerablecode', 'currentcode'].includes(active) ? 'reported-code' : inherited || 'reporter-allegation';
+      headings.push({ level, role }); lines = [marker[2] || ''];
+    }
     else lines.push(line);
   }
   flush();
@@ -22,7 +37,8 @@ function content(body = '') {
 function reportQuery(issue = {}) {
   const parsed = content(issue.reportText || issue.body || '');
   const fields = { ...parsed.fields, ...issue.fields };
-  const pieces = [issue.title, parsed.current, ...Object.entries(fields).filter(([key]) => !proposed.has(key) && key !== 'severity').map(([, value]) => value)];
+  const excluded = new Set(parsed.sections.filter(section => section.proposed).map(section => section.field));
+  const pieces = [issue.title, parsed.current, ...Object.entries(fields).filter(([key]) => !proposed.has(key) && !excluded.has(key) && key !== 'severity').map(([, value]) => value)];
   return [...new Set(pieces.filter(Boolean))].join('\n\n');
 }
 function mentions(text) {

@@ -139,6 +139,10 @@ test('a crash after a durable provider response reuses generation in a fresh pro
 });
 test('a final paid response recovers in a fresh disabled-provider host at 2/2 without increasing allowance', { skip: !native }, async t => {
   const f = await fixture(t, 2), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
+  // Retained small ledgers remain valid historical states. New cold reports
+  // instead stop at the shortfall preflight tested separately above.
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 2 }); await f.runner.ensure();
+  f.runner.state.mode = 'running'; f.runner.save();
   const request = f.runner.request(entries[0], catalog, report), issue = f.runner.issue(entries[0]);
   fs.writeFileSync(path.join(f.root, '.flowboard/controlled-answer.json'), JSON.stringify(response({ phase: 'challenge', sources: engine.makeContext(catalog, request, issue).units })));
   const run = mode => require('node:child_process').spawnSync(process.execPath,
@@ -329,6 +333,7 @@ test('saved conditions and edited summary reach generation and challenge, and ca
     }
     return value;
   });
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 12, findingRequestLimit: 6 });
   await f.runner.ensure(); assert.ok(f.runner.artifact('I-1'));
   const { report, entries } = reconcile(f.root), catalog = await f.options.catalog();
   const saved = f.runner.request(entries[0], catalog, report);
@@ -523,13 +528,14 @@ test('one failed explanation prevents report completion but not other accepted g
   assert.equal(f.runner.state.jobs['I-2'].state, 'failed'); assert.ok(f.calls.length <= 8);
   const before = f.calls.length; await f.runner.ensure(); assert.equal(f.calls.length, before, 'A stopped malformed result is not retried forever.');
 });
-test('report resource budget pauses without counting queued jobs as ready; resume retains checkpoints', { skip: !native }, async t => {
+test('an explicit insufficient cap pauses before dispatch and explicit sufficient Resume can finish', { skip: !native }, async t => {
   const f = await fixture(t, 3); f.options.configuration = () => ({ provider: 'codex', requestLimit: 1, workers: 1 });
-  await f.runner.ensure(); assert.equal(f.runner.status().mode, 'paused'); assert.equal(f.calls.length, 1);
+  await f.runner.ensure(); assert.equal(f.runner.status().mode, 'paused'); assert.equal(f.calls.length, 0);
+  assert.match(f.runner.status().reason, /planned 6 requests/);
   assert.equal(f.runner.status().published, false); assert.equal(f.runner.status().ready, 0);
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, workers: 1 });
   await f.runner.control('resume');
-  assert.equal(f.calls.length, 2); assert.equal(f.calls[1][1], 'challenge', 'Resume does not pay for generation again.');
-  assert.equal(f.runner.status().ready, 1);
+  assert.equal(f.calls.length, 6); assert.equal(f.runner.status().ready, 3);
 });
 test('cancellation ignores a late provider response and preserves researcher files', { skip: !native }, async t => {
   let release; const wait = new Promise(resolve => release = resolve);
@@ -619,6 +625,51 @@ test('a 301-entry import schedules every legitimate entry independently before r
   assert.equal(f.runner.status().published, false);
 });
 module.exports = { response };
+
+test('204 fresh jobs complete both real engine stages and publication with automatic finite allowance', { skip: !native }, async t => {
+  const count = 204, phases = new Map(); let peak = 0, active = 0, indexed = 0;
+  const f = await fixture(t, count, async input => {
+    active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, input.phase === 'generate' ? 2 : 4));
+    active--; phases.set(input.finding.id, [...(phases.get(input.finding.id) || []), input.phase]);
+    return response(input);
+  });
+  const originalCatalog = f.options.catalog; f.options.catalog = async () => { indexed++; return originalCatalog(); };
+  f.options.configuration = () => ({ provider: 'codex', workers: 16, providerCapacity: 16, requestLimit: 0, batchDeadlineMs: 120000 });
+  const start = performance.now(); await f.runner.ensure();
+  assert.equal(f.runner.status().ready, count); assert.equal(f.runner.state.batch.outcome, 'completed');
+  assert.equal(f.runner.state.resources.requests, count * 2); assert.equal(f.runner.state.resources.limit, count * 6);
+  assert.equal(indexed, 1); assert.ok(peak > 2 && peak <= 16);
+  assert.equal(phases.size, count); for (const value of phases.values()) assert.deepEqual(value, ['generate', 'challenge']);
+  assert.equal(Object.keys(f.runner.state.resources.receipts).length, count * 2);
+  for (const id of phases.keys()) assert.ok(f.runner.published(engine.read(f.root, id)));
+  t.diagnostic(JSON.stringify({ label: 'Controlled durations, zero external requests; not real batch latency', jobs: count, generationDelayMs: 2, challengeDelayMs: 4,
+    importAcceptedAt: f.runner.state.batch.startedAt, importToAcceptedMs: Date.parse(f.runner.state.batch.finishedAt) - Date.parse(f.runner.state.batch.startedAt),
+    localAndControlledWallMs: performance.now() - start, peakFixedInvocations: peak, catalogAcquisitions: indexed,
+    stageCounts: Object.values(f.runner.state.resources.receipts).reduce((counts, receipt) => { counts[receipt.phase] = (counts[receipt.phase] || 0) + 1; return counts; }, {}) }));
+});
+
+test('one response repair survives generation yield and cannot be purchased again during challenge', { skip: !native }, async t => {
+  const f = await fixture(t, 1, (input, calls) => calls.length === 1 || input.phase === 'challenge' ? { malformed: true } : response(input));
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, workers: 1 });
+  await f.runner.ensure();
+  assert.deepEqual(f.calls.map(call => call[1]), ['generate', 'generate', 'challenge']);
+  const saved = engine.read(f.root, 'I-1'); assert.equal(saved.checkpoint.repairUsed, true); assert.equal(saved.phase, 'blocked');
+  assert.equal(f.runner.status().ready, 0);
+  await f.runner.ensure(); assert.equal(f.calls.length, 3);
+});
+
+test('deadline includes an authorization await and persists expiry through reopening without a reservation', { skip: !native }, async t => {
+  const f = await fixture(t, 1); let release, entered;
+  const hold = new Promise(resolve => release = resolve), started = new Promise(resolve => entered = resolve);
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, batchDeadlineMs: 180 });
+  f.options.authorizeRequest = async () => { entered(); await hold; };
+  const pending = f.runner.ensure(); await started;
+  await new Promise(resolve => setTimeout(resolve, 210)); release(); await pending;
+  assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0);
+  assert.equal(f.runner.state.batch.outcome, 'deadline-exceeded'); const deadline = f.runner.state.batch.deadlineAt;
+  await f.runner.ensure({ retry: true }); assert.equal(f.calls.length, 0); assert.equal(f.runner.state.batch.deadlineAt, deadline);
+});
 
 test('case-corrected Location reaches normal import, applicability, generation and publication', { skip: !native }, async t => {
   const f = await fixture(t, 1, null, reportText(1) + '\n**Location**: Src/Gate.sol:L5\n');
@@ -712,10 +763,12 @@ test('slow work does not starve independent stages; achieved concurrency and rec
   assert.equal(Object.keys(f.runner.state.resources.receipts).length, 6);
   assert.equal(f.runner.status().published, true);
 });
-test('a large cold manifest advances both new findings and checked continuations within a small allowance', { skip: !native }, async t => {
+test('an inherited small ledger still finishes admitted continuations without spending uncheckable generations', { skip: !native }, async t => {
   const f = await fixture(t, 24);
-  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, workers: 2 });
+  f.options.configuration = () => ({ provider: 'none', requestLimit: 6, workers: 2 });
   await f.runner.ensure();
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, workers: 2 });
+  await f.runner.ensure({ retry: true });
   assert.equal(f.calls.length, 6); assert.ok(f.runner.status().ready >= 1);
   assert.ok(new Set(f.calls.map(call => call[0])).size >= 3, 'Continuations do not monopolize every worker.');
   assert.equal(f.runner.status().published, false, 'Aggregate completion is still false; independently ready findings are already readable.');

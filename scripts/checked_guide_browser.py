@@ -16,6 +16,7 @@ from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--case')
+parser.add_argument('--teaching-case', choices=['time','lifecycle','accounting'])
 parser.add_argument('--workspace')
 parser.add_argument('--report')
 parser.add_argument('--finding', default='I-01')
@@ -43,6 +44,8 @@ if args.batch:
     command += ['--quality-batch']
 if args.case:
     command += ['--quality-case', args.case]
+if args.teaching_case:
+    command += ['--teaching-fixture', args.teaching_case, '--defer-mapping']
 if args.recorded:
     command += ['--quality-responses', args.recorded]
 if args.workspace:
@@ -52,6 +55,7 @@ if args.report:
 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 result = {'boundary': 'Production code and renderer; real provider; simulated editor transport. No live Cursor UI control.', 'case': args.case, 'checks': []}
 if args.recorded: result['boundary'] = 'Production preparation and renderer with recorded fictional provider responses; exact matching source IDs translated for a new temporary project. Simulated editor transport; no fresh AI reasoning.'
+if args.teaching_case: result['boundary'] = 'Ordinary import/preparation/acceptance/native renderer; fixed local teaching responses only, zero external requests. Simulated editor IO.'
 if args.workspace and args.provider == 'none': result['boundary'] = 'Saved workspace artifact, current source checks, board controller and native renderer; provider disabled. Simulated editor transport, not actual Cursor activation/playback.'
 try:
     line = process.stdout.readline()
@@ -176,6 +180,20 @@ try:
             result['checks'].append('Real DOM clipping of the explanation pane and native code viewport is rejected; unchanged visible content passes.')
             result['coldSelectToVerifiedMs'] = (time.monotonic()-cold_select)*1000
             before_calls = len(state['providerCalls'])
+            orientation_scroll = page.evaluate('''() => {
+              const pane=document.querySelector('.guide-mechanism');
+              pane.scrollTop=Math.min(90,pane.scrollHeight-pane.clientHeight);
+              return pane.scrollTop;
+            }''')
+            if orientation_scroll and len(steps) > 1:
+                page.wait_for_timeout(40)
+                controls.get_by_role('button', name='Next step', exact=True).click()
+                verify_readable(steps[1])
+                controls.get_by_role('button', name='Previous step', exact=True).click()
+                verify_readable(steps[0])
+                page.wait_for_function('value=>document.querySelector(".guide-mechanism").scrollTop===value', arg=orientation_scroll)
+                result['checks'].append('Long first-step orientation scroll survives native Next/Previous without hiding the current operation.')
+            page.evaluate('document.querySelector(".guide-mechanism").scrollTop=0')
             for i, identity in enumerate(steps):
                 verify_readable(identity)
                 event = next(e for e in draft['causal']['events'] if e['id'] == identity)
