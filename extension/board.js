@@ -414,8 +414,11 @@ class TriageBoard {
     await this.post({ type: 'triage:investigation', issueId: model.id, token: model.token, draft: this.exposed(draft), guideAvailability: this.guideAvailability(model) });
   }
   guideAvailability(model) {
-    const draft = model.investigationDraft;
-    if (!draft?.causal?.events) return null;
+    // Layout is only a remedy for an already publishable guide. Private
+    // incomplete causal events must not cover an evidence/budget failure with
+    // "make room" or imply that their explanation has been checked.
+    const draft = this.exposed(model.investigationDraft);
+    if (draft?.phase !== 'ready' || !draft.causal?.events) return null;
     const missingSourceIds = require('./event-source').units(draft).filter(unit => {
       return ![...model.sourceById].some(([cardId, fn]) => model.expandedIds.has(cardId) && model.catalog.relative(fn.file) === unit.source.file && fn.startLine === unit.source.line);
     }).map(unit => unit.id);

@@ -493,6 +493,16 @@ function makeContext(catalog, request, issue) {
       // Mixed questions can request both local declarations and unavailable
       // deployment/specification. Supply only the local portion, without a loop.
       declarationContext(entry);
+      // Receiving definitions are not ordinary syntactic callees. An explicit
+      // question naming this exact entry contract must not get only storage
+      // declarations while its local receive/fallback remains unread. This is
+      // candidate source acquisition, never a choice of deployed receiver or
+      // proof that a self-call/transfer succeeds. Keep other contracts out.
+      if (entry.contract && new RegExp(`\\b${escaped(entry.contract)}\\b`).test(question.target)) {
+        const requested = new Set((`${question.text} ${question.why}`.match(/\b(?:receive|fallback)\b/g) || []));
+        for (const fn of catalog.functions.filter(fn => fn.file === entry.file && fn.contract === entry.contract && requested.has(fn.name)).slice(0, 2))
+          include(fn, 'Explicitly requested local receiving definition; not proof of runtime receiver identity, dispatch, self-call reachability or settlement.');
+      }
     }
     // Follow a small amount of compiler declaration context around the explicit
     // question. These excerpts are NOT a generated route or execution sequence.

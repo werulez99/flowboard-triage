@@ -179,7 +179,7 @@
     });
   });
   function preparationContent(parent) {
-    if (guideAvailability?.ready === false) {
+    if (guideAvailability?.ready === false && FlowboardWalkthrough.build(investigationDraft, report)) {
       parent.append(element('h2', '', 'Your saved board is available'), element('p', '', guideAvailability.reason || 'The walkthrough needs another function card.'),
         element('p', 'triage-muted', 'Free the requested card slots, then start the walkthrough again. Your notes, layout and checked review are preserved; this does not request another AI review.'),
         button('Explore code', () => { guideIntent = 'explore'; renderPreparation(); show('flow'); }), button('Start walkthrough', guideStart));
@@ -242,7 +242,9 @@
     parent.append(element('p', 'triage-muted', 'No generated guide has been published. Your saved notes and judgment are unchanged.'));
   }
   function renderPreparation() {
-    const waiting = !!preparing || guideIntent === 'waiting' && !!active && (sourceStale || !FlowboardWalkthrough.build(investigationDraft, report) || guideAvailability?.ready === false);
+    const prepared = FlowboardWalkthrough.build(investigationDraft, report);
+    const cardBlocked = !!prepared && guideAvailability?.ready === false;
+    const waiting = !!preparing || guideIntent === 'waiting' && !!active && (sourceStale || !prepared || cardBlocked);
     preparationSurface.hidden = !waiting; document.body.classList.toggle('guide-preparing', waiting);
     const scroll = preparationSurface.scrollTop;
     const openDetails = [...preparationSurface.querySelectorAll('details')].map(node => node.open);
@@ -250,7 +252,7 @@
     if (waiting) {
       const progress = reportPreparation, state = preparationState || investigationDraft?.preparation;
       const job = preparationJob(active);
-      const title = preparing ? 'Opening finding' : guideAvailability?.ready === false ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
+      const title = preparing ? 'Opening finding' : cardBlocked ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
       const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
       row.append(heading, expand);
@@ -261,7 +263,7 @@
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
       const stopped = progress?.stopped?.find(job => job.id === active);
-      const reason = guideAvailability?.ready === false ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
+      const reason = cardBlocked ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
       appendAdmission(preparationSurface);
       if (preparationExpanded && !preparing) {

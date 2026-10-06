@@ -149,6 +149,27 @@ test('a mixed missing-context request supplies the available local part without 
   assert.ok(added.some(unit => unit.code.includes('mapping(uint256 => address) public owner;')));
   assert.ok(added.every(unit => unit.contextKind === 'state'));
 });
+test('an explicitly scoped receiving question supplies local receive/fallback without inventing a runtime receiver', { skip: !native }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-receiving-context-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.writeFileSync(path.join(root, 'src/Vault.sol'), 'pragma solidity ^0.8.20;\ncontract Vault {\n uint256 public total;\n function credit() external payable { total += msg.value; }\n receive() external payable {}\n fallback() external payable { revert(); }\n}\ncontract Other { receive() external payable {} }\n');
+  const indexed = await analyze(native, root), catalog = new SourceCatalog(root, indexed.runner, indexed.result);
+  const request = { findingId: 'I-01', finding: { title: 'Vault.credit records an amount', summary: 'Check the stored amount.' }, cards: [{ file: 'src/Vault.sol', line: 4, function: 'credit' }] };
+  const review = engine.makeContext(catalog, request), entry = review.units.find(unit => unit.name === 'Vault::credit');
+  const question = { id: 'q', claimId: 'c', action: 'missing-context', target: 'Vault receiving and self-call paths', text: 'Supply receive or fallback code and the actual configured receiver.', why: 'Local code and deployment identity are separate evidence.' };
+  const action = review.act(question, { entry: entry.id });
+  const supplied = review.units.filter(unit => action.sourceIds.includes(unit.id));
+  assert.deepEqual(supplied.filter(unit => /::(?:receive|fallback)$/.test(unit.name)).map(unit => unit.name).sort(), ['Vault::fallback', 'Vault::receive']);
+  assert.ok(supplied.every(unit => unit.contract === 'Vault'));
+  assert.match(supplied.find(unit => unit.name === 'Vault::receive').reason, /not.*runtime/i);
+  const packet = engine.modelSources(supplied);
+  assert.ok(packet.some(unit => unit.name === 'Vault::fallback' && unit.code.includes('revert();')));
+  assert.equal(review.act(question, { entry: entry.id }).outcome, 'context-already-available');
+  for (const target of ['Unobserved receiver', 'Other receiving paths']) {
+    const unrelated = review.act({ ...question, target }, { entry: entry.id });
+    assert.ok(!unrelated.sourceIds.some(id => /::(?:receive|fallback)$/.test(review.units.find(unit => unit.id === id)?.name)));
+  }
+});
 test('old citation remains saved while Read code recommends the explicitly named current function', { skip: !native }, async t => {
   const { catalog, request, issue } = await context(t, 'd5');
   assert.equal(request.cards[0].line, 10);

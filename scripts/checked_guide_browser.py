@@ -467,6 +467,11 @@ try:
             assert page.locator('.guide-controls:visible').count() == 0
             assert page.locator('.guide-preparation:visible').count() == 1
             assert page.locator('.guide-annotation:visible').count() == 0
+            status_text = page.locator('.guide-preparation').inner_text()
+            assert 'Make room for the walkthrough' not in status_text, 'Unpublished analysis is not a card-capacity failure.'
+            selected_job = next((j for j in (state.get('reportPreparation') or {}).get('jobs', []) if j['id'] == args.finding), None)
+            if selected_job and selected_job.get('reason'):
+                assert selected_job['reason'] in status_text
             result['checks'].append('Incomplete explanation is withheld, with an explicit preparation status.')
         result['pageErrors'] = errors
         assert not errors, errors

@@ -77,6 +77,20 @@ test('actual preparation renderer retains selected job reason and shows current 
   assert.equal(surface.hidden, true, 'An independent ready walkthrough is not covered by the local refusal.');
   context.active = 'B'; context.reportPreparation.admission = null; context.FlowboardWalkthrough.build = () => null;
   vm.runInNewContext('renderPreparation()', context); assert.ok(flat(surface).some(n => n.text === 'Continue this finding'));
+  context.guideAvailability = { ready: false, reason: 'The walkthrough needs one missing function card.' };
+  vm.runInNewContext('renderPreparation()', context);
+  const refused = flat(surface).map(n => n.text).join('\n');
+  assert.match(refused, /Finding request allowance exhausted/);
+  assert.doesNotMatch(refused, /Make room|Free the requested card slots|missing function card/,
+    'A stale capacity hint must not cover the current unpublished analysis state.');
+});
+
+test('unpublished causal content cannot issue a checked-guide card-capacity hint', () => {
+  for (const phase of ['blocked', 'challenging', 'ready']) {
+    const model = { investigationDraft: { phase, causal: { events: [] }, sources: [], evidence: [], runs: [], actions: [] } };
+    assert.equal(TriageBoard.prototype.guideAvailability(model), null,
+      `${phase}: without a current publishable explanation, no layout remedy is claimed.`);
+  }
 });
 
 test('rematerialized guide card with a reused ID regains readable focus, ordinary same-card delivery preserves camera', () => {
@@ -136,10 +150,13 @@ test('guide capacity reports the complete missing-card deficit, not just whether
   const model = { investigationDraft:{sources:units,evidence:units.map(unit => ({id:`e${unit.id}`,sourceId:unit.id})),
     causal:{events:units.map(unit => ({evidenceId:`e${unit.id}`}))}},
     sourceById:new Map([['known',{file:'src/F1.sol',startLine:10}]]), expandedIds:new Set(['known',...Array.from({length:198},(_,i)=>`exploration${i}`)]), catalog:{relative:file=>file} };
-  let result = TriageBoard.prototype.guideAvailability(model);
+  // Isolate layout accounting after exposure. Real accepted/stale exposure is
+  // exercised by the host controls; these deliberately tiny units are not a guide.
+  const board = { exposed: () => ({ ...model.investigationDraft, phase: 'ready' }) };
+  let result = TriageBoard.prototype.guideAvailability.call(board, model);
   assert.deepEqual(result.missingSourceIds,['s2','s3']); assert.equal(result.deficit,1);
   assert.match(result.reason,/Remove 1 exploration card/);
-  model.expandedIds.delete('exploration0'); result = TriageBoard.prototype.guideAvailability(model);
+  model.expandedIds.delete('exploration0'); result = TriageBoard.prototype.guideAvailability.call(board, model);
   assert.equal(result.deficit,0); assert.match(result.reason,/Start it to open/);
   assert.equal(result.ready,false,'Room for missing cards does not claim they have already been rendered.');
 });
