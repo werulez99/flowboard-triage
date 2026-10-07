@@ -120,6 +120,38 @@ test('source changes and finding switches suppress late generated evidence, incl
     assert.equal(saved.runs.length, 0);
   }
 });
+test('cross-claim references are rejected precisely without filtering the answer or buying a rewrite', {skip:!native}, async t=>{
+  const f=await fixture(t);let calls=0,original;
+  const result=await engine.advance({...f,provider:'codex',publish:async()=>{},invoke:async input=>{
+    calls++;const value=response(input);value.claims.push({...structuredClone(value.claims[0]),id:'second-claim'});original=structuredClone(value);
+    return {value,audit:{phase:'generate',outcome:'completed'}};
+  }});
+  assert.equal(calls,1);assert.equal(result.failureCode,'REVIEW_REFERENCE_SCOPE');
+  assert.match(result.error,/second-claim.*addition.*normal-counter/);
+  assert.deepEqual(result.lastRejected.output,original);assert.ok(result.pendingResponse);assert.equal(result.claims.length,0);
+  const reopened=engine.read(f.root,f.findingId);assert.equal(reopened.lastRejected.output.claims[1].evidence[0],'addition');
+  await engine.advance({...f,draft:reopened,provider:'none',localOnly:true,publish:async()=>{},invoke:()=>assert.fail('Local rejection recovery cannot dispatch')});
+  assert.equal(reopened.failureCode,'REVIEW_REFERENCE_SCOPE');assert.equal(reopened.phase,'blocked');
+  assert.equal(reopened.claims.length,0);assert.equal(calls,1);
+});
+test('paid generation recovery retains test constants from its exact packet before any claim was accepted', {skip:!native}, async t=>{
+  const f=await fixture(t);fs.mkdirSync(path.join(f.root,'test'),{recursive:true});
+  fs.writeFileSync(path.join(f.root,'test/Rule.sol'),'pragma solidity ^0.8.20;\ncontract Rule {\n uint256 constant LIMIT = 1;\n function rule() external pure returns(uint256) { return LIMIT; }\n}\n');
+  const indexed=await analyze(native,f.root,{mode:'source'});f.catalog=new SourceCatalog(f.root,indexed.runner,indexed.result);
+  f.request.cards.push({file:'test/Rule.sol',line:4,function:'rule',mapping:{method:'citation'}});
+  f.draft=engine.create({findingId:f.findingId,request:f.request,catalog:f.catalog});let calls=0,interrupted=false,constantId;
+  await engine.advance({...f,provider:'codex',publish:async draft=>{if(draft.pendingResponse&&!interrupted){interrupted=true;throw Error('Controlled host interruption after paid checkpoint');}},invoke:async input=>{
+    calls++;const constant=input.sources.find(s=>s.name==='Rule::LIMIT (state)');assert.ok(constant);constantId=constant.id;
+    const value=response(input);value.evidence.push({id:'rule-constant',claimId:'',sourceId:constant.id,line:constant.line,endLine:constant.endLine,
+      quote:constant.code.split('\n').map(line=>line.replace(/^\d+ \| /,'')).join('\n'),stance:'context',explanation:'This test definition declares the symbolic limit as one; source context, not an executed test.'});
+    value.claims[0].evidence.push('rule-constant');return {value,audit:{phase:'generate',outcome:'completed'}};
+  }});
+  const saved=engine.read(f.root,f.findingId);assert.ok(saved.pendingResponse);assert.equal(saved.claims.length,0);
+  const recovered=await engine.advance({...f,draft:saved,provider:'none',localOnly:true,yieldAfterStage:true,publish:async()=>{},invoke:()=>assert.fail('Paid recovery is local')});
+  assert.equal(recovered.checkpoint.stage,'challenge');assert.equal(recovered.runs.at(-1).resultAccepted,true);
+  assert.equal(recovered.evidence.find(e=>e.id==='rule-constant').sourceId,constantId);
+  assert.ok(recovered.sources.some(s=>s.id===constantId));assert.equal(calls,1);
+});
 test('provider failure preserves preparation and a partial draft; never becomes a completed pass', { skip: !native }, async t => {
   const context = await fixture(t);
   const result = await engine.advance({ ...context, provider: 'codex', publish: async () => {}, invoke: async () => { throw new Error('Authentication expired'); } });

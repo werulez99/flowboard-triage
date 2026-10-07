@@ -605,14 +605,14 @@ function makeContext(catalog, request, issue) {
       result: omittedLocal.length ? `Available locally but not read within this review's limit: ${omittedLocal.join('; ')}. ${added.length} additional excerpts were read.` : added.length ? `${added.length} additional code excerpts obtained for the second pass.` : matched.size ? 'Matching local code is already available at these links. Missing deployment or specification facts are not answered by this match.' : 'This check found no additional code. It does not establish that no other route exists.',
       bounded: { sourceLimit: 40, currentSources: units.length, remainingCodeCharacters: budget } };
   };
-  const restore = (saved, draft) => {
+  const restore = (saved, draft, { exactResponse = false } = {}) => {
     const relevantTests = new Set(units.filter(unit => unit.kind === 'test-source').map(unit => unit.id));
     const required = new Set([...(draft?.evidence || []).map(entry => entry.sourceId), ...(draft?.claims || []).map(claim => claim.entry),
       ...(draft?.actions || []).filter(action => ['inspect','callers','symbol','references','code-completion'].includes(action.kind)).flatMap(action => action.sourceIds)]);
     units.length = 0; functions.clear(); unread.clear(); budget = 110000; sourceLimit = 40;
     const restoredIds = new Set();
     for (const unit of saved) {
-      if (unit.kind === 'test-source' && !relevantTests.has(unit.id) && !required.has(unit.id)) continue;
+      if (!exactResponse && unit.kind === 'test-source' && !relevantTests.has(unit.id) && !required.has(unit.id)) continue;
       const fn = catalog.resolveUnit(unit), id = add(fn, unit.reason);
       let restored = units.find(value => value.id === id);
       if (!restored || restored.code !== unit.code || restored.source.sourceHash !== unit.source.sourceHash) throw new Error('A saved review stage no longer matches the current code. It must be prepared again.');
@@ -707,7 +707,14 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
       basis: unit.kind === 'test-source' ? 'test-reference' : 'inference' };
   });
   for (const claim of claims) {
-    claim.evidence = claim.evidence.filter(id => evidence.some(item => item.id === id && (!item.claimId || item.claimId === claim.id)));
+    for (const id of claim.evidence) {
+      const item=evidence.find(item=>item.id===id);
+      if (!item || item.claimId && item.claimId!==claim.id) {
+        const message=`Claim ${claim.id} references evidence ${id}, ${item ? `assigned to ${item.claimId}, not this claim or explicit shared context` : 'which is not present in the response'}. The unchanged answer is retained; no reference was removed or reassigned.`;
+        throw Object.assign(new Error(message),{code:'REVIEW_REFERENCE_SCOPE',validationProblems:[{code:'REVIEW_REFERENCE_SCOPE',target:claim.id,evidenceId:id,message,
+          action:'A semantic revision must justify the evidence scope. Do not silently drop the reference, reassign its claim, or treat this answer as checked.'}]});
+      }
+    }
     const entries = evidence.filter(item => claim.evidence.includes(item.id));
     if (claim.status !== 'unresolved' && (!entries.length || !claim.reason || !claim.implementation || !claim.conditions.length)) {
       claim.status = 'unresolved'; claim.unknowns.push('The proposed assessment lacked scoped conditions, explanation, or claim-linked source evidence.');
@@ -996,7 +1003,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           }
           const recoveredUnits = cached.units.map(unit => ({ ...unit,
             code: catalog.document(unit.source.file).lines.slice(unit.source.line - 1, unit.source.endLine).join('\n') }));
-          context.restore(recoveredUnits, draft); data = cached.input;
+          // A received response must be validated against ALL of its exact
+          // saved source units, including test constants introduced by prime.
+          // Discovery relevance is for a new packet, not paid-response replay.
+          context.restore(recoveredUnits, draft, { exactResponse: true }); data = cached.input;
           return { ...cached.result, audit: { ...cached.result.audit, reusedResponse: true } };
         }
         // Recovery is unpaid local validation, not authority to obtain a new
@@ -1015,8 +1025,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
             onProcessStart: details => release.attachProcess?.(details) });
           terminalAudit = result.audit || {};
-          await onResult?.(terminalAudit, reservation);
-          ensure();
+          let retainedResponse;
           if (persist) {
             // Keep the previous accepted argument and its source store intact
             // until the replacement is accepted. Recovery records exact unit
@@ -1024,9 +1033,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
             // a bounded model excerpt never becomes the canonical function.
             const units = context.units.map(({ id, name, signature, kind, contextKind, source, readThrough, reason, complete }) =>
               ({ id, name, signature, kind, contextKind, source, readThrough, reason, complete }));
-            draft.pendingResponse = checkpoint.save(root, findingId, { input, result, units, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel });
-            await save();
+            retainedResponse = checkpoint.save(root, findingId, { input, result, units, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel }, { retain: !!signal?.aborted || !current() });
+            terminalAudit.retainedResponse=retainedResponse;
           }
+          await onResult?.(terminalAudit, reservation);
+          ensure();
+          if(retainedResponse){draft.pendingResponse=retainedResponse;await save();}
           if (transport) try { await health.record(provider, terminalAudit, healthOptions); }
           catch (error) {
             // Health bookkeeping is secondary to a completed response. Keep
@@ -1122,9 +1134,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       let accepted;
       try { accepted = validate(response.value); }
       catch (error) {
-        if(['REVIEW_CONTENT_BOUND','REVIEW_CONTENT_MISMATCH'].includes(error.code)) {
-          // Host representation failure is not a reason to buy a rewrite.
-          // Keep the exact paid pending response for local diagnosis/replay.
+        if(['REVIEW_CONTENT_BOUND','REVIEW_CONTENT_MISMATCH','REVIEW_REFERENCE_SCOPE'].includes(error.code)) {
+          // Preserve an unrepresentable answer or invalid claim reference;
+          // do not silently change meaning or buy an automatic rewrite.
           draft.lastRejected={phase,inputHash:response.audit?.inputHash,at:now(),error:error.message,output:response.value};
           throw error;
         }

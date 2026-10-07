@@ -143,11 +143,13 @@ test('human correction of a saved private candidate remains readable and cannot 
   const f=await fixture(t);await generation(f);
   await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed'}})});
   const old=structuredClone(f.draft.reviewCandidate);
-  const model={id:f.findingId,investigationDraft:f.draft};let invalidated=0;
-  const board={root:f.root,callbacks:{reportPreparation:()=>({invalidate:()=>invalidated++,loop:Promise.resolve(),ensure:()=>assert.fail('Correction is not request authority')})},
+  const model={id:f.findingId,investigationDraft:f.draft};
+  const coordinator=new(require('../extension/report-preparation').ReportPreparation)(f.root,{configuration:()=>({provider:'none'}),catalog:async()=>f.catalog});
+  await coordinator.ensure();t.after(()=>coordinator.dispose());
+  const board={root:f.root,callbacks:{reportPreparation:()=>coordinator},
     investigationCurrent:()=>true,publishInvestigation:async(_model,draft)=>{f.draft=draft;},startInvestigation:()=>assert.fail('Correction cannot launch a request')};
   await require('../extension/board').TriageBoard.prototype.correctInvestigation.call(board,model,{revision:f.draft.revision,change:{claimId:'c1',field:'conditions',value:'The reported path uses approved=false only.',reason:'Retain the scoped condition.'}});
-  assert.equal(invalidated,1);
+  assert.equal(coordinator.state.jobs[f.findingId].correctionHold.state,'applied');
   const reopened=engine.read(f.root,f.findingId);assert.equal(reopened.phase,'corrected');assert.equal(reopened.reviewCandidate,undefined);
   assert.equal(reopened.invalidatedCandidates.at(-1).candidate.candidateHash,old.candidateHash);assert.equal(reopened.corrections.at(-1).value,'The reported path uses approved=false only.');
   assert.equal(policy.gate(reopened).ready,false);assert.equal(reopened.candidateVerification,undefined);

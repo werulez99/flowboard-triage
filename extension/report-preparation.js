@@ -69,6 +69,77 @@ class ReportPreparation {
     if (typeof id !== 'string' || id === this.preferredFinding) return;
     this.preferredFinding = id; this.priorityStages = 2;
   }
+  holdCorrection(id, expected, change) {
+    // Synchronous, owned and durable BEFORE cancellation or any await. Only
+    // this finding is withheld; queues, receipts and sibling owners survive.
+    p.identifier(id, 'correction finding ID');
+    engine.correct(structuredClone(expected), change); // validate without changing the saved argument
+    const temporary = !this.locked;
+    if (temporary) this.lock();
+    try {
+      if (!this.ownsLock()) throw new Error('Report ownership changed before the correction hold.');
+      const latest = p.readWorkspaceJson(this.root, FILE, 8 * 1024 * 1024);
+      if (this.state && this.savedJournalHash && hash(latest) !== this.savedJournalHash) throw new Error('The report journal advanced in another host. Reopen before correcting.');
+      this.state ||= latest; this.savedJournalHash = hash(latest);
+      const job = this.state.jobs[id]; if (!job) throw new Error('The corrected finding is no longer in this report.');
+      if (job.correctionHold && job.correctionHold.state !== 'applied') {
+        if (hash(job.correctionHold.change) !== hash(change)) throw new Error('A previous correction is safely held. Resolve it before submitting a different correction.');
+        return job.correctionHold;
+      }
+      const intent = { id: crypto.randomUUID(), state: 'pending', at: now(), expectedRevision: expected.revision,
+        snapshotHash: hash(expected.snapshot), correctionsHash: hash(expected.corrections), semanticInputHash: hash(expected.semanticInput || null),
+        claim: change.claimId ? expected.claims.filter(c => c.id === change.claimId).map(c => [c.id,c.allegation]) : expected.claims.map(c => [c.id,c.allegation]),
+        change: structuredClone(change), reservationId: this.tasks.has(id) ? job.lastReservation?.id || null : null };
+      if(job.correctionHold){job.correctionHistory ||= [];job.correctionHistory.push(job.correctionHold);}
+      this.pendingFindings.delete(id); this.admitting.delete(id); this.localEligible.delete(id); this.accepted.delete(id);
+      Object.assign(job, { correctionHold: intent, state: 'paused', publishable: false, accepted: null, digest: null,
+        reason: 'Researcher correction saved as an intent. Only this finding is held while its owned work settles.' });
+      this.save();
+      if (p.readWorkspaceJson(this.root,FILE,8*1024*1024).jobs[id]?.correctionHold?.id !== intent.id) throw new Error('The correction hold could not be persisted. No replacement review is permitted.');
+      this.tasks.get(id)?.abort.abort();
+      return intent;
+    } finally { if (temporary) this.unlock(); }
+  }
+  async settleCorrection(id) {
+    const task = this.tasks.get(id);
+    if (task) {
+      let timer;
+      const settled = await Promise.race([task.settled.then(()=>true),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),12000);})]);
+      clearTimeout(timer);
+      if (!settled) throw new Error('Correction intent is saved; this finding remains held because its owned work has not settled. Siblings may continue.');
+    }
+    const temporary = !this.locked; if (temporary) this.lock();
+    try {
+      if (!this.ownsLock()) throw new Error('Correction intent retained; report ownership changed before settlement.');
+      const latest = p.readWorkspaceJson(this.root,FILE,8*1024*1024);
+      if (hash(latest)!==this.savedJournalHash) throw new Error('Correction intent retained; another owner changed the report journal. Reopen it.');
+      const job=this.state.jobs[id],intent=job?.correctionHold;
+      if (!intent) throw new Error('No saved correction intent for this finding.');
+      const receipt=intent.reservationId && this.state.resources.receipts[intent.reservationId];
+      if (intent.reservationId && (!receipt?.finishedAt || receipt.audit?.teardown?.confirmed===false ||
+          (!this.options.invoke || this.options.invoke.isProviderTransport) && receipt.audit?.teardown?.confirmed!==true)) {
+        const cleanup=receipt?.audit?.teardown;
+        if (!cleanup || cleanup.unverifiedDescendants || cleanup.streamsClosed===false || !require('./provider-process').processGroup(cleanup).confirmed) {
+          job.reason='Correction intent retained; owned-process cleanup is unconfirmed. This finding remains held, not requeued.';this.save();
+          throw new Error(job.reason);
+        }
+      }
+      const draft=engine.read(this.root,id);
+      if (!draft) throw new Error('Correction intent retained; the saved argument is unavailable.');
+      if (!draft.corrections.some(c=>c.intentId===intent.id)) {
+        if (draft.recoveryRequired || hash(draft.snapshot)!==intent.snapshotHash || hash(draft.corrections)!==intent.correctionsHash ||
+            hash(draft.semanticInput||null)!==intent.semanticInputHash || draft.revision<intent.expectedRevision ||
+            intent.claim.some(([key,allegation])=>!draft.claims.some(c=>c.id===key && c.allegation===allegation)))
+          throw new Error('Correction intent retained; source, premises or claim scope changed. Inspect the advanced draft before reconciling this correction.');
+        const correction=engine.correct(draft,intent.change);correction.intentId=intent.id;
+        engine.write(this.root,draft);
+      }
+      Object.assign(intent,{state:'applied',appliedAt:intent.appliedAt||now(),appliedRevision:draft.revision});
+      Object.assign(job,{state:'paused',stage:'corrected',checkpoint:draft.checkpoint||null,revision:draft.revision,
+        reason:'Researcher correction saved. Continue this finding explicitly to reassess the new premises; no request was started.'});
+      this.save(); return draft;
+    } finally { if (temporary) this.unlock(); }
+  }
   notifyStatus() {
     if (this.disposed || this.statusNotification) return;
     this.statusNotification = true;
@@ -128,6 +199,7 @@ class ReportPreparation {
       at: this.state.publication?.at || now(), artifacts: Object.fromEntries(jobs.map(job => [job.id, this.accepted.get(job.id).digest])) } : null;
   }
   accept(entry, draft, job) {
+    if (job.correctionHold) return;
     if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); return; }
     const digest = policy.digest(draft), at = job.accepted?.digest === digest ? job.accepted.at : now();
     const accepted = { digest, at, policy: policy.POLICY, project: this.state.project, findingHash: entryHash(entry),
@@ -136,7 +208,7 @@ class ReportPreparation {
       findingHash: entryHash(entry), accepted, publishedAt: at, reason: '', failureKind: null, missingInputs: [], validationProblems: [] });
     this.accepted.set(entry.id, accepted);
   }
-  artifact(id) { return this.options.dirty?.(id) ? null : this.accepted.get(id)?.digest || null; }
+  artifact(id) { return this.state?.jobs[id]?.correctionHold || this.options.dirty?.(id) ? null : this.accepted.get(id)?.digest || null; }
   recordFailure(job, error) {
     this.accepted.delete(job.id);
     Object.assign(job, { state: 'failed', publishable: false, accepted: null, digest: null,
@@ -301,6 +373,10 @@ class ReportPreparation {
     // changes, imported report text, local documentation and configuration.
     for (const entry of entries) {
       const job = this.state.jobs[entry.id];
+      if (job.correctionHold) {
+        try { await this.settleCorrection(entry.id); } catch(error) { job.state='paused';job.reason=error.message;this.save(); }
+        continue;
+      }
       if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); continue; }
       try {
       const saved = engine.read(this.root, entry.id);
@@ -338,6 +414,7 @@ class ReportPreparation {
         const entry = entries.find(item => item.id === id), job = this.state.jobs[id];
         if (!entry || !job) { this.options.log?.('Selected continuation was discarded because its finding left the report.'); continue; }
         if (job.publishable || this.tasks.has(id)) continue;
+        if (job.correctionHold && job.correctionHold.state!=='applied') { job.reason='Saved correction is still held. Settle or reconcile it before continuing.';this.save();continue; }
         if (this.options.phaseRemaining?.(id) === false) { job.reason = 'The explicitly authorized evaluation phases are exhausted. Retained work is unchanged; no further request is permitted.'; this.save(); continue; }
         const remaining = this.state.resources.limit - this.state.resources.requests;
         if (remaining <= 0) {
@@ -358,6 +435,7 @@ class ReportPreparation {
         // Only an exhausted selected-finding allowance can be renewed, bounded
         // by already authorized shared capacity. Sibling limits never change.
         if (job.requests >= job.requestLimit) job.requestLimit = job.requests + Math.min(available, config.findingRequestLimit || 6);
+        if(job.correctionHold) { job.correctionHistory ||= [];job.correctionHistory.push(job.correctionHold);delete job.correctionHold; }
         job.state = 'queued'; job.reason = ''; job.providerFailures = 0;
         this.localEligible.add(id); admitted.push(entry); this.save();
       }
@@ -372,7 +450,7 @@ class ReportPreparation {
     this.save();
     const priority = (this.options.firstFinding || '').split(',').filter(Boolean);
     const ordered = priority.length ? [...priority.flatMap(id => entries.filter(entry => entry.id === id)), ...entries.filter(entry => !priority.includes(entry.id))] : entries;
-    const allowed = id => this.state.mode === 'running' || this.localEligible.has(id);
+    const allowed = id => !this.state.jobs[id]?.correctionHold && (this.state.mode === 'running' || this.localEligible.has(id));
     const queue = ordered.filter(entry => allowed(entry.id) && ['queued', 'retry-scheduled'].includes(this.state.jobs[entry.id].state));
     this.state.plan = batch.plan(queue.map(entry => this.state.jobs[entry.id]), this.state.resources, concurrency, config.providerCapacity);
     if (!old && this.state.resources.allowanceMode === 'automatic') this.state.resources.limit = this.state.plan.maximumRequests;
@@ -498,6 +576,7 @@ class ReportPreparation {
     this.save();
   }
   async work(entry, catalog, report, job, epoch, config, localOnly = false) {
+    if (job.correctionHold) return;
     if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); this.save(); return; }
     const issue = this.issue(entry), request = this.request(entry, catalog, report);
     const fresh = engine.create({ findingId: entry.id, request, issue, catalog });
@@ -510,13 +589,13 @@ class ReportPreparation {
       this.accepted.delete(entry.id); this.recoveryStatus(job, draft); this.save(); return;
     }
     if (checked(draft)) { engine.validateCurrent(catalog, draft); this.accept(entry, draft, job); this.save(); return; }
-    const abort = new AbortController(); this.active = { abort, id: entry.id }; this.tasks.set(entry.id, this.active);
+    let settled;const abort = new AbortController(); this.active = { abort, id: entry.id, settled:new Promise(resolve=>settled=resolve) }; this.tasks.set(entry.id, this.active);
     const attemptId = crypto.randomUUID();
     Object.assign(job, { state: 'running', stage: draft.checkpoint?.stage || 'locating-code', progress: null,
       attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
     const current = () => {
-      if (this.disposed || (!localOnly && this.expired()) || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
+      if (this.disposed || job.correctionHold || (!localOnly && this.expired()) || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
       try {
         return p.readWorkspaceJson(this.root, '.flowboard/report.json', 12 * 1024 * 1024).reportHash === report.reportHash &&
           engine.findingInputHash(this.request(entry, catalog, report), issue) === fresh.snapshot.reportHash;
@@ -618,6 +697,7 @@ class ReportPreparation {
       }
       if (this.tasks.get(entry.id)?.abort === abort) this.tasks.delete(entry.id);
       if (this.active?.id === entry.id) this.active = this.tasks.values().next().value || null;
+      settled();
     }
   }
   published(draft) { return !!draft && this.artifact(draft.findingId) === policy.digest(draft) && checked(draft); }

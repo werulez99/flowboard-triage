@@ -56,6 +56,105 @@ function checkedCandidate(input) {
   value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The full supplied false guard provides the requested source behavior while preserving the original allegation and condition.',evidence:['guard'],documentation:[]})));
   return value;
 }
+const deferred=()=>{let resolve;return {promise:new Promise(r=>resolve=r),resolve:(...args)=>resolve(...args)};};
+async function seedCorrectionRace(t) {
+  const f=await fixture(t,2);f.options.configuration=()=>({provider:'codex',workers:1,requestLimit:12,findingRequestLimit:6});
+  f.runner.prioritize('I-1');
+  f.options.invoke=async input=>{
+    f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
+    let value=response(input);
+    if(input.phase==='generate')value.questions=[{id:'guard-question',claimId:'c1',text:'Interpret the local guard.',action:'inspect',target:value.evidence[0].sourceId,why:'The guard is decisive.'}];
+    if(input.candidateOnly){value=candidatePatch(response({...input,checkOnly:false}));f.runner.control('pause');}
+    return {value,audit:{phase:input.phase,outcome:'completed'}};
+  };
+  await f.runner.continueFinding('I-1');
+  assert.equal(engine.read(f.root,'I-1').reviewCandidate.state,'awaiting-verification');
+  assert.equal(f.calls.length,2);return f;
+}
+function correctThroughBoard(f) {
+  const model={id:'I-1',investigationDraft:engine.read(f.root,'I-1')};
+  const board={root:f.root,callbacks:{reportPreparation:()=>f.runner},investigationCurrent:()=>true,publishInvestigation:async(m,d)=>m.investigationDraft=d};
+  return require('../extension/board').TriageBoard.prototype.correctInvestigation.call(board,model,{revision:model.investigationDraft.revision,
+    change:{claimId:'c1',field:'conditions',value:'Only accepted=false is the reported path.',reason:'Keep the reported condition explicit.'}});
+}
+test('active batch saves a queued finding correction before its held sibling settles and only explicit continuation sees new premises',{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t),entered=deferred(),held=deferred();
+  f.options.invoke=async input=>{f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);if(input.finding.id==='I-2'&&input.phase==='generate'){entered.resolve();await held.promise;}return{value:response(input),audit:{phase:input.phase,outcome:'completed'}};};
+  f.runner.prioritize('I-2');const running=f.runner.control('resume');await entered.promise;
+  try {
+    await Promise.race([correctThroughBoard(f),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('Correction waited for sibling loop')),2000);timer.unref();})]);
+    const saved=engine.read(f.root,'I-1'),journal=p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024);
+    assert.equal(saved.phase,'corrected');assert.equal(saved.corrections.length,1);assert.equal(saved.reviewCandidate,undefined);
+    assert.equal(journal.jobs['I-1'].correctionHold.state,'applied');assert.equal(journal.jobs['I-1'].requests,2);
+    assert.equal(journal.jobs['I-2'].requests,1);assert.equal(f.runner.tasks.get('I-2').abort.signal.aborted,false);
+  } finally {held.resolve();await running;}
+  assert.equal(f.calls.filter(c=>c[0]==='I-1').length,2);assert.ok(f.runner.artifact('I-2'));
+  f.runner.dispose();await f.runner.loop;
+  f.runner=new ReportPreparation(f.root,{...f.options,configuration:()=>({provider:'none'}),invoke:()=>assert.fail('Reopen is local')});
+  t.after(()=>f.runner.dispose());await f.runner.ensure();assert.equal(engine.read(f.root,'I-1').corrections.length,1);assert.ok(f.runner.artifact('I-2'));
+  assert.equal(engine.read(f.root,'I-1').phase,'corrected');
+  let seen;const seenStages=[];
+  f.runner.options.configuration=()=>({provider:'codex',requestLimit:12});
+  f.runner.options.invoke=async input=>{seen=input;seenStages.push([input.phase,input.reviewPurpose]);throw Object.assign(Error('Controlled stop after explicit continuation capture'),{code:'REPORT_PAUSED'});};
+  await f.runner.continueFinding('I-1');assert.deepEqual(seenStages,[['challenge','candidate-completion']]);
+  assert.ok(JSON.stringify(seen).includes('Only accepted=false is the reported path.'));assert.equal(f.runner.state.jobs['I-1'].requests,3);
+});
+test('active finding correction retains a late answer without approving it and leaves unconfirmed cleanup held',{skip:!native},async t=>{
+  for(const cleanup of [true,false]){
+    const f=await seedCorrectionRace(t),entered=deferred(),held=deferred();
+    f.options.invoke=async(input,options)=>{
+      f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
+      if(input.finding.id==='I-1'){entered.resolve();await held.promise;assert.equal(options.signal.aborted,true);return {value:checkedCandidate(input),audit:{phase:'challenge',requestId:options.requestId,outcome:'completed',teardown:{confirmed:cleanup}}};}
+      return {value:response(input),audit:{phase:input.phase,outcome:'completed'}};
+    };
+    const running=f.runner.continueFinding('I-1');await entered.promise;
+    const correction=correctThroughBoard(f);
+    assert.equal(p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024).jobs['I-1'].correctionHold.state,'pending');
+    held.resolve();
+    if(cleanup)await correction;else await assert.rejects(correction,/cleanup is unconfirmed/);
+    await running;
+    const job=f.runner.state.jobs['I-1'],receipt=f.runner.state.resources.receipts[job.correctionHold.reservationId];
+    assert.equal(job.requests,3);assert.ok(receipt.audit.retainedResponse);assert.equal(f.runner.artifact('I-1'),null);
+    const retained=receipt.audit.retainedResponse,archived=fs.readFileSync(path.join(f.root,retained.archive),'utf8');
+    assert.equal(JSON.parse(archived).hash,retained.hash);
+    require('../extension/provider-result').save(f.root,'I-1',{input:{phase:'generate'},result:{value:{later:true}},units:[],snapshot:{},corrections:[],previous:null});
+    assert.equal(fs.readFileSync(path.join(f.root,retained.archive),'utf8'),archived,'A later response checkpoint cannot erase this superseded paid answer.');
+    const saved=engine.read(f.root,'I-1');assert.equal(policy.gate(saved).ready,false);
+    assert.equal(saved.corrections.length,cleanup?1:0);assert.equal(job.correctionHold.state,cleanup?'applied':'pending');
+    if(!cleanup){await f.runner.continueFinding('I-1');assert.equal(job.requests,3);assert.equal(job.correctionHold.state,'pending');}
+  }
+});
+test('a durable correction intent survives host reload and settles locally without reserving a request',{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t),draft=engine.read(f.root,'I-1');
+  f.runner.holdCorrection('I-1',draft,{claimId:'c1',field:'conditions',value:'The false input is the sole reported condition.',reason:'Saved before host shutdown.'});
+  assert.equal(engine.read(f.root,'I-1').corrections.length,0);
+  f.runner.dispose();await f.runner.loop;
+  f.runner=new ReportPreparation(f.root,{...f.options,configuration:()=>({provider:'none'}),invoke:()=>assert.fail('Recovery must not invoke a provider')});
+  t.after(()=>f.runner.dispose());await f.runner.ensure();
+  const recovered=engine.read(f.root,'I-1');
+  assert.equal(recovered.corrections.length,1);assert.equal(recovered.corrections[0].value,'The false input is the sole reported condition.');
+  assert.equal(recovered.claims[0].conditions[0],'accepted is false');assert.equal(recovered.claims[0].needsReassessment,true);
+  assert.equal(recovered.reviewCandidate,undefined);assert.equal(f.runner.state.jobs['I-1'].correctionHold.state,'applied');
+  assert.equal(f.runner.state.jobs['I-1'].requests,2);assert.equal(f.runner.artifact('I-1'),null);
+  await f.runner.ensure();assert.equal(engine.read(f.root,'I-1').corrections.length,1);assert.equal(f.runner.state.resources.requests,2);
+});
+test('active correction cancels only its actual owned local child with confirmed cleanup',{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t),entered=deferred();let childPid;
+  const resources=fs.mkdtempSync(path.join(os.tmpdir(),'correction-provider-'));t.after(()=>fs.rmSync(resources,{recursive:true,force:true}));
+  f.options.providerResources={directory:resources};
+  f.options.invoke=async(input,options)=>require('../extension/semantic-provider').runCodex(input,{...options,timeoutMs:5000,
+    spawn:(_exe,_args,settings)=>{
+      const child=require('node:child_process').spawn(process.execPath,['-e','process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write(JSON.stringify({type:"thread.started",thread_id:"local-correction-control"})+"\\n");setInterval(()=>{},1000);});'],settings);
+      childPid=child.pid;child.stdout.once('data',()=>entered.resolve());return child;
+    }});
+  f.options.invoke.isProviderTransport=true;
+  const running=f.runner.continueFinding('I-1');await entered.promise;
+  await correctThroughBoard(f);await running;
+  const job=f.runner.state.jobs['I-1'],receipt=f.runner.state.resources.receipts[job.correctionHold.reservationId];
+  assert.equal(receipt.audit.teardown.confirmed,true);assert.equal(receipt.audit.teardown.strategy,'owned-process-group');
+  assert.equal(require('../extension/provider-process').processGroup(receipt.audit.teardown).confirmed,true);
+  assert.equal(engine.read(f.root,'I-1').corrections.length,1);assert.equal(job.requests,3);assert.equal(f.runner.state.jobs['I-2'].requests,0);assert.ok(childPid);
+});
 test('selection promotes two durable stages without owning preparation or starving siblings', { skip: !native }, async t => {
   let release, entered;
   const held = new Promise(resolve => release = resolve), started = new Promise(resolve => entered = resolve);

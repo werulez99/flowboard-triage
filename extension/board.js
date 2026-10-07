@@ -574,7 +574,12 @@ class TriageBoard {
     if (!this.investigationCurrent(model)) throw new Error('Refresh this source context before changing the investigation.');
     if (message.revision !== model.investigationDraft?.revision) throw new Error('The draft advanced while this correction was being written. Check the latest claim and try again.');
     const report = this.callbacks.reportPreparation?.();
-    if (report) { report.invalidate('A researcher correction changed this finding. Its affected checks will be repeated.', { findingId: model.id }); await report.loop; }
+    if (report) {
+      report.holdCorrection(model.id,model.investigationDraft,message.change||{});
+      const draft=await report.settleCorrection(model.id);
+      if(this.investigationCurrent(model))await this.publishInvestigation(model,draft);
+      return draft;
+    }
     model.investigationAbort?.abort();
     if (model.investigationJob) await model.investigationJob;
     if (!this.investigationCurrent(model)) return;

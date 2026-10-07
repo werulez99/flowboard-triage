@@ -6,12 +6,16 @@ const crypto = require('node:crypto');
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const location = id => `.flowboard/provider-results/${p.identifier(id, 'finding ID') || id}.json`;
 const MAX_BYTES = 4 * 1024 * 1024;
-function save(root, findingId, value) {
+function save(root, findingId, value, { retain = false } = {}) {
   const record = { version: 1, findingId, ...value };
   const hash = digest(record);
   if (Buffer.byteLength(JSON.stringify(record)) > MAX_BYTES - 256) throw new Error('Provider response checkpoint exceeded its private storage limit. The request receipt was retained.');
   p.atomicJson(root, location(findingId), { ...record, hash });
-  return { hash, phase: value.input.phase, snapshot: digest(value.snapshot), corrections: digest(value.corrections), previous: value.previous };
+  // A superseded response is audit history, not the next draft's pending
+  // answer. Keep it beyond the next ordinary last-response checkpoint.
+  const archive = retain ? `.flowboard/recovery/provider-result-${p.identifier(findingId, 'finding ID') || findingId}-${hash}.json` : null;
+  if (archive) p.atomicJson(root, archive, { ...record, hash });
+  return { hash, phase: value.input.phase, snapshot: digest(value.snapshot), corrections: digest(value.corrections), previous: value.previous, ...(archive ? { archive } : {}) };
 }
 function read(root, findingId, reference, expected) {
   if (!reference) return null;

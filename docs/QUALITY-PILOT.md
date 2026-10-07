@@ -1,5 +1,69 @@
 # Bounded fresh quality pilot
 
+## Selected-finding correction during a batch (0.19.19)
+
+The board now saves a durable, revision-bound correction intent and a hold for
+only the affected finding before awaiting cancellation. It waits for that task,
+not the report loop. Siblings continue; queued old-premise work cannot reserve,
+dispatch or publish. Settlement re-reads the current saved argument, applies the
+existing correction/candidate-archive lifecycle and leaves the finding paused
+until an explicit continuation. Reload recovers the intent locally. Unconfirmed
+cleanup preserves the hold instead of pretending cancellation succeeded.
+
+The actual coordinator/board controls hold a sibling generation while correcting
+a queued candidate verification, verify prompt saved/reopened correction, and
+verify that only explicit continuation carries the new premise. Separate controls
+cover a late completed answer, unconfirmed cleanup, pending-intent reload, and an
+actual owned local child (not a model call). A superseded completed response is
+retained at the immutable provider-result boundary but cannot approve the new
+premise. The existing ownership implementation is used, not a namespace stub.
+
+The retained timeout cause remains undetermined. The installed isolated CLI
+0.160.1 supports `--ephemeral` and `--ignore-user-config`; official non-interactive
+documentation says ephemeral runs do not persist ordinary session rollout files.
+No available local diagnostic exposes the missing remote trace. No historical
+transcript is claimed recovered, and no tiny provider probe is used for this run.
+Requested model remains the unobserved CLI default unless the response reports it;
+medium reasoning, strict schema and disabled tools are unchanged.
+
+One ordinary, locally source-complete rounding finding was selected before its
+new response, in an isolated import with unchanged original report/source bytes.
+Its 22-unit generation packet was 140,940 bytes including the conservative
+transport bound. G was reserved/dispatched once and returned a structured answer;
+C and V were not used. The answer incorrectly referenced another claim's owned
+evidence rather than its own or explicitly shared context. The strict projection
+gate withheld it: **zero accepted generations, zero new checked guides**. The
+answer also retained local dispatch/settlement questions and an unresolved
+normative rounding requirement; those are not a completed semantic review.
+
+The new receipt reports 255.557 seconds monotonic adapter elapsed and 269.380
+seconds wall-timestamp elapsed. These are separate clocks, not additive work.
+First substantive content was at 255.254 seconds monotonic, queue wait 9 ms and
+local pipe-write duration 1.063 ms. Cleanup was confirmed. The provider returned
+45,856 input and 12,701 output tokens, including 225 reported reasoning tokens;
+model identity and cost remained unknown. Local pipe completion is not remote
+delivery acknowledgment. This result does not identify the earlier timeout cause
+or establish representative throughput.
+
+Two narrow host fixes followed this received answer. Invalid claim ownership now
+produces an explicit reference-scope rejection before projection instead of a
+misleading host-mapping diagnosis; no reference is silently dropped/reassigned.
+Exact saved-response recovery retains every supplied test-source unit, including
+constants added during initial preparation, instead of applying new-discovery
+filtering to the already-paid packet. Local replay preserves the unchanged answer
+and paid receipts and still rejects its actual cross-claim error. No additional
+model request, repair approval or semantic acceptance is inferred from replay.
+
+Final supported WSL/Node 20.20.1 sequential gate: **510 passed, zero failed or
+skipped** (73.021 s). One intermediate gate failed the existing short explicit
+deadline/authorization-wait control; its unchanged focused rerun and the final
+gate passed. The observation is retained, not attributed to a proven root cause.
+The selected real rejected response was opened at 1440×900 through native 1.2.0
+with simulated editor IO and provider none: complete source card, precise
+reference-scope rejection, original report/manual review available, no unchecked
+tutorial annotations, no browser/host errors and zero new provider calls. This is
+a blocked-status observation, not completed tutorial playback or Cursor activation.
+
 ## Local fidelity/recovery correction (0.19.18)
 
 No external request was made. The real result remains eight lifetime production
