@@ -309,7 +309,7 @@ test('workspace removal cancels source acquisition and a later explicit re-add o
   const fixture = path.resolve(__dirname, '../scripts/fixtures/mixed-preparation'), hold = gate(), calls = [];
   const env = await setup(t, { projectFixture: path.join(fixture, 'project'), reportFixture: path.join(fixture, 'report.md'), analysisHold: hold,
     configuration: { semanticProvider: 'codex', reportRequestLimit: 20, preparationWorkers: 1 }, preparationInvoke: async input => {
-      calls.push(input.phase); return { value: require('../scripts/fixtures/mixed-ready-output').response(input), audit: { phase: input.phase, outcome: 'completed' } };
+      calls.push([input.finding.id,input.reviewPurpose||input.phase]); return { value: require('../scripts/fixtures/mixed-ready-output').response(input), audit: { phase: input.phase, outcome: 'completed' } };
     } });
   const old = env.board.callbacks.reportPreparation(), pending = old.ensure();
   await hold.started;
@@ -319,7 +319,8 @@ test('workspace removal cancels source acquisition and a later explicit re-add o
   assert.deepEqual(calls, []); assert.ok(old.disposed); assert.equal(old.tasks.size, 0);
   env.vscode.workspace.workspaceFolders = [folder]; env.callbacks.folders({ removed: [], added: [folder] });
   const restored = env.board.callbacks.reportPreparation(); assert.notEqual(restored, old); await restored.ensure();
-  assert.equal(restored.status().ready, 2); assert.equal(calls.length, 8, 'The intact four-finding manifest resumes once, including its blocked/failed controls.');
+  assert.equal(restored.status().ready, 2); assert.equal(calls.length, 9, 'The intact manifest resumes once, including private construction/checking of the blocked control.');
+  assert.deepEqual(calls.filter(([id])=>id==='I-3').map(([,purpose])=>purpose),['generate','candidate-completion','candidate-verification']);
   assert.equal(env.analysis.count, 2, 'The removed owner cannot cache or revive its late index.');
 });
 test('workspace removal releases a capacity waiter without reserving or dispatching a request', { skip: !native }, async t => {

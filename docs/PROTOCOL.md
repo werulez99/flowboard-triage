@@ -4,6 +4,17 @@ A JSON request under `.flowboard/request.json` drives the workspace extension. N
 
 The manual finding protocol below remains compatible. Companion 0.9 adds a separate, automatically saved `.flowboard/investigations/<id>.json` draft when a finding opens, with opt-in provider generation/challenge. See [Investigation runtime](INVESTIGATION.md) for its shared schema, normal runtime entry point, exact-quote checks, source freshness and executed existing-test observations. It never silently replaces the manual verdict or turns a matching quotation into proof of its interpretation.
 
+Companion 0.19.17 can retain an incomplete explanation's proposed replacement as
+private `reviewCandidate` (`private-candidate-v1`). Its immutable accepted base,
+candidate version/hash, source/premise context, original-to-candidate revisions
+and verification receipt are separate. Candidate authoring confers no checks or
+publication. A full checkOnly response must cover current content and material
+old-to-candidate changes/removals before the normal publication gate runs.
+Previous versions remain in private `candidateHistory`; neither candidates nor
+their annotations are exposed as checked guides. Saved-response recovery binds
+the exact candidate and request, and never creates a duplicate reservation.
+See [Guided reading](GUIDED-READING.md) for the bounded lifecycle and capacities.
+
 ## Identity and bounds
 
 Required fields: `version: 1`, fresh delivery `id` (1–100 ASCII letters/digits/`._-`), `finding`, and `cards` (1–40). Optional `findingId` has the same syntax and is the stable saved-review/canvas identity. A new standalone submission without it uses a title hash. Opening an existing draft instead retains its selected filename/library ID, including legacy drafts without `findingId`. A conflicting declared ID is rejected; selection must not borrow a different draft's review or canvas.

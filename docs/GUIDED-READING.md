@@ -1,8 +1,48 @@
-# Checked finding walkthroughs — 0.18
+# Checked finding walkthroughs — 0.19.17
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
 ## The reading route
+
+The current action stays visible in the controls/caption, including compact
+desktop and bottom-dock layouts. The next-action footer names the next checked
+event, not merely its function: a helper return is not a self-call. Mechanism,
+rule basis and starting conditions remain available in an expandable orientation;
+the operation's What/Why and decisive conditions have primary visual weight.
+Raw execution IDs and binding diagnostics remain in named supporting details.
+The full function header wraps; secondary function actions remain in More.
+Drag the explanation divider, or focus it and use arrow keys (Home resets).
+Hide/Show explanation, wrapping and pane size are UI preferences, not semantic
+input. Values use readable expression/parameter/meaning and before/operation/after
+rows. Dotted source-to-annotation connectors are not executable call arrows;
+checked transitions have labels and background exploration lines are subdued.
+
+### Private construction and exact verification
+
+An unfinished accepted argument can now yield a `candidate-patch-v1` construction
+response, saved privately with its original accepted base, source/premise identity,
+version and exact original-to-candidate revision manifest. It confers no input,
+explanation or causal checks. Normal source acquisition runs on that candidate
+before its verification input is frozen. The next request is explicitly complete
+`checkOnly`, regardless of an old repair flag or newly acquired source.
+
+Overall kept means the candidate remains unchanged. Evidence review labels are
+relative to the original accepted base, including added/changed/removed notes.
+Non-note material revisions additionally require exact `revision:/...` targets in
+the existing check array, separate from current causal targets. They are not
+tutorial events. Their receipt participates in the publication digest. Missing
+revision/premise/note/causal coverage still withholds publication. One completed
+checker disagreement can request a targeted candidate repair and a full fresh
+recheck; transport failure does not create semantic repair permission. Ordinary
+per-finding/report limits still govern attempts; the private evaluator's four
+slots are not a new global product allowance.
+
+The shared capacity is 48 evidence notes, 96 old/new explanation reviews and a
+separate finite ceiling of 160 non-note revision checks (bounded claims,
+obligations, events, questions and field changes). These are ceilings, not desired
+output volume. All references survive acceptance/storage. Original causal target
+limits and complete publication obligations are unchanged. Already compatible
+checked guides need no new provider request or metadata migration.
 
 Previous step and Next step present material events, not a simulated debugger trace. The separate causal model records invocation and transaction identity, caller, conditions, parameter origins, symbolic values, reads/writes and intermediate versus committed effects. Repeated calls are separate events. A typed handoff explains each move: call, callback, return, branch, data, later transaction or context. An alternative scenario is not a later executed call. Missing material context blocks the affected finding; it is not an unfinished published step. Decisive counterevidence must be included before the result.
 

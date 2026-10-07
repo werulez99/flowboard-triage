@@ -15,7 +15,8 @@ async function main() {
     catalog: async () => { if (!catalog) { indexes++; const prepared = await analyze(process.env.FLOWBOARD_EXTENSION_PATH, root, { mode: 'source' }); catalog = new SourceCatalog(root, prepared.runner, prepared.result); } return catalog; },
     invoke: async input => {
       calls.push(input.phase);
-      const value = JSON.parse(fs.readFileSync(path.join(root, '.flowboard/controlled-answer.json'), 'utf8'));
+      const generation=path.join(root,'.flowboard/controlled-generation.json');
+      const value = JSON.parse(fs.readFileSync(input.phase==='generate'&&fs.existsSync(generation)?generation:path.join(root, '.flowboard/controlled-answer.json'), 'utf8'));
       return { value, audit: { provider: 'controlled-fresh-process-fixture', phase: input.phase, outcome: 'completed' } };
     },
     changed: () => {

@@ -20,6 +20,8 @@
   let guide = null, guideIndex = 0, guideMode = 'closed', guideReturn = null, guideNavigation = null, guidePending = false, guideOpinion = window.innerWidth > 800;
   let guideDetour = null, guideError = null, guideRequest = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true;
+  let guidePane = { width: null, height: null, collapsed: false };
+  let guideHiddenScroll = 0;
   let reportPreparation = null;
   let reportObservation = 0;
   let reportContext = null;
@@ -103,6 +105,34 @@
   const guideControls = element('nav', 'guide-controls'); guideControls.setAttribute('aria-label', 'Guided review'); guideControls.hidden = true;
   const guideAside = element('aside', 'guide-aside'); guideAside.setAttribute('aria-label', 'Current review step'); guideAside.hidden = true;
   document.body.append(guideControls, guideAside);
+  const guideResize = element('div', 'guide-resize'); guideResize.tabIndex = 0;
+  guideResize.setAttribute('role', 'separator'); guideResize.setAttribute('aria-label', 'Resize explanation pane');
+  guideResize.title = 'Drag to resize explanation; arrow keys resize, Home resets';
+  document.body.append(guideResize);
+  function sizeGuidePane() {
+    const bottom = innerWidth <= 800;
+    const width = Math.max(320, Math.min(innerWidth - 368, guidePane.width || Math.min(520, innerWidth * .38)));
+    const height = Math.max(230, Math.min(innerHeight - 360, guidePane.height || innerHeight * .42));
+    document.body.style.setProperty('--guide-side-width', `${bottom || guidePane.collapsed ? 0 : width}px`);
+    document.body.style.setProperty('--guide-bottom-height', `${!bottom || guidePane.collapsed ? 0 : height}px`);
+    document.body.classList.toggle('guide-pane-collapsed', guidePane.collapsed);
+    guideResize.setAttribute('aria-orientation', bottom ? 'horizontal' : 'vertical');
+    guideResize.setAttribute('aria-valuenow', String(Math.round(bottom ? height : width)));
+    guideResize.setAttribute('aria-valuemin', bottom ? '230' : '320');
+    guideResize.setAttribute('aria-valuemax', String(bottom ? Math.max(230, innerHeight - 360) : Math.max(320, innerWidth - 368)));
+  }
+  const resizeGuide = value => {
+    if (innerWidth <= 800) guidePane.height = value; else guidePane.width = value;
+    sizeGuidePane(); window.dispatchEvent(new Event('resize')); schedulePersist();
+  };
+  guideResize.onpointerdown = event => { guideResize.setPointerCapture(event.pointerId); guideResize.dataset.dragging = 'true'; event.preventDefault(); };
+  guideResize.onpointermove = event => { if (guideResize.dataset.dragging) resizeGuide(innerWidth <= 800 ? innerHeight - event.clientY : innerWidth - event.clientX); };
+  guideResize.onpointerup = guideResize.onlostpointercapture = () => { delete guideResize.dataset.dragging; };
+  guideResize.onkeydown = event => {
+    const bottom = innerWidth <= 800, keys = bottom ? ['ArrowDown', 'ArrowUp'] : ['ArrowRight', 'ArrowLeft'];
+    if (keys.includes(event.key)) { event.preventDefault(); event.stopPropagation(); resizeGuide(Number(guideResize.getAttribute('aria-valuenow')) + (event.key === keys[0] ? -24 : 24)); }
+    if (event.key === 'Home') { event.preventDefault(); guidePane.width = guidePane.height = null; sizeGuidePane(); window.dispatchEvent(new Event('resize')); schedulePersist(); }
+  };
   function measureGuideControls() {
     if (guideControls.hidden) return;
     document.body.style.setProperty('--guide-controls-bottom', `${Math.ceil(guideControls.getBoundingClientRect().bottom)}px`);
@@ -156,14 +186,15 @@
           label.setAttribute('x', String(frame.left + 24));
           label.setAttribute('y', String(frame.top + 16));
           label.setAttribute('mask', 'url(#guide-outside-cards)');
-          label.textContent = `${({ data:'Data', context:'Context', 'later-transaction':'Later transaction' })[step.handoff.kind] || step.handoff.kind} · ${prior.unit.name}`;
+          label.textContent = `Checked ${({ data:'data link', context:'context link', 'later-transaction':'later transaction' })[step.handoff.kind] || step.handoff.kind} · ${prior.unit.name}`;
           guideAnchor.append(connection, label);
         }
       }
     });
   }
   document.addEventListener('scroll', placeGuideAnchor, true); window.addEventListener('resize', () => {
-    document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(680, flowboard.clientWidth - 48))}px`);
+    sizeGuidePane();
+    document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(960, flowboard.clientWidth - 48))}px`);
     requestAnimationFrame(() => {
       const card = cards.get(selectedCard);
       if (guideMode === 'guided' && card && !sourceStale) {
@@ -370,7 +401,7 @@
   }
   function guideCapture() {
     return { ...location(), checkedLocation: checkedLocation && { ...checkedLocation }, guideIndex,
-      drawerOpen: drawer.classList.contains('visible'), scrollLeft: flowboard.scrollLeft, scrollTopCode: flowboard.scrollTop, guideScroll: guideAside.scrollTop,
+      drawerOpen: drawer.classList.contains('visible'), scrollLeft: flowboard.scrollLeft, scrollTopCode: flowboard.scrollTop, guideScroll: guidePane.collapsed ? guideHiddenScroll : guideAside.scrollTop,
       codeScroll: cards.get(selectedCard)?.codeEl.parentElement.scrollTop || 0, wrap: guideWrap };
   }
   function guideRestore() {
@@ -583,20 +614,25 @@
     document.body.classList.toggle('guide-reading', open && ['guided', 'detour'].includes(guideMode) && !sourceStale);
     document.body.classList.toggle('guide-note-editing', open && guideMode === 'detour' && drawerTab === 'review' && drawer.classList.contains('visible'));
     document.body.classList.toggle('guide-wrap', guideWrap);
+    sizeGuidePane();
     for (const card of cards.values()) card.el.classList.toggle('guide-active-card', card.id === selectedCard);
-    document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(680, flowboard.clientWidth - 48))}px`);
+    document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(960, flowboard.clientWidth - 48))}px`);
     placeGuideAnchor();
     return open;
   }
   function renderGuide() {
     renderPreparation();
+    const priorStep = guideAside.querySelector('.guide-annotation')?.dataset.stepId;
+    const priorScroll = guideAside.scrollTop;
     const focusedControl = guideControls.contains(document.activeElement) ? document.activeElement.textContent : null;
     const open = syncReadingLayout();
     guideControls.replaceChildren(); guideAside.replaceChildren();
     document.querySelectorAll('.guide-handoff').forEach(node => node.remove());
     if (!open) return;
     const step = detourStep() || guide.steps[guideIndex];
-    guideAside.append(element('header', 'guide-caption', `${guideMode === 'detour' ? 'Detour from step' : 'Step'} ${guideIndex + 1} · ${step.title}`));
+    const caption = element('header', 'guide-caption', `${guideMode === 'detour' ? 'Detour from step' : 'Step'} ${guideIndex + 1} · ${step.title}`);
+    caption.append(button('Current operation', () => { guideAside.scrollTop = 0; if (step.evidence) guideReveal(step.evidence.source.line); }, 'guide-current-operation'));
+    guideAside.append(caption);
     const counter = element('strong', '', `Step ${guideIndex + 1} of ${guide.steps.length}`); counter.setAttribute('aria-live', 'polite');
     const back = button('Previous step', () => guideGo(guideIndex - 1)), next = button('Next step', () => guideGo(guideIndex + 1));
     back.disabled = guideIndex === 0 || sourceStale || !!preparing; next.disabled = guideIndex === guide.steps.length - 1 || sourceStale || !!preparing;
@@ -607,6 +643,12 @@
     extras.append(button('Restart', () => guideGo(0)), button('Readable size', () => { const card = cards.get(selectedCard); if (card) focusReadable(card); }), button(guideWrap ? 'Turn wrapping off' : 'Wrap code', () => { guideWrap = !guideWrap; renderGuide(); schedulePersist(); }),
       button(guideOpinion ? 'Hide assessment' : 'Show assessment', () => { guideOpinion = !guideOpinion; renderGuide(); schedulePersist(); }));
     guideControls.append(extras);
+    guideControls.append(button(guidePane.collapsed ? 'Show explanation' : 'Hide explanation', () => {
+      if (!guidePane.collapsed) guideHiddenScroll = guideAside.scrollTop;
+      guidePane.collapsed = !guidePane.collapsed; renderGuide();
+      if (!guidePane.collapsed) guideAside.scrollTop = guideHiddenScroll;
+      window.dispatchEvent(new Event('resize')); schedulePersist();
+    }, 'guide-pane-toggle'));
     guideControls.append(button('Step outline', () => { disclosureState.set('guide-outline', true); const outline = guideAside.querySelector('.guide-outline'); if (outline) { outline.open = true; guideAside.scrollTop += outline.getBoundingClientRect().top - guideAside.getBoundingClientRect().top - 12; } }));
     if (focusedControl) ([...guideControls.querySelectorAll('button')].find(item => item.textContent === focusedControl && !item.disabled) || next.disabled && back || next).focus({ preventScroll: true });
     measureGuideControls();
@@ -614,7 +656,7 @@
     const mechanism = element('details', 'guide-mechanism');
     const orientationKey = `orientation:${guide.key}:${step.id}`;
     const orientationScrollKey = `${orientationKey}:scroll`;
-    mechanism.open = disclosureState.has(orientationKey) ? disclosureState.get(orientationKey) : guideIndex === 0;
+    mechanism.open = disclosureState.has(orientationKey) ? disclosureState.get(orientationKey) : false;
     mechanism.ontoggle = () => disclosureState.set(orientationKey, mechanism.open);
     mechanism.onscroll = () => { disclosureState.set(orientationScrollKey, mechanism.scrollTop); schedulePersist(); };
     requestAnimationFrame(() => { if (mechanism.isConnected) mechanism.scrollTop = Number(disclosureState.get(orientationScrollKey)) || 0; });
@@ -623,7 +665,11 @@
       element('p', '', `Actor: ${guide.teaching.actor}`));
     if (guide.teaching.conditions.length) mechanism.append(element('p', '', guide.teaching.conditions.join('; ')));
     evidenceActions(mechanism, guide.teaching.ruleEvidence, 'Read rule basis');
-    if (guideIndex === 0) guideAside.append(mechanism);
+    if (guideIndex === 0) {
+      const orientation = element('section', 'guide-orientation');
+      orientation.append(element('h3', '', 'Mechanism in this review'), element('p', '', guide.teaching.mechanism), mechanism);
+      guideAside.append(orientation);
+    }
     const outline = element('details', 'guide-outline'); outline.open = disclosureState.get('guide-outline') === true;
     outline.append(element('summary', '', 'Step outline'));
     const order = element('ol');
@@ -642,11 +688,10 @@
     note.append(element('h2', '', step.title));
     if (guideError) note.append(element('p', 'triage-warning', `Could not open this step's code. ${guideError}`),
       button('Retry opening code', retryGuideNavigation), button('Explore freely', guidePause));
-    if (guideMode === 'guided' && step.role && step.role !== guide.teaching.mechanism && !guide.steps.slice(0, guideIndex).some(prior => prior.unit?.id === step.unit?.id)) note.append(element('p', 'guide-function-role', step.role));
     if (guidePending) { const loading = element('p', 'triage-muted', 'Opening the checked code…'); loading.setAttribute('role', 'status'); note.append(loading); }
     let statement;
     if (step.claim) {
-      statement = element('details', 'guide-statement'); statement.append(element('summary', '', `Statement ${step.claimId} · ${FlowboardReading.statement(step.claim.status)}`), element('p', '', step.claim.allegation));
+      statement = element('details', 'guide-statement'); statement.append(element('summary', '', `Report claim · ${FlowboardReading.statement(step.claim.status)}`), element('p', '', step.claim.allegation), element('small', 'triage-muted', `Claim ${step.claimId}`));
       const conditions = [step.claim.actor && `Actor: ${step.claim.actor}`, ...step.claim.conditions].filter(Boolean);
       for (const text of conditions) statement.append(element('p', '', text));
     }
@@ -656,11 +701,18 @@
         element('h3', '', 'What happens here'),
         element('p', 'guide-explanation', step.what || entry.note));
       if (step.why) note.append(element('h3', '', 'Why it matters'), element('p', '', step.why));
-      note.append(element('p', `guide-stance ${entry.stance}`, `${entry.stance === 'supports' ? 'Supports this statement' : entry.stance === 'contradicts' ? 'Challenges this statement' : 'Code context'}${step.claimId ? ' · ' + step.claimId : ' · Researcher note'}`));
+      note.append(element('p', `guide-stance ${entry.stance}`, `${entry.stance === 'supports' ? 'Supports this statement' : entry.stance === 'contradicts' ? 'Challenges this statement' : 'Code context'}`));
       if (statement) note.append(statement);
       if (step.caller || step.actor) note.append(element('p', 'guide-caller', `Who: ${step.actor || step.caller}${step.caller && step.caller !== step.actor ? ' · Caller: ' + step.caller : ''}${step.receiver ? ' → ' + step.receiver : ''}`));
       if (step.conditions?.length) note.append(element('p', 'guide-condition', `When: ${step.conditions.join('; ')}`));
-      if (step.transaction || step.invocationId) note.append(element('p', 'guide-frame', `${step.transaction || 'Source context'} · ${step.phase || 'Reading step'} · ${step.invocationId || ''}`));
+      if (step.transaction || step.invocationId) {
+        const frames = [...new Set(guide.steps.filter(s => s.unit?.id === step.unit?.id && s.transaction === step.transaction).map(s => s.invocationId))];
+        if (frames.length > 1) note.append(element('p', 'guide-invocation', `Invocation ${frames.indexOf(step.invocationId) + 1} of ${frames.length} of this function in the stated transaction`));
+        const detail = element('details', 'guide-frame'); detail.append(element('summary', '', 'Evidence and execution identities'),
+          element('p', '', `Event ${step.id} · Claim ${step.claimId} · ${step.transaction || 'Source context'} · ${step.phase || 'Reading step'} · ${step.invocationId || ''}`));
+        if (step.handoff) detail.append(element('p', '', `${step.handoff.kind} · ${step.handoff.binding}`));
+        note.append(detail);
+      }
       if (step.handoff?.dispatch && step.handoff.dispatch.kind !== 'not-applicable') {
         const dispatch = step.handoff.dispatch;
         const detail = element('details', 'guide-execution-context'); detail.append(element('summary', '', 'Caller and execution context'),
@@ -691,19 +743,26 @@
           values.append(table);
         }
         if (step.changes?.length) {
-          const table = element('table'), header = element('tr');
-          for (const label of ['Value', 'Before', 'Operation / after', 'Evidence']) header.append(element('th', '', label)); table.append(header);
+          const table = element('div', 'guide-state-rows');
           for (const change of step.changes) {
-            const row = element('tr'); for (const value of [`${change.name} (${change.units})`, change.before, `${change.operation} → ${change.after}`]) row.append(element('td', '', value));
-            const links = element('td'); evidenceActions(links, change.evidence); row.append(links); table.append(row);
+            const row = element('section', 'guide-state-row'); row.append(element('strong', '', `${change.name} · ${change.units}`));
+            for (const [label, value] of [['Before',change.before],['Operation',change.operation],['After',change.after]]) {
+              const cell = element('div'); cell.append(element('span','guide-value-label',label),element('code','',value)); row.append(cell);
+            }
+            const links = element('details'); links.append(element('summary','','State evidence')); evidenceActions(links, change.evidence); row.append(links); table.append(row);
           }
           values.append(table);
         }
         values.append(element('p', 'triage-muted', ({intermediate: 'Intermediate effects; reverting this invocation rolls back its writes.', committed: 'Predicted successful transaction outcome, not an executed observation.', 'rolled-back': 'This invocation reverts. Writes within the reverted call do not persist.', condition: 'This step checks the stated condition. See the checked operations for any side effects.', read: 'This step reads context; no write is claimed.', return: 'Control returns to the caller. A return alone does not transfer funds or change the execution address.'})[step.effect]));
         note.append(values);
       }
+      // Primary narration, conditions and values precede diagnostic identities.
+      const proof = element('details', 'guide-supporting'); proof.append(element('summary', '', 'Supporting claim and execution details'));
+      if (step.role) proof.append(element('p', 'guide-function-role', step.role));
+      for (const item of note.querySelectorAll(':scope > .guide-frame, :scope > .guide-statement, :scope > .guide-execution-context, :scope > .guide-stance')) proof.append(item);
+      note.append(proof);
       const source = button(`${entry.source.file}:${entry.source.line} · Open in editor`, () => step.inputReference ? send('triage:openReference', { file: entry.source.file, line: entry.source.line }) : guide.draft.evidence.some(item => item.id === entry.id) ? guideEvidence(entry, true) : inspectEvidence(entry), 'guide-file-link'); note.append(source);
-      if (guideIndex && guideMode === 'guided') note.append(element('p', 'guide-relationship', FlowboardWalkthrough.relationship(guide.steps[guideIndex - 1], step, connections, guideCard)));
+      if (guideIndex && guideMode === 'guided' && step.handoff) note.append(element('p', 'guide-relationship', `How we got here: ${step.handoff.explanation}`));
       const transitions = step.transitions;
       if (transitions.length) {
         const state = element('details', 'guide-state'); state.append(element('summary', '', 'State change · code interpretation'));
@@ -717,6 +776,9 @@
     } else if (step.kind === 'gap') note.append(element('p', 'triage-warning', step.text), button('Read statement details', () => { guidePause(); show('claims'); }));
     else note.append(element('p', '', 'Compare the evidence on both sides. These steps do not decide your final judgment.'), button('Read report', () => { guidePause(); show('report'); }));
     guideAside.append(note, outline);
+    const lineLegend = element('details', 'guide-lines'); lineLegend.append(element('summary', '', 'Lines in this view'),
+      element('p', '', 'Dotted connector: source operation to its explanation, not a call. Labeled solid/dashed transition: the stated checked relationship. Faded background lines: exploration relationships, not additional execution steps.'));
+    guideAside.append(lineLegend);
     if (guideIndex !== 0) guideAside.append(mechanism);
     if (guideMode === 'guided' && guideIndex === guide.steps.length - 1) {
       const conclusion = element('section', 'guide-conclusion'); conclusion.append(element('h3', '', 'Practical conclusion'), element('p', '', guide.teaching.conclusion));
@@ -740,7 +802,9 @@
     if (card && guideMode === 'guided') {
       const handoff = element('section', 'guide-handoff');
       if (nextStep?.handoff) {
-        handoff.append(element('strong', '', `Next · ${nextStep.unit.name}`), element('p', '', FlowboardWalkthrough.relationship(step, nextStep, connections, guideCard)));
+        const transition = FlowboardWalkthrough.transition(step, nextStep);
+        handoff.append(element('strong', '', `Next · ${transition.title}`), element('small', 'guide-next-function', transition.functionName), element('p', '', transition.explanation));
+        const detail = element('details'); detail.append(element('summary', '', 'Transition evidence and binding'), element('p', '', `${transition.kind} · ${transition.binding}`)); handoff.append(detail);
       } else {
         const result = FlowboardWalkthrough.assessment(guide.draft);
         handoff.append(element('strong', '', `End of the checked explanation · ${result.label}`), element('p', '', result.why), button('Review assessment', () => {
@@ -753,6 +817,7 @@
       card.el.append(handoff);
     }
     if (guideOpinion || guideIndex === guide.steps.length - 1) renderOpinion(guideAside, investigationDraft?.phase === 'ready' ? guide.draft : investigationDraft);
+    if (priorStep === step.id && !guidePane.collapsed) guideAside.scrollTop = priorScroll;
   }
   function rememberDisclosure(node, key, initial = false) {
     node.open = disclosureState.get(key) ?? initial;
@@ -1590,7 +1655,7 @@
         const menu = element('details', 'triage-function-menu'); menu.append(element('summary', '', 'More'));
         const controls = element('div', 'triage-function-actions');
         const add = button('Add code note', () => addFromCard(card), 'triage-card-add-evidence'); add.disabled = readOnly;
-        controls.append(button('Related functions', () => inspectCard(card)), add);
+        controls.append(button('Explore function', () => readCode({ cardId: card.id })), button('Related functions', () => inspectCard(card)), add);
         const nativeActions = card.el.querySelector('.card-actions'); if (nativeActions) controls.append(nativeActions);
         const traits = card.el.querySelector('.hdr-badges');
         if (traits) { for (const trait of traits.children) trait.textContent = trait.title; controls.append(traits); }
@@ -1767,7 +1832,7 @@
       inlineVisible, navigation, navigationViews, navigationIndex, scroll: [...scrollPositions], disclosures: [...disclosureState],
       investigationCorrection: { ...investigationCorrection },
       walkthrough: guide ? { key: guide.key, index: guideIndex, mode: guideMode, opinion: guideOpinion, return: guideReturn, detour: guideDetour,
-        position: guideCapture() } : null }, workingCopy, recoveries };
+        position: guideCapture(), pane: { ...guidePane } } : null }, workingCopy, recoveries };
   }
   persistNow = function() {
     nativePersist();
@@ -1886,6 +1951,8 @@
         guide = preparedGuide; guideIndex = savedGuide.index; guideMode = savedGuide.mode; guideOpinion = savedGuide.opinion;
         guideReturn = savedGuide.return;
         guideIntent = savedGuide.mode === 'guided' ? 'guided' : 'explore'; guideWrap = savedGuide.position?.wrap !== false;
+        if (savedGuide.pane) guidePane = { width: Number(savedGuide.pane.width) || null, height: Number(savedGuide.pane.height) || null, collapsed: savedGuide.pane.collapsed === true };
+        guideHiddenScroll = savedGuide.position?.guideScroll || 0;
         guideDetour = guide.draft.evidence.some(item => item.id === savedGuide.detour) || profile().evidence.some(item => item.id === savedGuide.detour) || savedGuide.detour === 'new-note' && evidenceInput.cardId || savedGuide.detour?.startsWith('input:') ? savedGuide.detour : null;
         // Restore only a reference still contained by this exact saved review.
         const position = savedGuide.position, source = position?.checkedLocation;

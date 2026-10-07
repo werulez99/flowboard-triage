@@ -1,5 +1,59 @@
 # Bounded fresh quality pilot
 
+## Private candidate completion and native reader (0.19.17)
+
+The same v27/v28 continuation was reconciled before launch: no earlier C/V/R/V2
+reservation existed. **C was reserved and dispatched once, but timed out without
+substantive content or an assistant answer.** V did not run without a completed
+candidate; timeout does not unlock R/V2. The useful older scoped proposal remains
+an unchecked seed, not a completed candidate or a published guide. No extra
+probe, retry, sibling or diagnostic request was made.
+
+The complete C packet retained 34 source units and the seeded 25-note argument.
+Its conservative transport bound was 254,140 bytes; observed prepared/written
+stdin was 253,734 bytes plus a 328-byte enforced candidate patch schema (254,062
+bytes together). The authoring task covered the whole finding but requested no
+fresh attestations. The independent acceptance reference was excluded. Medium
+reasoning, strict schema, isolated CLI 0.160.1 and disabled tools were unchanged.
+This is a changed task, not a matched latency experiment.
+
+Queue wait was 6 ms, local pipe writing 71 ms, first provider event 747 ms.
+Adapter wall time was 306,230 ms against a configured 300,000 ms ceiling. Stop
+was requested at 306,215 ms; cleanup was confirmed 14 ms later. The late stop
+is not all cleanup; no evidence attributes it to remote reasoning or establishes
+the local clock/scheduling contribution. Output was 335 stdout bytes, zero stderr
+bytes, only startup/turn events and the nonterminal disabled-tool-host notice.
+No model identity, tokens or price were returned. Pipe completion is not remote
+acknowledgment. Reservation-to-finish was 306,330 ms, not development duration.
+
+Production lifetime reservations increased from seven to eight; this continuation
+used one of its four conditional slots. The old pilot 4/5 and later exhausted
+one-attempt windows remain historical, nontransferable records. No new q1–q8
+semantic dispositions can be claimed from this empty result.
+
+Generic construction/verification, larger evidence capacity and native reader
+changes were tested locally, not inferred from C. The delivered verifier also
+requires explicit source-linked revision targets for non-note changes, using the
+existing check array. That coverage strengthening was completed **after C** and
+has deterministic evidence only; no live V packet was sent. C's exact original
+packet, schema, instructions, approval, empty answer capture and audit remain
+immutable. Full checkOnly completion, fresh teaching quality and representative
+200-finding throughput remain unestablished.
+
+See [native reader acceptance](NATIVE-READER.md) for the separate fixture screens,
+content correction, interaction observations and evidence limits.
+
+The final supported WSL / Node 20.20.1 sequential gate passed **498 tests, zero
+failed/skipped**. An earlier gate exposed a legacy follow-up → candidate handoff
+defect and fixed-response controls still returning the old combined contract;
+the handoff and those stage-specific controls were corrected before the final
+gate. Native checks passed six rich-route groups, four mixed-state groups,
+three real incomplete-status groups and twelve retained-guide groups. They used
+simulated editor IO, not actual Cursor activation. UI validation and compatible
+playback dispatched zero external requests. Retained paid/human artifacts stayed
+unchanged; ordinary owned local revalidation refreshed only the retained guide's
+preparation journal, without renewing its 2/2 allowance.
+
 ## Full-context scoped reasoning, then complete challenge (0.19.16)
 
 The explicitly authorized scoped diagnostic **completed with useful reasoning**;

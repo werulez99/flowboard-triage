@@ -119,6 +119,13 @@
     const from = edge.from === a ? previous.unit.name : next.unit.name, to = edge.to === b ? next.unit.name : previous.unit.name;
     return `${edge.kind === 'call' ? `Call: ${from} → ${to}` : edge.kind === 'state-dependency' ? 'Shared data, not a call' : 'Possible connection; implementation or conditions need checking'}. ${edge.reason || ''}`;
   }
+  function transition(previous, next) {
+    if (!next) return null;
+    const link = next.handoff;
+    return { title: next.title, functionName: next.unit?.name || '',
+      explanation: link?.explanation || '', binding: link?.binding || '', kind: link?.kind || '',
+      sameInvocation: !!previous && previous.invocationId === next.invocationId && previous.transaction === next.transaction };
+  }
   function watchedChanges(route, index) {
     const step = route?.steps[index];
     if (!step?.invocationId || !step.transaction) return [];
@@ -159,5 +166,5 @@
     if (argument?.span) result.argument = { unit: caller.unit, span: argument.span, text: argument.expression };
     return result;
   }
-  return { paragraphs, reportLink, originalLines, exact, assessment, build, relationship, watchedChanges, inputLinks };
+  return { paragraphs, reportLink, originalLines, exact, assessment, build, relationship, transition, watchedChanges, inputLinks };
 });

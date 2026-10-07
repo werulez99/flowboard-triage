@@ -24,6 +24,7 @@ parser.add_argument('--production-selection',action='store_true',help='Activate 
 parser.add_argument('--samples',type=int,default=3,choices=range(1,11))
 parser.add_argument('--reopens',type=int,default=20,choices=range(1,51))
 parser.add_argument('--baseline',action='store_true',help='Record the known stale rollback-watch defect instead of asserting its fix; all other checks still run.')
+parser.add_argument('--reader-scenes',action='store_true',help='Capture a finite matched set of native reader scenes, without external requests.')
 args=parser.parse_args()
 repository=Path(__file__).resolve().parent.parent
 output=Path(args.output);output.mkdir(parents=True,exist_ok=True)
@@ -86,7 +87,7 @@ try:
             return {'event':identity,'what':event['what'],'line':proof['source']['line'],'endLine':proof['source']['endLine'],'file':unit['source']['file'],
                     'name':unit['name'].split('::')[-1],'start':unit['source']['line'],'end':unit['source']['endLine'],'code':unit['code'],
                     'callSite':next((call for call in unit.get('relatedCalls',[]) if call['id']==event.get('callSiteId')),None)}
-        def verify(identity):
+        def verify(identity,reading_details=False):
             expected=anchor(identity)
             observed=page.evaluate('''e=>{
                 const note=document.querySelector('.guide-annotation'),card=document.querySelector('.guide-active-card');
@@ -100,11 +101,11 @@ try:
                     lines:exact,visible:!!r&&r.top>=board.top-1&&r.bottom<=board.bottom+1&&r.right>board.left&&r.left<board.right,
                     headerVisible:h.top>=board.top-1&&h.bottom<=board.bottom+1,
                     occurrence:CSS.highlights.has('flowboard-call-occurrence')?[...CSS.highlights.get('flowboard-call-occurrence')].map(r=>r.toString()):[],
-                    camera:{scale,panX,panY},codeScroll:card.querySelector('.card-code').parentElement.scrollTop,domElements:document.querySelectorAll('*').length};
+                    camera:{scale,panX,panY},codeScroll:card.querySelector('.card-code').parentElement.scrollTop,guideScroll:document.querySelector('.guide-aside').scrollTop,domElements:document.querySelectorAll('*').length};
             }''',expected)
             assert observed.get('event')==identity,observed
             assert ' '.join(observed.get('annotation','').split())==' '.join(expected['what'].split()),observed
-            assert observed['annotationVisible'],observed
+            if not reading_details:assert observed['annotationVisible'],observed
             assert observed['lines']==list(range(expected['line'],expected['endLine']+1)),observed
             assert expected['name'] in observed['header'] and expected['file'] in observed['header'],observed
             assert observed['fullTail'] and observed['visible'] and observed['headerVisible'],{'expected':expected,'observed':observed}
@@ -172,14 +173,41 @@ try:
         # Cross-function evidence detour opens the exact caller argument and
         # returns to the same helper invocation, camera, scroll and highlight.
         for identity in order[1:8]:click_step('Next step',identity)
-        original=verify('first-write')
+        verify('first-write')
         caller=page.locator('.guide-parameter-table').get_by_role('button',name='Read caller argument',exact=True)
+        # Deliberately read the argument details before detouring. The Return
+        # endpoint is that actual scroll position, not the earlier top prose.
+        caller.scroll_into_view_if_needed()
+        original=verify('first-write',reading_details=True)
         caller.click();page.wait_for_selector('.guide-annotation[data-step-id^="input:"]')
         assert 'Read the caller argument' in page.locator('.guide-annotation').inner_text()
         controls.get_by_role('button',name='Return to step',exact=True).click()
-        restored=verify('first-write')
-        assert {k:original[k] for k in ['event','lines','camera','codeScroll']}=={k:restored[k] for k in ['event','lines','camera','codeScroll']}
+        restored=verify('first-write',reading_details=True)
+        assert {k:original[k] for k in ['event','lines','camera','codeScroll','guideScroll']}=={k:restored[k] for k in ['event','lines','camera','codeScroll','guideScroll']}
+        reveal=page.get_by_role('button',name='Current operation',exact=True)
+        if reveal.count():reveal.click()
+        else:page.locator('.guide-aside').evaluate('(n)=>{n.scrollTop=0}')
+        verify('first-write')
         result['checks'].append('A material caller argument opens an exact evidence detour; Return restores the first increment invocation rather than the second use of the same function.')
+        modern_reader=page.locator('.guide-resize').count()>0
+        if modern_reader:
+            page.locator('.guide-aside').evaluate('(n)=>{n.scrollTop=180}')
+            prior=verify('first-write',reading_details=True)
+            controls.get_by_role('button',name='Hide explanation',exact=True).click()
+            controls.get_by_role('button',name='Show explanation',exact=True).click()
+            assert verify('first-write',reading_details=True)['guideScroll']==prior['guideScroll']
+            divider=page.get_by_role('separator',name='Resize explanation pane',exact=True)
+            old_width=divider.get_attribute('aria-valuenow');divider.focus();divider.press('ArrowLeft')
+            assert float(divider.get_attribute('aria-valuenow'))>float(old_width)
+            assert verify('first-write',reading_details=True)['event']==prior['event']
+            divider.press('Home')
+            options=controls.locator('.guide-options');options.locator('summary').click()
+            options.get_by_role('button',name='Turn wrapping off',exact=True).click()
+            assert verify('first-write',reading_details=True)['event']==prior['event']
+            controls.locator('.guide-options > summary').click()
+            controls.get_by_role('button',name='Wrap code',exact=True).click()
+            page.get_by_role('button',name='Current operation',exact=True).click();verify('first-write')
+            result['checks'].append('Keyboard resize, collapse/restore and code wrapping preserve the exact invocation; collapse restores the explanation reading position without another request.')
         # Persist the unchanged prepared artifact and navigation, then measure
         # ordinary reopen in this same host (not reload-only DOM mutation).
         result['reopenPhases']=[]
@@ -209,6 +237,43 @@ try:
             if args.production_selection:
                 assert sum(t['event']=='index-start' for t in traces)==warm_index_count,'Warm production selection unexpectedly reindexed unchanged source.'
         result['checks'].append('Compatible saved reopen retains the same accepted artifact and repeated-invocation position with no new controlled requests.')
+        if args.reader_scenes:
+            result['readerScenes']=[]
+            scenes=[(1440,900,'attempt','dark'),(1440,900,'check-guard','dark'),(1440,900,'first-write','dark'),
+                (1440,900,'second-write','dark'),(1440,900,'preview-return','dark'),(1440,900,'first-return','dark'),
+                (1440,900,'second-call','dark'),(1440,900,'rollback','dark'),(1024,800,'first-write','dark'),
+                (801,600,'first-write','dark'),(761,900,'first-write','dark'),(800,900,'first-write','dark'),
+                (801,900,'first-write','dark'),(1024,800,'first-write','light')]
+            for width,height,identity,theme in scenes:
+                page.set_viewport_size({'width':width,'height':height})
+                page.evaluate("theme=>{document.body.classList.remove('vscode-dark','vscode-light');document.body.classList.add('vscode-'+theme)}",theme)
+                controls.get_by_role('button',name='Step outline',exact=True).click()
+                page.locator('.guide-outline').get_by_role('button',name=events[identity]['title'],exact=True).click()
+                page.locator('.guide-outline').evaluate('(n)=>{n.open=false}')
+                page.wait_for_timeout(120)
+                verify(identity)
+                if modern_reader:
+                    actual=page.evaluate('''()=>{
+                      const title=document.querySelector('.guide-active-card .card-title'),r=title.getBoundingClientRect(),header=title.closest('.card-header').getBoundingClientRect();
+                      const footer=document.querySelector('.guide-active-card .guide-handoff'),f=footer.getBoundingClientRect(),caption=document.querySelector('.guide-caption').getBoundingClientRect();
+                      const current=document.querySelector('.guide-current-title');
+                      return {titleFits:r.left>=header.left&&r.right<=header.right&&title.scrollWidth<=title.clientWidth+1&&title.scrollHeight<=title.clientHeight+1,
+                        next:footer.querySelector('strong').textContent,footerScroll:footer.scrollHeight>footer.clientHeight+1,footerVisible:f.bottom<=innerHeight&&f.top>=0,
+                        captionVisible:caption.width>0&&caption.top>=0&&caption.bottom<=innerHeight,currentVisible:current.getBoundingClientRect().height>0,
+                        valuesFit:[...document.querySelectorAll('.guide-values')].every(n=>n.scrollWidth<=n.clientWidth+1)};
+                    }''')
+                    assert actual['titleFits'] and actual['footerVisible'] and not actual['footerScroll'] and actual['captionVisible'] and actual['valuesFit'],actual
+                    if width>800:assert actual['currentVisible'],actual
+                    next_index=order.index(identity)+1
+                    if next_index<len(order):assert actual['next']=='Next · '+events[order[next_index]]['title'],actual
+                filename=f'scene-{width}x{height}-{identity}-{theme}.png'
+                page.screenshot(path=str(output/filename))
+                result['readerScenes'].append({'file':filename,'viewport':[width,height],'event':identity,'theme':theme,'scale':page.evaluate('scale')})
+                if modern_reader and identity=='first-write' and width==1024:
+                    page.locator('.guide-values').scroll_into_view_if_needed()
+                    page.screenshot(path=str(output/f'values-{width}x{height}-{theme}.png'))
+                    page.get_by_role('button',name='Current operation',exact=True).click();verify(identity)
+            page.evaluate("()=>{document.body.classList.remove('vscode-light');document.body.classList.add('vscode-dark')}")
         # The problematic responsive boundaries, including a short pane, use
         # the same checked route; no replacement mockup or CSS-only viewport.
         for width in [759,760,761,799,800,801,1050,1051,1280,1440]:

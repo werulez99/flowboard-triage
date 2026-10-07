@@ -525,7 +525,7 @@ class ReportPreparation {
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
-        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly, prepareRequest: this.options.prepareRequest,
+        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly, prepareRequest: this.options.prepareRequest, candidateSeed: this.options.candidateSeed?.(entry.id),
         beforeRequest: async data => {
           const phases = this.options.phasePlan?.(entry.id);
           if (phases && !phases.includes(data.phase)) throw Object.assign(new Error('This authorized phase plan does not permit the next request; retained observation remains unpublished.'), { code: 'REPORT_PAUSED' });
@@ -546,7 +546,7 @@ class ReportPreparation {
           if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error('Shared report allowance exhausted before reservation.'), { code: 'REPORT_BUDGET' });
           challengeCapacity();
           this.state.resources.requests++; job.requests++; job.stage = data.phase; job.inputBytes = data.inputBytes; job.state = 'running';
-          job.lastReservation = { id: `${attemptId}:${job.requests}`, phase: data.phase, at: now(), inputBytes: data.inputBytes };
+          job.lastReservation = { id: `${attemptId}:${job.requests}`, phase: data.phase, ...(data.input.reviewPurpose ? { reviewPurpose: data.input.reviewPurpose } : {}), at: now(), inputBytes: data.inputBytes };
           job.lastReservation.timing = { stageStartedAt: job.startedAt, capacityWaitMs: data.capacity?.waitMs || 0,
             preparationAndHostSchedulingMs: Math.max(0, Date.now() - Date.parse(job.startedAt) - (data.capacity?.waitMs || 0)) };
           this.state.resources.receipts[job.lastReservation.id] = { ...job.lastReservation, findingId: job.id, outcome: 'reserved', costUSD: null };

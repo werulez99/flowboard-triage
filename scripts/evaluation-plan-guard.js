@@ -42,7 +42,16 @@ class EvaluationPlanGuard {
           !['challenge','complete'].includes(base.checkpoint?.stage)) deny('A compatible accepted stage is required, not a pending/rejected response.');
       if (receipts.length && !base.runs?.some(r=>r.requestId===receipts[0].requestId && r.resultAccepted)) deny('The reserved generation was not accepted by the engine.');
       const expected=savedBase(base);
-      if (engine.hash(input.earlierDraft)!==engine.hash(expected.earlierDraft) || engine.hash(input.assembledEarlier||null)!==engine.hash(expected.assembledEarlier))
+      if (c.reviewPurpose) {
+        const lifecycle=require('../extension/review-candidate');
+        if (m.maximumRequests!==1 || input.reviewPurpose!==c.reviewPurpose || !lifecycle.purposes.includes(c.reviewPurpose) ||
+            c.timeoutMs>(c.reviewPurpose.endsWith('verification')?600000:300000) ||
+            lifecycle.purpose(base,provider.schema)!==c.reviewPurpose) deny('Candidate substage, order or timeout is not authorized.');
+        const actual=lifecycle.packet(input,base,provider.schema,c.reviewPurpose);
+        if(engine.hash(actual.candidateIdentity)!==engine.hash(input.candidateIdentity) || engine.hash(actual.earlierDraft)!==engine.hash(input.earlierDraft) ||
+           engine.hash(actual.candidateRevisions)!==engine.hash(input.candidateRevisions)) deny('Candidate/revision/provenance changed.');
+        if(c.reviewPurpose==='candidate-repair' && (!c.repairProblemsHash || c.repairProblemsHash!==engine.hash(base.reviewCandidate.verification.problems))) deny('Targeted repair needs exact completed checker feedback.');
+      } else if (engine.hash(input.earlierDraft)!==engine.hash(expected.earlierDraft) || engine.hash(input.assembledEarlier||null)!==engine.hash(expected.assembledEarlier))
         deny('Challenge must review the exact compiled accepted generation.');
       if (!receipts.length && engine.hash(expected)!==c.retainedBaseHash) deny('Retained challenge-only base changed.');
     }
@@ -82,6 +91,14 @@ class EvaluationPlanGuard {
     if (!item) return [];
     return [...item.phases];
   }
+  candidateSeed(id) {
+    const c=this.manifest.cases.find(c=>c.findingId===id);
+    if(!c?.candidateSeedPath)return undefined;
+    this.phasePlan(id);
+    const seed=JSON.parse(fs.readFileSync(c.candidateSeedPath));
+    if(engine.hash(seed)!==c.candidateSeedHash)deny('Candidate seed changed from its approved exact model proposal.');
+    return seed;
+  }
   continuation(journal) {
     const b=this.manifest.continuation;
     if(!b)return null;
@@ -109,7 +126,7 @@ class EvaluationPlanGuard {
     return this.ledger.used<this.manifest.maximumRequests && this.ledger.receipts.filter(r=>r.findingId===id).length<phases.length;
   }
   authorize(input) {
-    const timeoutMs=this.check(input), receipt={findingId:input.finding.id,phase:input.phase,timeoutMs,...packetIdentity(input),
+    const timeoutMs=this.check(input), receipt={findingId:input.finding.id,phase:input.phase,reviewPurpose:input.reviewPurpose||null,timeoutMs,...packetIdentity(input),
       reservedAt:new Date().toISOString(),outcome:'reserved',requestId:null,dispatched:false};
     // Persist before returning to the normal reservation. A later interruption
     // consumes this permission; it never refunds authority for a retry.

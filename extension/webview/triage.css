@@ -518,6 +518,9 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-open #triage-legend { max-width:calc(100vw - 390px); }
 .guide-annotation { border-left:3px solid var(--triage-focus); background:var(--triage-note-bg); padding:12px; margin:12px 0 24px; }
 .guide-annotation h2 { font-size:17px; line-height:1.4; margin:0 0 12px; }
+.guide-reading .guide-annotation > h2 { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.guide-caption .guide-current-operation { display:block; margin-top:6px; font-size:12px; padding:3px 6px; }
+.guide-supporting { padding:10px; margin:16px 0; border:1px solid var(--border); background:var(--card-bg); border-radius:4px; }
 .guide-annotation p { margin:8px 0 12px; }
 .guide-annotation .guide-file-link { font-size:12px; }
 .guide-stance { font-size:12px; font-weight:600; }
@@ -562,7 +565,7 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-open #flowboard { right:410px; }
 .guide-controls { gap:12px; min-height:56px; }
 .guide-current-title { flex:1; min-width:0; font-weight:600; }
-.guide-caption { display:none; }
+.guide-caption { display:block; position:sticky; top:-16px; margin:-16px -16px 12px; padding:12px 16px; background:var(--card-bg); border-bottom:1px solid var(--border); z-index:2; font-weight:600; font-size:14px; }
 .guide-options { position:relative; }
 .guide-options summary { cursor:pointer; padding:8px; }
 .guide-options[open] { align-self:flex-start; background:var(--card-bg); border:1px solid var(--border); }
@@ -573,7 +576,11 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-outline li { color:var(--triage-muted); font-size:13px; }
 .guide-outline li.current { color:var(--triage-focus); font-weight:600; }
 .guide-mechanism { margin:8px 0 16px; font-size:14px; line-height:1.5; }
-.guide-mechanism[open] { max-height:min(36vh,300px); overflow:auto; scrollbar-gutter:stable; }
+.guide-mechanism[open] { max-height:none; overflow:visible; }
+.guide-orientation { margin:0 0 16px; padding:12px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); font-size:13px; }
+.guide-orientation h3 { font-size:12px; margin:0 0 6px; color:var(--triage-muted); }
+.guide-orientation p { margin:6px 0; }
+.guide-orientation .guide-mechanism { margin:8px 0 0; }
 .guide-mechanism p { margin:6px 0; }
 .guide-mechanism h3 { font-size:13px; margin:10px 0 4px; }
 .guide-mechanism small { display:block; margin:4px 0; }
@@ -587,8 +594,14 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-values table { border-collapse:collapse; width:100%; font-size:12px; }
 .guide-values td,.guide-values th { border-bottom:1px solid var(--border); padding:8px 4px; text-align:left; vertical-align:top; }
 .guide-values th { overflow-wrap:normal; word-break:normal; }
-.guide-values table { min-width:340px; }
-.guide-values { overflow-x:auto; }
+.guide-values table { min-width:0; }
+.guide-values { overflow:visible; background:var(--card-bg); }
+.guide-state-row { display:grid; grid-template-columns:1fr; gap:8px; padding:12px 0; border-bottom:1px solid var(--border); }
+.guide-state-row > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:8px; }
+.guide-state-row code { white-space:pre-wrap; overflow-wrap:anywhere; }
+.guide-frame,.guide-statement,.guide-execution-context { margin:12px 0; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); font-size:12px; }
+.guide-frame p { font-family:var(--vscode-editor-font-family,monospace); }
+.guide-invocation { font-weight:600; }
 .guide-values td button { font-size:12px; padding:4px; min-width:80px; }
 .guide-input-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin:8px 0 12px; }
 .guide-input-meaning,.guide-input-evidence { grid-column:1/-1; }
@@ -605,21 +618,34 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-reading .card:not(.guide-active-card) { opacity:.25; }
 .guide-reading .card.guide-active-card { width:var(--guide-card-width,680px)!important; min-width:0; max-width:none; max-height:calc(100vh - 156px); display:flex; flex-direction:column; box-sizing:border-box; border:2px solid var(--triage-focus); box-shadow:none; }
 .guide-reading .guide-active-card .card-header { padding:12px 16px; }
-.guide-reading .guide-active-card .card-title { display:block; font-size:16px; overflow-wrap:normal; word-break:normal; white-space:nowrap; text-overflow:clip; min-width:0; overflow:auto; }
+.guide-reading .guide-active-card .card-title { display:block; font-size:16px; overflow-wrap:anywhere; word-break:normal; white-space:normal; min-width:0; overflow:visible; width:100%; }
+.guide-reading .guide-active-card .card-header { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px; }
+.guide-reading .guide-active-card .card-header > :has(> .card-title) { flex:1 1 100%; min-width:0; }
+.guide-reading .guide-active-card .triage-card-info { position:static; margin-left:auto; }
+.guide-reading .guide-active-card .triage-card-inspect { display:none; }
 .guide-reading .guide-active-card .card-meta { font-size:12px; overflow-wrap:anywhere; }
 .guide-reading .guide-active-card .card-code { flex:0 1 auto; min-height:90px; max-height:calc(100vh - 342px); overflow:auto; margin:0; padding:12px; font-size:14px; line-height:1.65; }
 .guide-reading .guide-active-card .card-header { flex:none; }
-.guide-reading .guide-active-card .triage-explanations { flex:none; max-height:94px; overflow:auto; box-sizing:border-box; }
+.guide-reading .guide-active-card .triage-explanations { display:none; }
 .guide-reading .guide-active-card .card-code code { font-size:14px; line-height:1.65; }
 .guide-reading.guide-wrap .guide-active-card .card-code,.guide-reading.guide-wrap .guide-active-card .card-code .code-line { white-space:pre-wrap; overflow-wrap:anywhere; width:auto; }
 .guide-reading .guide-active-card .card-code .code-line { min-height:23px; }
 .guide-anchor { position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; z-index:999; overflow:visible; }
-.guide-anchor path { fill:none; stroke:var(--triage-focus); stroke-width:2; }
-.guide-anchor .guide-checked-handoff { stroke:var(--triage-link); stroke-width:3; }
-.guide-checked-label { fill:var(--fg); paint-order:stroke; stroke:var(--triage-code-bg,#0d1117); stroke-width:6px; font:12px var(--vscode-font-family,system-ui,sans-serif); }
+.guide-anchor path { fill:none; stroke:var(--triage-muted); stroke-width:2; stroke-dasharray:2 5; }
+.guide-reading .edge-line { opacity:.18; }
+.guide-anchor .guide-checked-handoff { stroke:var(--triage-link); stroke-width:3; stroke-dasharray:none; }
+.guide-checked-label { fill:var(--fg); paint-order:stroke; stroke:var(--bg); stroke-width:6px; font:12px var(--vscode-font-family,system-ui,sans-serif); }
+.guide-reading #triage-legend { display:none; }
 .guide-reading .card-modifiers { flex:none; }
 .guide-handoff { display:none; }
-.guide-reading .guide-handoff { display:block; flex:none; max-height:140px; overflow:auto; padding:12px 16px; border-top:1px solid var(--triage-focus); background:var(--triage-note-bg); color:var(--fg); font:13px/1.55 var(--vscode-font-family,system-ui,sans-serif); white-space:normal; overflow-wrap:anywhere; }
+.guide-reading .guide-handoff { display:block; flex:none; max-height:none; overflow:visible; padding:12px 16px; border-top:2px solid var(--triage-focus); background:var(--triage-note-bg); color:var(--fg); font:13px/1.5 var(--vscode-font-family,system-ui,sans-serif); white-space:normal; overflow-wrap:anywhere; }
+.guide-next-function { display:block; margin:2px 0 6px; color:var(--triage-muted); }
+.guide-handoff details { font-size:12px; margin-top:6px; }
+.guide-resize { display:none; position:fixed; width:8px; right:calc(var(--guide-side-width) - 4px); top:var(--guide-controls-bottom); bottom:0; cursor:col-resize; touch-action:none; z-index:1001; }
+.guide-open .guide-resize { display:block; }
+.guide-resize::after { content:''; position:absolute; left:2px; top:45%; width:3px; height:36px; border-left:1px solid var(--triage-muted); border-right:1px solid var(--triage-muted); border-radius:2px; }
+.guide-resize:hover,.guide-resize:focus-visible { background:var(--triage-focus); outline:2px solid var(--triage-focus); }
+.guide-pane-collapsed .guide-aside,.guide-pane-collapsed .guide-resize { display:none; }
 .guide-handoff p { margin:4px 0 0; }
 .guide-conclusion-action { margin-top:8px; padding:6px 8px; border:1px solid var(--triage-control); border-radius:4px; background:var(--card-bg); color:var(--triage-link); cursor:pointer; font:inherit; }
 .guide-conclusion-action:focus-visible { outline:2px solid var(--triage-focus); outline-offset:2px; }
@@ -642,7 +668,9 @@ body.guide-note-editing.triage-drawer-open #flowboard { left:var(--triage-drawer
 .triage-job-reason { margin-top:8px; }
 @media(min-width:801px) and (max-width:1050px) {
   body { --guide-side-width:350px; }
-  .guide-current-title { display:none; }
+  .guide-controls { flex-wrap:wrap; gap:6px; padding:6px 8px; font-size:12px; }
+  .guide-current-title { display:block; flex-basis:100%; order:2; }
+  .guide-controls button { padding:4px 6px; }
 }
 @media(max-width:800px) {
   body { --guide-side-width:0px; --guide-bottom-height:36vh; }
@@ -650,11 +678,11 @@ body.guide-note-editing.triage-drawer-open #flowboard { left:var(--triage-drawer
   .guide-controls button { padding:4px 6px; }
   .guide-current-title { display:none; }
   .guide-aside { top:auto; bottom:0; left:0; right:0; width:100%; height:var(--guide-bottom-height); padding:12px 16px; border-left:0; border-top:1px solid var(--border); }
-  .guide-caption { display:block; position:sticky; top:-12px; padding:8px 0; background:var(--card-bg); border-bottom:1px solid var(--border); z-index:1; font-weight:600; font-size:14px; }
+  .guide-caption { display:block; position:sticky; top:-12px; margin:-12px -16px 12px; padding:8px 16px; background:var(--card-bg); border-bottom:1px solid var(--border); z-index:1; font-weight:600; font-size:14px; }
   .guide-open .triage-reading-location { max-width:calc(100vw - 48px); }
   .guide-open #triage-legend,.guide-open #minimap { display:none; }
   .guide-aside > small { display:none; }
-  .guide-mechanism[open] { max-height:110px; }
+  .guide-mechanism[open] { max-height:none; }
   .guide-annotation { margin:0 0 16px; }
   .guide-annotation h2 { font-size:16px; }
   .guide-reading .guide-active-card .card-code { padding:8px; }
@@ -662,7 +690,11 @@ body.guide-note-editing.triage-drawer-open #flowboard { left:var(--triage-drawer
   .guide-reading .guide-active-card .card-meta { white-space:nowrap; overflow:auto; overflow-wrap:normal; }
   .guide-reading .card-header { padding:8px 12px; }
   .guide-outline ol { max-height:72px; }
-  .guide-reading .guide-handoff { max-height:44px; box-sizing:border-box; padding:8px 12px; font-size:12px; }
+  .guide-reading .guide-handoff { max-height:none; box-sizing:border-box; padding:8px 12px; font-size:12px; }
+  .guide-resize { top:auto; bottom:calc(var(--guide-bottom-height) - 4px); width:100%; height:8px; left:0; right:0; cursor:row-resize; }
+  .guide-resize::after { left:45%; top:2px; width:36px; height:3px; border:0; border-top:1px solid var(--triage-muted); border-bottom:1px solid var(--triage-muted); }
+  .guide-input-row { grid-template-columns:minmax(0,1fr); }
+  .guide-input-meaning,.guide-input-evidence { grid-column:auto; }
   .guide-preparation { top:auto; bottom:0; right:0; width:100%; max-height:42vh; padding:16px; }
   .guide-preparing:not(.guide-open) #flowboard { top:52px; bottom:176px; }
   .guide-status-row { flex-wrap:wrap; }

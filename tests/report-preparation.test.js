@@ -43,6 +43,19 @@ async function fixture(t, count = 3, invoke, report = reportText(count), source 
   t.after(async () => { runner.dispose(); await runner.loop; fs.rmSync(root, { recursive: true, force: true }); });
   return { root, options, runner, calls, updates, replaceCatalog: value => catalog = value };
 }
+function candidatePatch(value) {
+  value=structuredClone(value);delete value.walkthrough.steps;
+  return {mode:'candidate-patch-v1',updates:Object.entries(value).filter(([key])=>!['inputReviews','explanationReviews'].includes(key)).map(([key,item])=>({path:'/'+key,valueJSON:JSON.stringify(item)}))};
+}
+function checkedCandidate(input) {
+  const value=response({...input,checkOnly:true});value.inputReviews=[];
+  value.explanationReviews=value.explanationReviews.map(item=>{
+    const change=input.candidateRevisions.changes.find(c=>c.path==='/evidence/'+item.evidenceId);
+    return {...item,result:change?change.before?'repaired':'added':'kept'};
+  });
+  value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The full supplied false guard provides the requested source behavior while preserving the original allegation and condition.',evidence:['guard'],documentation:[]})));
+  return value;
+}
 test('selection promotes two durable stages without owning preparation or starving siblings', { skip: !native }, async t => {
   let release, entered;
   const held = new Promise(resolve => release = resolve), started = new Promise(resolve => entered = resolve);
@@ -193,6 +206,7 @@ test('local recovery cannot publish stale code, damaged responses or a generatio
 test('FIRST pending-response recovery projects the recovered missing input through board status without spending', { skip: !native }, async t => {
   const f = await fixture(t, 1), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
   const value = response({ phase: 'challenge', sources: engine.makeContext(catalog, f.runner.request(entries[0], catalog, report), f.runner.issue(entries[0])).units });
+  fs.writeFileSync(path.join(f.root,'.flowboard/controlled-generation.json'),JSON.stringify(value));
   value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The asserted receiver identity is unavailable.'];
   value.questions = [{ id: 'receiver', claimId: 'c1', text: 'Which receiver is actually configured?', action: 'missing-context', target: 'deployment', why: 'The asserted runtime route depends on that identity.' }];
   value.causal.outcome = 'blocked';
@@ -379,8 +393,9 @@ test('a checked finding is immediately readable while a sibling is still checkin
   const f = await fixture(t, 4, async input => {
     if (input.finding.id === 'I-2' && input.phase === 'challenge') { entered = true; await held; }
     if (input.finding.id === 'I-4') return {};
-    const value = response(input);
-    if (input.finding.id === 'I-3' && !input.checkOnly) {
+    const value = input.candidateOnly ? {mode:'candidate-patch-v1',updates:[]} : response(input);
+    if (input.reviewPurpose && input.checkOnly) value.inputReviews=[];
+    if (input.finding.id === 'I-3' && !input.checkOnly && !input.candidateOnly) {
       value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The deployment configuration is unavailable.'];
       value.causal.outcome = 'blocked'; value.causal.obligations[0].state = 'open';
       value.conclusion.limitations = ['The deployment configuration is unavailable.'];
@@ -608,6 +623,7 @@ test('Resume during a finishing request is not lost and does not regenerate the 
 test('a repaired answer can request new local evidence without spending the semantic-repair allowance again', { skip: !native }, async t => {
   let inspected = false;
   const f = await fixture(t, 1, (input, calls) => {
+    if(input.reviewPurpose && input.checkOnly)return checkedCandidate(input);
     if (input.checkOnly) return { result: 'repair', problems: ['Read the declared check before finalizing.'], explanationReviews: [], checks: [] };
     const value = response(input);
     if (input.phase === 'challenge' && !input.sources.some(unit => unit.name === 'Policy::expected')) {
@@ -620,13 +636,14 @@ test('a repaired answer can request new local evidence without spending the sema
       assert.match(unit.code, /return false;/);
       assert.ok(input.hostReview.newLocalCode);
     }
-    return value;
+    return input.candidateOnly?candidatePatch(value):value;
   });
   fs.writeFileSync(path.join(f.root, 'src/Policy.sol'), 'pragma solidity ^0.8.20;\ncontract Policy { function expected() external pure returns (bool) { return false; } }\n');
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 5 });
   const result = await analyze(native, f.root, { mode: 'source' }); f.replaceCatalog(new SourceCatalog(f.root, result.runner, result.result));
   await f.runner.ensure();
   assert.equal(inspected, true);
-  assert.equal(f.calls.length, 4, 'Generation, compact check, repair, then one new-evidence check.');
+  assert.equal(f.calls.length, 5, 'Generation, compact check, repair discovering local context, private completion, full verification.');
   assert.equal(f.runner.status().published, true);
   const saved = engine.read(f.root, 'I-1');
   assert.equal(saved.checkpoint.followups, 1); assert.equal(saved.checkpoint.repairUsed, true);
@@ -691,9 +708,7 @@ for (const selectedCount of [1, 2]) test(`runner/coordinator additive plan admit
   const f = await fixture(t, 2, input => {
     const value = response({ ...input, checkOnly: false });
     if (input.phase === 'challenge') {
-      value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['Check the named local policy.'];
-      value.causal.outcome = 'blocked'; value.causal.obligations[0].state = 'open';
-      value.questions = [{id:'q',claimId:'c1',action:'symbol',target:'Policy::expected',text:'Inspect Policy.expected.',why:'The retained conclusion needs its local definition.'}];
+      throw Object.assign(Error('Controlled interrupted check, retaining a complete generation.'),{audit:{phase:'challenge',outcome:'failed'}});
     }
     return value;
   },reportText(2),code+'\ncontract Policy { function expected() external pure returns (bool) { return false; } }\n');
@@ -738,6 +753,56 @@ test('an old imported report has no inherited elapsed-time stop', { skip: !nativ
   old.importedAt = new Date(Date.now() - 3600000).toISOString(); fs.writeFileSync(file, JSON.stringify(old));
   await f.runner.ensure(); assert.equal(f.calls.length, 2); assert.equal(f.runner.status().ready, 1);
   assert.equal(f.runner.state.batch.startedAt, old.importedAt);
+});
+
+test('ordinary private candidate and complete verification use separate guarded coordinator reservations across reopen', { skip: !native }, async t => {
+  const f=await fixture(t,1,async input=>{
+    const value=response(input);
+    value.questions=[{id:'explain-guard',claimId:'c1',text:'Explain the supplied false guard.',action:'inspect',target:value.claims[0].entry,why:'Retain a private candidate until the complete check.'}];
+    f.runner.control('pause');return value;
+  });
+  await f.runner.ensure();f.runner.dispose();await f.runner.loop;
+  assert.equal(f.calls.length,1);assert.equal(f.runner.state.resources.requests,1);
+  const {EvaluationPlanGuard,packetIdentity,savedBase,accountingBaseline}=require('../scripts/evaluation-plan-guard');
+  const {executionOptions,runCases,verifyParent}=require('../scripts/run-evaluation-plan');
+  const catalog=await f.options.catalog(),{entries,report}=reconcile(f.root),entry=entries[0],issue=f.runner.issue(entry);
+  const request=f.runner.request(entry,catalog,report);let owner=f.runner,parent;
+  const purposes=['candidate-completion','candidate-verification'],calls=[];
+  for(const purpose of purposes) {
+    const saved=engine.read(f.root,entry.id),base=accountingBaseline(owner.state);
+    const {packet}=await require('../scripts/saved-stage-packet').inspectSavedStage({root:f.root,catalog,request,issue,findingId:entry.id,saved});
+    assert.equal(packet.reviewPurpose,purpose);assert.equal(owner.state.resources.requests,purpose===purposes[0]?1:2);
+    const file=path.join(f.root,purpose+'.json');fs.writeFileSync(file,JSON.stringify(packet));
+    const manifest={root:f.root,referenceHash:'separate-controlled-reference',maximumRequests:1,
+      reviewCycle:{id:'controlled-candidate-cycle'},cases:[{findingId:entry.id,phases:['challenge'],reviewPurpose:purpose,timeoutMs:purpose===purposes[0]?300000:600000,
+        snapshotHash:engine.hash(saved.snapshot),retainedBaseHash:engine.hash(savedBase(saved)),firstPacket:packetIdentity(packet),firstPacketPath:file}],
+      continuation:{parentManifestHash:parent?engine.hash(parent.manifest):'controlled-parent',baseline:base,baselineHash:engine.hash(base)}};
+    if(parent)Object.assign(manifest.continuation,{parentManifestPath:parent.manifestPath,parentLedgerPath:parent.ledgerPath,parentLedgerHash:engine.hash(parent.ledger)});
+    if(parent){verifyParent(manifest);const failed=structuredClone(parent.ledger);failed.receipts[0].outcome='failed';fs.writeFileSync(parent.ledgerPath,JSON.stringify(failed));
+      const refused=structuredClone(manifest);refused.continuation.parentLedgerHash=engine.hash(failed);assert.throws(()=>verifyParent(refused),/timeout|cycle/);
+      fs.writeFileSync(parent.ledgerPath,JSON.stringify(parent.ledger));}
+    const ledger={manifestHash:engine.hash(manifest),used:0,receipts:[]},approval={authorized:true,manifestHash:engine.hash(manifest),maximumRequests:1};
+    const guard=new EvaluationPlanGuard({manifest,ledger,approval,root:f.root,save:()=>{},acceptedBase:id=>engine.read(f.root,id)});
+    assert.ok(guard.check(packet));assert.equal(ledger.used,0);
+    const invoke=async(input,options)=>{
+      const receipt=guard.dispatch(input,options.requestId);calls.push(input.reviewPurpose);
+      const value=input.candidateOnly?{mode:'candidate-patch-v1',updates:[{path:'/questions',valueJSON:'[]'},
+        {path:'/evidence/guard/explanation',valueJSON:JSON.stringify('The false condition reaches require; it reverts instead of returning normally.')}]}:response(input);
+      if(input.checkOnly){value.inputReviews=[];value.explanationReviews[0].result='repaired';value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The local guard supplies the previously requested explanation; the same false-input condition is retained.',evidence:['guard'],documentation:[]})));}
+      const result={value,audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local',teardown:{confirmed:true}}};
+      guard.result(receipt,input,result);return result;
+    };
+    owner=new ReportPreparation(f.root,executionOptions({manifest,guard,catalog:async()=>catalog,invoke}));
+    await runCases(owner,manifest);assert.equal(ledger.used,1,JSON.stringify(owner.status().jobs));
+    assert.equal(owner.status().requests,base.requests+1);assert.equal(owner.status().ready,inputReady(purpose),JSON.stringify(owner.status().jobs));
+    await runCases(owner,manifest);assert.equal(calls.length,purpose===purposes[0]?1:2,'Restart cannot duplicate a consumed stage.');
+    assert.throws(()=>guard.authorize(packet),/Aggregate/);
+    const manifestPath=path.join(f.root,purpose+'-manifest.json'),ledgerPath=path.join(f.root,purpose+'-ledger.json');
+    fs.writeFileSync(manifestPath,JSON.stringify(manifest));fs.writeFileSync(ledgerPath,JSON.stringify(ledger));parent={manifest,ledger,manifestPath,ledgerPath};
+    owner.dispose();await owner.loop;
+  }
+  assert.deepEqual(calls,purposes);assert.equal(engine.read(f.root,entry.id).phase,'ready');
+  function inputReady(purpose){return purpose==='candidate-verification'?1:0;}
 });
 
 test('historical expiry does not auto-resume a paused job but explicit local continuation works', { skip: !native }, async t => {
@@ -930,15 +995,15 @@ test('a long function keeps its full local body and reads its tail before a subs
   const packets = [];
   const f = await fixture(t, 1, input => {
     packets.push(input);
+    if(input.reviewPurpose && input.checkOnly)return checkedCandidate(input);
     const result = response(input);
     if (input.phase === 'challenge') {
       assert.equal(input.checkOnly, undefined, 'New tail code may change the argument; do not force check-then-repair.');
-      assert.equal(input.repairOnly, true);
+      assert.equal(input.candidateOnly, true,'Tail-dependent amendments are constructed privately before full checking.');
       assert.ok(input.sources.some(unit => unit.code.includes(`${guardLine} |         require(accepted, "rejected");`)), 'The decisive tail guard was actually supplied.');
       result.evidence[0].line = result.evidence[0].endLine = guardLine;
-      result.explanationReviews[0].result = 'added';
       delete result.walkthrough.steps; // Current response schema derives this from causal order.
-      return { mode: 'review-patch-v1', updates: Object.entries(result).filter(([key]) => key !== 'explanationReviews').map(([key, value]) => ({ path: '/' + key, valueJSON: JSON.stringify(value) })), explanationReviews: result.explanationReviews, checks: result.causal.checks };
+      return candidatePatch(result);
     }
     assert.ok(!input.sources.some(unit => unit.code.includes('require(accepted')), 'The first packet has not read the decisive guard.');
     result.claims[0] = { ...result.claims[0], status: 'unresolved', reason: 'The complete ending has not been read.', evidence: [], unknowns: ['Read the remaining local function before judging normal completion.'] };
@@ -949,7 +1014,7 @@ test('a long function keeps its full local body and reads its tail before a subs
     return result;
   }, reportText(1), long);
   await f.runner.ensure();
-  assert.equal(f.calls.length, 2, JSON.stringify({ reason: f.runner.state.jobs['I-1'].reason, packets: packets.map(input => ({ phase: input.phase, feedback: input.feedback, repairOnly: input.repairOnly, sources: input.sources.map(unit => ({ line: unit.line, endLine: unit.endLine })) })) })); assert.equal(f.runner.status().published, true, f.runner.state.jobs['I-1'].reason);
+  assert.equal(f.calls.length, 3, JSON.stringify({ reason: f.runner.state.jobs['I-1'].reason, packets: packets.map(input => ({ phase: input.phase, purpose: input.reviewPurpose, sources: input.sources.map(unit => ({ line: unit.line, endLine: unit.endLine })) })) })); assert.equal(f.runner.status().published, true, f.runner.state.jobs['I-1'].reason);
   const draft = engine.read(f.root, 'I-1'), unit = draft.sources.find(item => item.name === 'Gate::finish');
   assert.ok(unit.code.length > 110000); assert.ok(unit.source.endLine > 1500);
   assert.equal(unit.readThrough, unit.source.endLine); assert.ok(unit.code.includes('reading context 1499'));

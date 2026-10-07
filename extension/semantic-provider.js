@@ -10,14 +10,15 @@ const { limits } = require('./review-capacity');
 
 const string = { type: 'string' };
 const strings = { type: 'array', items: string, maxItems: 12 };
+const evidenceReferences = { type: 'array', items: string, maxItems: limits.evidence };
 function object(properties) { return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false }; }
 const schema = object({
   inputReviews: require('./semantic-input').reviewSchema,
   causal: require('./guide-policy').schema,
-  property: object({ text: string, basis: { enum: ['report-assumption', 'source-contract', 'test-expectation', 'local-documentation', 'unresolved'] }, evidence: strings, documentation: strings }),
+  property: object({ text: string, basis: { enum: ['report-assumption', 'source-contract', 'test-expectation', 'local-documentation', 'unresolved'] }, evidence: evidenceReferences, documentation: strings }),
   claims: { type: 'array', maxItems: limits.claims, items: object({ id: string, allegation: string, actor: string, entry: string,
     implementation: string, conditions: strings, requiredFacts: strings, supportsIf: string, contradictsIf: string,
-    status: { enum: ['unresolved', 'supported', 'contradicted', 'narrowed'] }, reason: string, evidence: strings,
+    status: { enum: ['unresolved', 'supported', 'contradicted', 'narrowed'] }, reason: string, evidence: evidenceReferences,
     unknowns: strings, nextQuestion: string }) },
   evidence: { type: 'array', maxItems: limits.evidence, items: object({ id: string, claimId: string,
     sourceId: string, line: { type: 'integer' }, endLine: { type: 'integer' }, quote: string,
@@ -26,7 +27,7 @@ const schema = object({
     result: { enum: ['kept', 'repaired', 'removed', 'added'] }, reason: string, checkedSourceIds: strings }) },
   transitions: { type: 'array', maxItems: limits.transitions, items: object({ id: string, claimId: string, label: string,
     before: string, after: string, timing: { enum: ['within-transaction', 'transaction-outcome', 'later-action', 'unknown'] },
-    conditions: strings, evidence: strings }) },
+    conditions: strings, evidence: evidenceReferences }) },
   questions: { type: 'array', maxItems: limits.questions, items: object({ id: string, claimId: string, text: string,
     action: { enum: ['inspect', 'callers', 'symbol', 'references', 'missing-context'] }, target: string, why: string }) },
   conclusion: object({ status: { enum: ['insufficient-evidence', 'contradicted-in-scope', 'supported-in-scope', 'mixed'] }, text: string, limitations: strings }),
@@ -84,10 +85,10 @@ walkthrough.assessment is a PRELIMINARY opinion of the whole issue, never the sa
 Prioritize material unknowns that could change the assessment of THIS current checkout and reported conditions. Do not ask about an already-true flag when rollback already settles whether the current call changed it. Do not invent a historical-version or deployment requirement for a source-only allegation that is resolved by the supplied code. Retain such uncertainty only where the report or actual dispatch makes it relevant. In multi-route findings, put the unknown of an unresolved route before optional background questions on an already contradicted route. One concise question is better than repeating unavailable specification/history language for every note.`;
 
 const fullSchema = input => input.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(schema) : schema;
-const responseSchema = input => input.checkOnly ? challengeFormat.checkSchema(fullSchema(input)) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
+const responseSchema = input => input.candidateOnly ? challengeFormat.candidateSchema(fullSchema(input)) : input.checkOnly ? challengeFormat.checkSchema(fullSchema(input), !!input.reviewPurpose) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
 const responseInstruction = input => input.checkOnly ? challengeFormat.checkInstruction : input.repairOnly ?
   challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + JSON.stringify(fullSchema(input)) :
-  input.phase === 'challenge' ? challengeFormat.instruction : '';
+  input.candidateOnly ? 'Return candidate-patch-v1 using stable-ID slash paths and JSON-encoded valueJSON, as in review-patch-v1, but no review arrays. The assembled candidate must match this exact field schema:\n' + JSON.stringify(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.instruction : '';
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -95,7 +96,8 @@ function measureRequest(input) {
   require('./provisional-work-note').check(input);
   const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : '') +
     (input.sourceContextFormat === require('./packet-context').VERSION ? '\n' + require('./packet-context').instruction : '') +
-    (input.provisionalWorkNotes ? '\n' + require('./provisional-work-note').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
+    (input.provisionalWorkNotes ? '\n' + require('./provisional-work-note').instruction : '') +
+    (input.reviewPurpose ? '\n' + require('./review-candidate').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
   const sections = { report: 0, source: 0, previousDraft: 0, metadata: 0 };
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue;
@@ -159,7 +161,7 @@ function diagnosticReason(detail) {
 function runTransport(input, options, spec) {
   const metrics = spec.metrics, requestId = options.requestId || crypto.randomUUID(), timeoutMs = options.timeoutMs || spec.timeoutMs;
   const startedAt = new Date().toISOString(), start = Date.now(), outputLimit = Math.max(1, Math.min(MAX_OUTPUT_BYTES, options.outputLimitBytes || MAX_OUTPUT_BYTES));
-  const audit = { provider: `${spec.provider}-cli`, requestId, phase: input.phase, responseMode: input.checkOnly ? 'check' : input.repairOnly ? 'patch' : input.phase,
+  const audit = { provider: `${spec.provider}-cli`, requestId, phase: input.phase, ...(input.reviewPurpose ? { reviewPurpose: input.reviewPurpose } : {}), responseMode: input.candidateOnly ? 'candidate-patch' : input.checkOnly ? 'check' : input.repairOnly ? 'patch' : input.phase,
     startedAt, queuedAt: options.capacity?.queuedAt || null, slotAcquiredAt: options.capacity?.acquiredAt || null, queueWaitMs: options.capacity?.waitMs ?? null,
     processStartedAt: null, firstActivityAt: null, firstProviderEventAt: null, firstReasoningContentAt: null, firstSubstantiveContentAt: null, finalStructuredContentAt: null,
     processExitedAt: null, hostAcceptedAt: null, inputHash: metrics.inputHash, sourcePacketHash: metrics.sourcePacketHash,

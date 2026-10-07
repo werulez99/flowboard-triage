@@ -8,11 +8,12 @@ const object = properties => ({ type: 'object', properties, required: Object.key
 // A first challenge checks the argument without asking for a second copy of
 // the entire causal model. A disagreement takes the existing bounded repair
 // path. This is a smaller response contract, not a weaker publication gate.
-function checkSchema(full) {
+function checkSchema(full, revisions = false) {
   return object({ result: { enum: ['kept', 'repair'] }, problems: { type: 'array', items: { type: 'string' }, maxItems: 12 },
     ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
     explanationReviews: full.properties.explanationReviews,
-    checks: full.properties.causal.properties.checks });
+    checks: revisions ? { ...full.properties.causal.properties.checks,
+      maxItems: full.properties.causal.properties.checks.maxItems + require('./review-capacity').limits.revisionChecks } : full.properties.causal.properties.checks });
 }
 function checked(value, previous, full) {
   if (full.properties.inputReviews && !previous.inputReviews?.length && value?.inputReviews === undefined) value = { ...value, inputReviews: [] };
@@ -26,6 +27,14 @@ function checked(value, previous, full) {
 }
 const checkInstruction = `This request is a CHECK, not a rewrite. The response schema below supersedes the output-shape instructions above. Read the whole supplied argument and relevant code, including new dependencies. Return result=kept ONLY when earlierDraft can be retained EXACTLY. Explain every evidence entry with result=kept and every causal target (events, obligations, relationships) with fresh evidence-grounded checks. One concrete sentence per check. If a note, condition, unresolved question, argument or outcome needs changing, return result=repair with precise problems and affected IDs; do not silently approve it. An honest incomplete argument may be kept with its blockers intact, but cannot become a published guide. Do not generate a replacement tutorial, repeat quotes or invent new evidence in this checking response. Location matching and model agreement alone do not establish truth.`;
 const PATCH = 'review-patch-v1';
+const CANDIDATE = 'candidate-patch-v1';
+function candidateSchema(full) {
+  return object({ mode: { enum: [CANDIDATE] }, updates: patchSchema(full).properties.updates });
+}
+function candidate(value, previous, full) {
+  if (!valid(value, candidateSchema(full))) throw new Error('The private candidate update has an invalid shape.');
+  return assemblePatch({ mode: PATCH, updates: value.updates, inputReviews: [], explanationReviews: [], checks: [] }, previous, full);
+}
 function patchSchema(full) {
   return object({ mode: { enum: [PATCH] }, updates: { type: 'array', maxItems: 80,
     items: object({ path: { type: 'string' }, valueJSON: { type: 'string' } }) },
@@ -124,4 +133,4 @@ function expand(value, previous, fullSchema) {
 const instruction = `During challenge return review-delta-v1 using the supplied schema. earlierDraft is the exact earlier result in the same field format. In changes and causal, null means preserve that field EXACTLY, not remove it or consider it automatically checked. Replace an array as a whole when it changes; [] deliberately clears it. Supply fresh causal.checks for EVERY event, obligation and relationship, plus explanationReviews for EVERY retained/removed/new evidence ID. Never return null for these checks. Review the actual new code before keeping an earlier statement. Changes to a premise require all dependent claims, events, evidence, questions and assessment to be reconsidered. Preserve real blockers. Do not repeat unchanged quotes, conditions and event data merely to acknowledge reading them. Keep each review reason to one concrete sentence with its evidence links. This response format saves copying, not any required reasoning or source check.`;
 module.exports = { MODE, schemaFor, earlier, expand, instruction: instruction + '\n' + scope.instruction,
   checkSchema, checked, checkInstruction: checkInstruction + '\n' + scope.instruction, PATCH, patchSchema, apply, assemblePatch,
-  patchInstruction: patchInstruction + '\n' + scope.instruction, valid };
+  patchInstruction: patchInstruction + '\n' + scope.instruction, valid, CANDIDATE, candidateSchema, candidate };

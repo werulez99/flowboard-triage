@@ -59,7 +59,8 @@ async function verifyAdmission(manifest) {
     const issue=report.issues.find(i=>i.id===c.findingId),entry=parsed.issues.find(i=>i.id===c.findingId);
     if(!issue||!entry)throw Error('Finding no longer matches the imported report.');
     const request=observer.request(entry,catalog,report),saved=engine.read(root,c.findingId);let packet;
-    if(c.phases[0]==='challenge')({packet}=await require('./saved-stage-packet').inspectSavedStage({root,catalog,request,issue,findingId:c.findingId,saved}));
+    let prepared;
+    if(c.phases[0]==='challenge')({packet,preparation:prepared}=await require('./saved-stage-packet').inspectSavedStage({root,catalog,request,issue,findingId:c.findingId,saved,candidateSeed:guard.candidateSeed(c.findingId)}));
     else {
       if(saved?.runs?.some(r=>r.resultAccepted)||saved?.pendingResponse)throw Error('A paid stage exists; fresh generation inspection would misrepresent continuation.');
       const draft=saved?structuredClone(saved):engine.create({findingId:c.findingId,request,issue,catalog});
@@ -67,7 +68,9 @@ async function verifyAdmission(manifest) {
         packet=input;throw Object.assign(Error('Offline capture; no reservation.'),{code:'LOCAL_READING_LIMIT'});
       }});
     }
-    if(!packet)throw Error('No admissible next packet.');guard.check(guard.preparedInput(packet));verified.push(c.findingId);
+    if(!packet)throw Error('No admissible next packet.');
+    guard.acceptedBase=id=>id===c.findingId&&prepared?prepared:engine.read(root,id);
+    guard.check(guard.preparedInput(packet));verified.push(c.findingId);
   }
   if(engine.hash(before)!==engine.hash(inventory()))throw Error('Offline verification changed retained records.');
   console.log(JSON.stringify({manifestHash:engine.hash(manifest),verified,providerRequests:0,newReservations:0,baselineRequests:journal.resources.requests,savedRecordsUnchanged:true}));
@@ -77,10 +80,19 @@ function verifyParent(manifest) {
   if(!path.isAbsolute(c.parentManifestPath||'')||!path.isAbsolute(c.parentLedgerPath||'')||
     engine.hash(JSON.parse(fs.readFileSync(c.parentManifestPath)))!==c.parentManifestHash ||
     engine.hash(JSON.parse(fs.readFileSync(c.parentLedgerPath)))!==c.parentLedgerHash)throw Error('Parent manifest/ledger changed or missing; no continuation permission.');
+  if(manifest.cases.some(item=>item.reviewPurpose)) {
+    const cycle=manifest.reviewCycle, parent=JSON.parse(fs.readFileSync(c.parentManifestPath)), ledger=JSON.parse(fs.readFileSync(c.parentLedgerPath));
+    const order=['candidate-completion','candidate-verification','candidate-repair','candidate-reverification'];
+    const purpose=manifest.cases[0].reviewPurpose, index=order.indexOf(purpose);
+    if(!cycle || !cycle.id || manifest.cases.length!==1 || manifest.maximumRequests!==1 || index<0 ||
+       (parent.reviewCycle ? parent.reviewCycle.id!==cycle.id || order.indexOf(parent.cases[0].reviewPurpose)!==index-1 || ledger.used!==1 ||
+         ledger.receipts[0].outcome!=='completed' || ledger.receipts[0].audit?.teardown?.confirmed===false : index>1))
+      throw Error('Candidate cycle permits C -> V -> conditional R -> V2 once; timeout/interruption cannot open another slot.');
+  }
 }
 function executionOptions({manifest,guard,catalog,invoke}) {
   return {configuration:()=>({provider:'codex',executable:manifest.executable,workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
-    catalog,prepareRequest:input=>guard.preparedInput(input),phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
+    catalog,prepareRequest:input=>guard.preparedInput(input),candidateSeed:id=>guard.candidateSeed(id),phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
     log:message=>console.error(message)};
 }
 async function runCases(coordinator,manifest) {

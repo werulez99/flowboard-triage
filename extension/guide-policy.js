@@ -9,7 +9,8 @@ function digest(draft) {
   return crypto.createHash('sha256').update(JSON.stringify({ findingId: draft.findingId, snapshot: draft.snapshot,
     property: draft.property, claims: draft.claims, evidence: draft.evidence, sources: draft.sources,
     causal: draft.causal, walkthrough: draft.walkthrough, conclusion: draft.conclusion, dependencies: draft.dependencies,
-    semanticInput: draft.semanticInput, inputReviews: draft.inputReviews, ...(draft.bindingPlan ? { bindingPlan: draft.bindingPlan } : {}) })).digest('hex');
+    semanticInput: draft.semanticInput, inputReviews: draft.inputReviews, ...(draft.bindingPlan ? { bindingPlan: draft.bindingPlan } : {}),
+    ...(draft.candidateVerification ? { candidateVerification: draft.candidateVerification } : {}) })).digest('hex');
 }
 const str = { type: 'string' }, strings = { type: 'array', items: str };
 const object = properties => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
@@ -37,9 +38,17 @@ const schema = object({
   checks: { type: 'array', maxItems: limits.checks, items: object({ target: str, reason: str, evidence: strings, documentation: strings }) }
 });
 function gate(draft) {
+  if (draft.reviewCandidate) return { ready: false, policy: POLICY, problems: ['A private candidate is saved; complete fresh verification is still required.'], details: [] };
   const problems = [], details = [], model = draft.causal;
   const fail = (reason, kind = 'structural', target = null) => { problems.push(reason); details.push({ kind, target, reason,
     action: kind === 'capability' ? 'This material route needs a supported analysis capability or independently verified versioned input; unchanged retries cannot establish it.' : kind === 'material-evidence' ? 'Obtain the named evidence; do not regenerate unchanged claims.' : kind === 'local-reading' ? 'Read the remaining local segments and challenge the affected claim.' : 'Repair the affected references or coverage, retaining accepted source and claims.' }); };
+  if (draft.candidateHistory?.length) {
+    const lifecycle = require('./review-candidate'), state = draft.candidateHistory.at(-1), receipt = draft.candidateVerification;
+    if (!receipt || state.verification?.result !== 'kept' || receipt.candidateHash !== state.candidateHash ||
+        receipt.revisionHash !== lifecycle.hash(state.revisions) || lifecycle.hash(receipt.targets) !== lifecycle.hash(lifecycle.revisionTargets(state.revisions)) ||
+        lifecycle.hash(receipt.checks ?? null) !== lifecycle.hash(state.verification.revisionChecks ?? null))
+      fail('The candidate revision verification receipt is missing or changed.');
+  }
   if (!model || typeof model !== 'object') return { ready: false, problems: ['The saved analysis has no checked explanation model. Prepare it with the current review policy.'] };
   const resolved = require('./event-source').resolver(draft);
   for (const problem of require('./semantic-input').problems(draft, true, resolved)) fail(problem, 'structural');
@@ -141,11 +150,14 @@ function gate(draft) {
 function expose(draft, report = null) {
   if (!draft) return null;
   const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
-  if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) return { ...structuredClone(draft), nativeSources: require('./event-source').projections(draft) };
+  if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
+    const copy = structuredClone(draft); delete copy.reviewCandidate; delete copy.candidateHistory; delete copy.candidateVerification;
+    return { ...copy, nativeSources: require('./event-source').projections(draft) };
+  }
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected']) delete copy[field];
+  for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',
     reason: draft.error || draft.publication?.problems?.[0] || (draft.phase === 'provider-required' ? 'Choose an authenticated provider to prepare the explanation.' : ''),

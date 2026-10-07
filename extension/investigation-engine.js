@@ -8,6 +8,7 @@ const p = require('./protocol');
 const { search, terms } = require('./source-search');
 const { runProvider, schema: reviewSchema } = require('./semantic-provider');
 const challengeFormat = require('./challenge-format');
+const candidates = require('./review-candidate');
 const { relatedCode } = require('./reading-context');
 const { content } = require('./report-content');
 const { escaped, lexicalCode } = require('./solidity-text');
@@ -145,6 +146,7 @@ function read(root, id) {
     }
     if (value.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(value.causal[key], limits[key], `saved causal ${key}`);
     if (value.semanticInput) semanticInput.validate(value.semanticInput);
+    if (value.reviewCandidate) candidates.assertCurrent(value, reviewSchema);
     if (value.inputReviews !== undefined && (!Array.isArray(value.inputReviews) || value.inputReviews.length > 44 || value.inputReviews.some(item => !item || typeof item !== 'object' || Array.isArray(item)))) throw new Error('Invalid saved researcher-input reviews.');
     if (!value.snapshot || !/^[a-f0-9]{64}$/.test(value.snapshot.sourceDigest) || !/^[a-f0-9]{64}$/.test(value.snapshot.reportHash) || !Number.isSafeInteger(value.revision) || value.revision < 0 || typeof value.phase !== 'string' || typeof value.property?.text !== 'string' || typeof value.property?.basis !== 'string' || typeof value.conclusion?.text !== 'string') throw new Error('Invalid investigation identity, rule or conclusion.');
     const refs = new Map();
@@ -597,7 +599,7 @@ function makeContext(catalog, request, issue) {
   const restore = (saved, draft) => {
     const relevantTests = new Set(units.filter(unit => unit.kind === 'test-source').map(unit => unit.id));
     const required = new Set([...(draft?.evidence || []).map(entry => entry.sourceId), ...(draft?.claims || []).map(claim => claim.entry),
-      ...(draft?.actions || []).filter(action => ['inspect','callers','symbol','references'].includes(action.kind)).flatMap(action => action.sourceIds)]);
+      ...(draft?.actions || []).filter(action => ['inspect','callers','symbol','references','code-completion'].includes(action.kind)).flatMap(action => action.sourceIds)]);
     units.length = 0; functions.clear(); unread.clear(); budget = 110000; sourceLimit = 40;
     const restoredIds = new Set();
     for (const unit of saved) {
@@ -653,7 +655,7 @@ function canonicalEvidence(items, units) {
     return { ...item, quote: exact };
   });
 }
-function accept(output, draft, units) {
+function accept(output, draft, units, { candidateOnly = false } = {}) {
   if (output?.bindingFormat !== undefined && output.bindingFormat !== require('./source-bindings').VERSION)
     throw Object.assign(new Error('This source-binding representation is not supported.'), { code: 'BINDING_VERSION' });
   if (output?.bindingFormat === require('./source-bindings').VERSION) {
@@ -674,7 +676,7 @@ function accept(output, draft, units) {
     return { id, allegation: text(claim.allegation), actor: text(claim.actor), entry: known.has(claim.entry) ? claim.entry : '',
       implementation: text(claim.implementation), conditions: list(claim.conditions), requiredFacts: list(claim.requiredFacts),
       supportsIf: text(claim.supportsIf), contradictsIf: text(claim.contradictsIf), status: ['supported', 'contradicted', 'narrowed'].includes(claim.status) ? claim.status : 'unresolved',
-      reason: text(claim.reason), evidence: list(claim.evidence, 24), unknowns: list(claim.unknowns), nextQuestion: text(claim.nextQuestion),
+      reason: text(claim.reason), evidence: list(claim.evidence, limits.evidence), unknowns: list(claim.unknowns), nextQuestion: text(claim.nextQuestion),
       origin: 'model-interpretation', reviewed: false, correctionRevision: draft.corrections.length,
       premiseIds: draft.corrections.filter(item => !item.claimId || item.claimId === id).map(item => item.id) };
   });
@@ -702,7 +704,7 @@ function accept(output, draft, units) {
       claim.status = 'unresolved'; claim.unknowns.push('The proposed assessment had no evidence with the required stance.');
     }
   }
-  const refs = value => list(value, 24).filter(id => evidenceIds.has(id));
+  const refs = value => list(value, limits.evidence).filter(id => evidenceIds.has(id));
   const property = { text: text(output.property.text), basis: ['source-contract', 'test-expectation', 'local-documentation'].includes(output.property.basis) ? output.property.basis : 'report-assumption', evidence: refs(output.property.evidence),
     documentation: list(output.property.documentation, 6).filter(id => draft.documentation?.excerpts.some(item => item.id === id)) };
   if (!property.evidence.length && !property.documentation.length) property.basis = 'report-assumption';
@@ -728,7 +730,9 @@ function accept(output, draft, units) {
     opposingEvidence: evidence.find(item => item.id === presentation.assessment?.opposingEvidence && item.stance === 'contradicts')?.id || ''
   } } : null;
   const inputReviews = structuredClone(output.inputReviews || []);
-  const inputProblems = semanticInput.problems({ ...draft, sources: units, claims, evidence, causal: output.causal, inputReviews }, false);
+  // Construction must not masquerade as a premise review. Only its private
+  // structural projection may omit attestations; ordinary acceptance cannot.
+  const inputProblems = candidateOnly ? [] : semanticInput.problems({ ...draft, sources: units, claims, evidence, causal: output.causal, inputReviews }, false);
   if (inputProblems.length) throw new Error(inputProblems.join('\n'));
   return { property, claims, evidence, transitions, questions, inputReviews, bindingPlan: output.bindingPlan || null, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
     scopedStatus: claims.some(claim => claim.status === 'unresolved') ? 'partial' : text(output.conclusion.status, 100),
@@ -779,7 +783,7 @@ function checkExplanations(output, previous, next, units) {
   next.explanationReviews = accepted;
   return next;
 }
-async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false, prepareRequest }) {
+async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false, prepareRequest, candidateSeed }) {
   delete draft.yielded;
   const ensure = () => { if (signal?.aborted || !current()) throw Object.assign(new Error('Investigation superseded; partial work is preserved.'), { code: 'INVESTIGATION_SUPERSEDED' }); catalog.assertFresh(); };
   const save = async () => {
@@ -842,6 +846,17 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // same long report appeared as raw text, sections AND paragraphs in every
     // pass, crowding out the relevant code without adding evidence.
     draft.semanticInput ||= semanticInput.input(request, issue);
+    if (candidateSeed && !draft.reviewCandidate && !draft.pendingResponse && !localOnly) {
+      if (!resumeChallenge || candidateSeed.contextHash !== candidates.identity(draft) || candidateSeed.acceptedBaseHash !== candidates.hash(candidates.wire(draft, reviewSchema)))
+        throw new Error('The proposed candidate seed no longer matches this accepted base and source/premises.');
+      const original = candidates.wire(draft, reviewSchema), shape = original.bindingFormat ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
+      // Exact model-authored edits only. Diagnostic attestations are discarded;
+      // this seed still needs whole-candidate completion and full verification.
+      const proposed = challengeFormat.candidate({ mode: challengeFormat.CANDIDATE, updates: candidateSeed.updates }, original, shape);
+      accept(proposed, draft, context.units, { candidateOnly: true });
+      const state = candidates.save(draft, proposed, reviewSchema, { kind: 'untrusted-model-seed', responseHash: candidateSeed.responseHash, requestId: candidateSeed.requestId, at: now() });
+      state.state = 'seeded'; await save();
+    }
     const input = phase => ({ phase, semanticInput: semanticInput.packet(draft.semanticInput), finding: { id: findingId, title: request.finding.title,
       reportSections: content(issue?.reportText || request.finding.summary).sections.map(({ field, proposed, role }) => ({ field, proposed, role })),
       reportParagraphs: walkthrough.paragraphs(issue?.reportText || request.finding.summary) },
@@ -863,7 +878,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const supersededCandidates = new Set();
     const readQuestions = result => {
       let progress = false; const priorUnits = [...context.units], alreadyRead = new Set(priorUnits.map(unit => unit.id));
-      const deferred = context.prioritize(result);
+      // Revisions can remove a note from the candidate, but its original
+      // source is still required by the checker of that removal. Preserve the
+      // accepted context until original-to-candidate review is complete.
+      const deferred = context.prioritize(result, draft.reviewCandidate ? draft.sources.map(unit => unit.id) : []);
       if (deferred.length) draft.actions.push({ id: `prioritize-${crypto.randomUUID()}`, kind: 'context-priority', outcome: 'candidates-deferred', sourceIds: [], performedAt: now(),
         result: `Reserved follow-up room by deferring unreferenced discovery candidates, not evidence: ${deferred.join('; ')}. These definitions remain in the local index.` });
       // The response already has a shared bounded question capacity. A fixed
@@ -889,10 +907,19 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     };
     const obtain = async (phase, previous = null, feedback = null) => {
       let data = input(phase);
+      const reviewPurpose = phase === 'challenge' && !draft.pendingResponse ? candidates.purpose(draft, reviewSchema) : null;
       if (feedback) data.hostReview = feedback;
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
       if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
       else if (phase === 'challenge') data.repairOnly = true;
+      if (reviewPurpose) {
+        data = candidates.packet(data, draft, reviewSchema, reviewPurpose);
+        // Compiled selectors belong to the candidate, never the old base.
+        if (draft.reviewCandidate && data.bindingFormat) {
+          const proposed = accept(draft.reviewCandidate.candidate, draft, context.units, { candidateOnly: true });
+          data.assembledEarlier = require('./source-bindings').derived(proposed);
+        }
+      }
       data = require('./packet-context').compact(data);
       if (!draft.pendingResponse && !localOnly && prepareRequest) { data = prepareRequest(data); ensure(); }
       const call = async input => {
@@ -904,6 +931,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           phase, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel });
         if (cached) {
           ensure();
+          if (cached.input.reviewPurpose) {
+            const expected = candidates.packet(cached.input, draft, reviewSchema, cached.input.reviewPurpose);
+            if (hash(expected.candidateIdentity) !== hash(cached.input.candidateIdentity) ||
+                hash(expected.earlierDraft) !== hash(cached.input.earlierDraft) ||
+                hash(expected.candidateRevisions) !== hash(cached.input.candidateRevisions))
+              throw Object.assign(new Error('The saved response checked a different private candidate or revision. It cannot verify the current candidate.'), { code: 'CANDIDATE_STALE' });
+          }
           const recoveredUnits = cached.units.map(unit => ({ ...unit,
             code: catalog.document(unit.source.file).lines.slice(unit.source.line - 1, unit.source.endLine).join('\n') }));
           context.restore(recoveredUnits, draft); data = cached.input;
@@ -987,6 +1021,23 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           return supplied && supplied.line <= through + 1 ? { ...unit, readThrough: Math.max(through, supplied.endLine) } : unit;
         });
         const formatSchema = data.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
+        if (data.candidateOnly) {
+          const proposed = challengeFormat.candidate(value, data.earlierDraft, formatSchema);
+          const material = accept(proposed, draft, reviewUnits, { candidateOnly: true });
+          require('./review-scope').assert(draft, material);
+          for (const claim of draft.claims) if (!material.claims.some(item => item.id === claim.id)) throw new Error(`Candidate omitted material claim ${claim.id}.`);
+          return { candidateWire: candidates.unchecked(proposed), candidateMaterial: material };
+        }
+        let candidateVerification;
+        if (data.checkOnly && data.reviewPurpose) {
+          if (!challengeFormat.valid(value, challengeFormat.checkSchema(formatSchema, true))) throw new Error('The candidate check returned incomplete checks.');
+          if (value.result === 'kept') {
+            const checks = candidates.checkRevisions(value, data, draft);
+            candidateVerification = { candidateHash: data.candidateIdentity.candidateHash, revisionHash: data.candidateIdentity.revisionHash,
+              targets: candidates.revisionTargets(data.candidateRevisions), checks };
+          }
+          value = { ...value, checks: value.checks.filter(item => !item.target.startsWith('revision:')) };
+        }
         if (data.checkOnly && value?.result) value = challengeFormat.checked(value, data.earlierDraft, formatSchema);
         // Assemble first so independent note/scope failures can be reported
         // together. checkExplanations below enforces the same immutable scope
@@ -1000,7 +1051,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           const readTo = Math.max(unit?.readThrough || (unit?.source.line || 1) - 1, supplied?.endLine || 0);
           if (entry.source.endLine > readTo) throw Object.assign(new Error(`Evidence ${entry.id} refers to local code not yet supplied: ${entry.source.file}:${entry.source.line}-${entry.source.endLine}. Request that segment before explaining it.`), { code: 'LOCAL_READING_LIMIT' });
         }
-        return previous ? checkExplanations(value, previous, accepted, reviewUnits) : accepted;
+        const checked = previous ? checkExplanations(value, previous, accepted, reviewUnits) : accepted;
+        if (candidateVerification) checked.candidateVerification = candidateVerification;
+        return checked;
         } catch (error) {
           if (!previous) throw error;
           const scope = require('./review-scope'), independent = scope.problems(previous, value);
@@ -1012,6 +1065,22 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       let accepted;
       try { accepted = validate(response.value); }
       catch (error) {
+        if (data.reviewPurpose) {
+          // A completed checker disagreement is semantic feedback. A timeout,
+          // malformed result or host binding error never opens a repair slot.
+          const formatSchema = data.bindingFormat ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
+          if (data.checkOnly && challengeFormat.valid(response.value, challengeFormat.checkSchema(formatSchema, true)) &&
+              response.value.result === 'repair' && response.value.problems.length) {
+            const state = candidates.assertCurrent(draft, reviewSchema);
+            state.verification = { result: 'repair', problems: response.value.problems, response: response.value,
+              candidateHash: state.candidateHash, revisionHash: hash(state.revisions), requestId: response.audit?.requestId, at: now() };
+            state.state = state.repairCount ? 'terminal' : 'repair-requested';
+            delete draft.pendingResponse;
+          }
+          // Preserve paid pending bytes for deterministic recovery. No hidden
+          // repair request, counter reset or mutation of the accepted base.
+          throw error;
+        }
         // A rejected response is recorded, not replayed as the repair itself.
         delete draft.pendingResponse;
         if (repairUsed) {
@@ -1057,11 +1126,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // challenge and completed-but-blocked checkpoints use this same boundary.
     let preparedNewCode = false;
     if (resumeChallenge && !draft.pendingResponse && !localOnly) {
-      const acquired = readQuestions(draft);
-      const deferred = context.prioritize(draft, draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds), [...supersededCandidates]);
+      const preparationSubject = draft.reviewCandidate ? { ...draft, ...accept(candidates.assertCurrent(draft, reviewSchema).candidate, draft, context.units, { candidateOnly: true }) } : draft;
+      const acquired = readQuestions(preparationSubject);
+      const deferred = context.prioritize(draft, [...(draft.reviewCandidate ? draft.sources.map(unit => unit.id) : []), ...draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds)], [...supersededCandidates]);
       if (deferred.length) draft.actions.push({id:`priority-${crypto.randomUUID()}`,kind:'context-priority',outcome:'candidates-deferred',performedAt:now(),sourceIds:[],
         result:`After current question resolution, deferred only unreferenced candidates outside its required source set: ${deferred.join('; ')}. All accepted semantic references and newly requested code remain.`});
-      ensure(); const completion = context.complete(draft, { finishQuestions: true }); draft.actions.push(completion);
+      ensure(); const completion = context.complete(preparationSubject, { finishQuestions: true }); draft.actions.push(completion);
       preparedNewCode = acquired || completion.sourceIds.length > 0 || context.units.some(unit => unit.readThrough < unit.source.endLine);
       draft.readingLimits = [...context.unread].slice(0, 40);
       draft.checkpoint.newContext ||= preparedNewCode;
@@ -1082,6 +1152,23 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     draft.sources = context.units;
     draft.checkpoint = { stage: 'challenge', snapshot: hash(draft.snapshot), repairUsed, followups, newContext: !!draft.checkpoint?.newContext, ...(savedFeedback ? { feedback: savedFeedback } : {}), at: now() }; await save();
     let next = await obtain('challenge', draft, savedFeedback);
+    const saveCandidate = async next => {
+      if (!next.candidateWire) return false;
+      const repairing = draft.reviewCandidate?.state === 'repair-requested';
+      const state = candidates.save(draft, next.candidateWire, reviewSchema, { kind: repairing ? 'candidate-repair' : 'candidate-completion',
+        requestId: draft.runs.at(-1)?.requestId, responseHash: draft.runs.at(-1)?.responseHash || null, at: now() });
+      if (repairing) state.repairCount++;
+      // Source acquisition concerns the new candidate, not acceptance of its
+      // interpretation. Keep old source references for revision checking too.
+      readQuestions(next.candidateMaterial);
+      const completion = context.complete(next.candidateMaterial, { finishQuestions: true }); draft.actions.push(completion);
+      draft.sources = context.units; draft.phase = 'candidate-awaiting-verification';
+      draft.publication = { ready: false, policy: guidePolicy.POLICY, problems: ['A private candidate is saved; complete fresh verification is still required.'] };
+      draft.checkpoint = { ...draft.checkpoint, candidateHash: state.candidateHash };
+      draft.yielded = true; await save(); return true;
+    };
+    if (await saveCandidate(next)) return draft;
+    const candidateState = draft.reviewCandidate && candidates.assertCurrent(draft, reviewSchema);
     if (next.walkthrough) next.walkthrough.reportText = issue?.reportText || request.finding.summary || '';
     let firstGate = guidePolicy.gate({ ...draft, ...next });
     while (!firstGate.ready) {
@@ -1091,13 +1178,14 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       // Stop if the missing fact cannot be obtained. A closed explanation with
       // invalid references/order gets one repair; open speculation does not.
       const structural = next.causal?.outcome !== 'blocked' && next.claims.every(claim => claim.status !== 'unresolved' && !claim.unknowns.length) && !next.conclusion.limitations.length;
-      if (progress || structural && !repairUsed) {
+      if (!candidateState && (progress || structural && !repairUsed)) {
         if (progress) followups++; else repairUsed = true;
         const feedback = { problems: firstGate.problems, newLocalCode: progress,
           instruction: 'Check these exact failures against supplied evidence. Do not weaken the scope or erase material unknowns merely to satisfy the publication gate.' };
         draft.checkpoint = { stage: 'challenge', snapshot: hash(draft.snapshot), repairUsed, followups, feedback, at: now() };
         Object.assign(draft, next); draft.sources = context.units; draft.phase = 'challenging'; await save();
         next = await obtain('challenge', draft, feedback);
+        if (await saveCandidate(next)) return draft;
         if (next.walkthrough) next.walkthrough.reportText = issue?.reportText || request.finding.summary || '';
         firstGate = guidePolicy.gate({ ...draft, ...next });
       } else break;
@@ -1107,6 +1195,14 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       return { claimId: claim.id, before: previous?.status || 'not-separated', after: claim.status, reason: claim.reason };
     });
     Object.assign(draft, next); draft.challengeChanges = changes;
+    if (candidateState) {
+      candidateState.verification = { result: 'kept', candidateHash: candidateState.candidateHash, revisionHash: hash(candidateState.revisions),
+        requestId: draft.runs.at(-1)?.requestId, revisionChecks: draft.candidateVerification.checks, at: now() };
+      // Preserve original and proposed versions as private history; the new
+      // canonical fields now carry only the freshly checked result.
+      draft.candidateHistory = [...(draft.candidateHistory || []), candidateState];
+      delete draft.reviewCandidate;
+    }
     draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
     draft.publication = guidePolicy.gate(draft);
     if (draft.publication.ready) draft.publication.digest = guidePolicy.digest(draft);

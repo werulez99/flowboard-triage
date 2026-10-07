@@ -121,8 +121,9 @@ test('selected continuation in a paused mixed report reuses only its challenge a
   const f = await fixture(t, 4, async (input, options) => {
     if (input.finding.id === 'I-2' && input.phase === 'challenge' && !recover) throw Object.assign(new Error('Controlled challenge transport failure'), { audit: { requestId: options.requestId, phase: 'challenge', outcome: 'failed' } });
     if (input.finding.id === 'I-3') throw Object.assign(new Error('Finding allowance paused'), { code: 'FINDING_BUDGET' });
-    const value = response(input);
-    if (input.finding.id === 'I-4') { value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The externally supplied runtime implementation is not established.']; value.causal.outcome = 'blocked'; }
+    const value = input.candidateOnly ? {mode:'candidate-patch-v1',updates:[]} : response(input);
+    if (input.reviewPurpose && input.checkOnly) value.inputReviews=[];
+    if (input.finding.id === 'I-4' && !input.candidateOnly && !input.checkOnly) { value.claims[0].status = 'unresolved'; value.claims[0].unknowns = ['The externally supplied runtime implementation is not established.']; value.causal.outcome = 'blocked'; }
     return { value, audit: { requestId: options.requestId, phase: input.phase, outcome: 'completed' } };
   });
   await f.runner.ensure(); await f.runner.control('pause');

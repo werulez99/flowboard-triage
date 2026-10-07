@@ -47,6 +47,14 @@ test('guided reading keeps multiple exact spans in one function and counterevide
   assert.equal(walk.assessment(draft).contradicts.id, 'e-2');
   assert.deepEqual(draft.evidence.map(item => item.interpretationVerified), [undefined, undefined, undefined]);
 });
+test('next-action presentation preserves a helper return and does not infer a self-call from the function name', () => {
+  const current={title:'Add this invocation’s amount',unit:{name:'Ledger::_add'},invocationId:'add-2',transaction:'tx'};
+  const next={...current,title:'Return from the second addition',handoff:{kind:'data',explanation:'The provisional write precedes this helper’s return.',binding:'No call binding.'}};
+  const value=walk.transition(current,next);
+  assert.equal(value.title,next.title);assert.equal(value.functionName,'Ledger::_add');assert.equal(value.kind,'data');
+  assert.equal(value.sameInvocation,true);assert.equal(value.explanation,next.handoff.explanation);
+  assert.equal(walk.transition(current,{...next,invocationId:'add-3'}).sameInvocation,false);
+});
 test('report links preserve original offsets, CRLF and quotations; repeated phrases do not get guessed', () => {
   const report = '**Description**\r\nThe value is cleared. The value is cleared.\r\n\r\nExpected: retain it.';
   const paragraph = walk.paragraphs(report)[0];

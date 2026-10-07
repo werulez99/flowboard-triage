@@ -8,7 +8,7 @@
 // for all of its challenge checks and survive persistence without truncation.
 const kinds = Object.freeze(['applicability', 'entry', 'conditions', 'behavior', 'settlement', 'rule', 'impact', 'counterevidence']);
 const limits = Object.freeze({ claims: 8, obligations: 8 * kinds.length, events: 18, relationships: 30,
-  checks: 8 * kinds.length + 18 + 30, evidence: 24, explanationReviews: 48, transitions: 12,
+  checks: 8 * kinds.length + 18 + 30, evidence: 48, explanationReviews: 96, revisionChecks: 160, transitions: 12,
   questions: 8, sources: 40, steps: 18, sourceCharacters: 1024 * 1024, storageBytes: 48 * 1024 * 1024 });
 function target(kind, item) { return kind === 'relationship' ? `relationship:${item.from}->${item.to}:${item.kind}` : `${kind}:${typeof item === 'string' ? item : item.id}`; }
 function targets(model) {

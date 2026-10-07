@@ -4,6 +4,9 @@
 const capacity = require('../../extension/review-capacity');
 function response(input) {
   if (input.finding.id === 'I-4') return {};
+  // Authoring preserves this fixture's indispensable external blocker. It is
+  // not solved by a new UI stage; the following full check stays unpublished.
+  if (input.candidateOnly) return { mode:'candidate-patch-v1', updates:[] };
   const remote = input.finding.id === 'I-3', count = input.finding.id === 'I-2';
   const name = remote ? 'remoteFinish' : count ? 'checkCount' : 'finish';
   const unit = input.sources.find(item => item.name === `GuardBook::${name}`);
@@ -27,7 +30,8 @@ function response(input) {
     events: [event], relationships: [], order: [event.id], checks: [] };
   const checks = capacity.targets(causal).map(item => ({ target: item.key, reason: note, evidence: ['guard'], documentation: [] }));
   const reviews = [{ evidenceId: 'guard', result: 'kept', reason: note, checkedSourceIds: [unit.id] }];
-  if (input.checkOnly) return { result: 'kept', problems: [], explanationReviews: reviews, checks };
+  if (input.checkOnly) return { result: 'kept', problems: [], ...(input.reviewPurpose?{inputReviews:[]}:{}), explanationReviews: reviews,
+    checks:[...checks,...(input.candidateRevisionTargets||[]).map(target=>({target,reason:note,evidence:['guard'],documentation:[]}))] };
   causal.checks = input.phase === 'challenge' ? checks : [];
   return { property: { text: remote ? 'The report alleges normal completion in a deployed implementation.' : 'The report alleges normal completion on the stated input.', basis: 'report-assumption', evidence: [], documentation: [] },
     claims: [{ id: 'c1', allegation: remote ? 'The unknown remote implementation accepts false.' : count ? 'A zero-count invocation returns normally.' : 'A false-accepted invocation returns normally.',
