@@ -82,6 +82,17 @@ function verifyParent(manifest) {
     engine.hash(JSON.parse(fs.readFileSync(c.parentLedgerPath)))!==c.parentLedgerHash)throw Error('Parent manifest/ledger changed or missing; no continuation permission.');
   if(manifest.cases.some(item=>item.reviewPurpose)) {
     const cycle=manifest.reviewCycle, parent=JSON.parse(fs.readFileSync(c.parentManifestPath)), ledger=JSON.parse(fs.readFileSync(c.parentLedgerPath));
+    if(cycle?.kind==='received-proposal-repair-v1'){
+      const selected=manifest.cases[0],previous=parent.cases[0],isRepair=selected?.reviewPurpose==='rejected-proposal-repair';
+      if(!cycle.id||manifest.cases.length!==1||manifest.maximumRequests!==1||!selected.originalProposalHash||parent.cases.length!==1||previous.findingId!==selected.findingId||
+        selected.phases?.length!==1||selected.phases[0]!=='challenge'||!Number.isFinite(selected.timeoutMs)||selected.timeoutMs<=0||selected.timeoutMs>(isRepair?300000:600000)||
+        ledger.receipts?.length!==1||
+        (isRepair?(!!parent.reviewCycle||previous.phases?.length!==1||previous.phases[0]!=='generate'||ledger.used!==1||ledger.receipts[0].outcome!=='completed'):
+          selected.reviewPurpose!=='candidate-verification'||parent.reviewCycle?.id!==cycle.id||parent.reviewCycle.kind!==cycle.kind||previous.reviewPurpose!=='rejected-proposal-repair'||
+          previous.originalProposalHash!==selected.originalProposalHash||ledger.used!==1||ledger.receipts[0].outcome!=='completed'||ledger.receipts[0].audit?.teardown?.confirmed!==true))
+        throw Error('Rejected-proposal continuation permits one R then one full V only; no generation, repeat or repair after verification.');
+      return;
+    }
     const order=['candidate-completion','candidate-verification','candidate-repair','candidate-reverification'];
     const purpose=manifest.cases[0].reviewPurpose, index=order.indexOf(purpose);
     if(!cycle || !cycle.id || manifest.cases.length!==1 || manifest.maximumRequests!==1 || index<0 ||

@@ -67,7 +67,7 @@ test('the reported 500ms request deadline terminates an ignoring descendant with
   await assert.rejects(run.promise, error => {
     assert.equal(error.code, 'PROVIDER_TIMEOUT'); assert.equal(error.audit.deadline.milliseconds, 500);
     assert.equal(error.audit.teardown.confirmed, true); assert.equal(error.audit.teardown.forced, true);
-    assert.ok(error.audit.durationMs >= 2400 && error.audit.durationMs < 4500, `Observed ${error.audit.durationMs}ms including the 2000ms TERM grace.`);
+    assert.ok(error.audit.monotonic.durationMs >= 2400 && error.audit.monotonic.durationMs < 4500, `Observed ${error.audit.monotonic.durationMs}ms monotonic including the 2000ms TERM grace.`);
     return true;
   });
   assert.ok(run.descendant()?.pid); assert.equal(running(run.descendant().pid), false); assert.equal(run.terminal(), 1);

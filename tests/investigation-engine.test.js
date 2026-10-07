@@ -23,6 +23,28 @@ async function fixture(t) {
   const draft = engine.create({ findingId: request.findingId, request, catalog });
   return { root, catalog, request, draft, findingId: request.findingId, current: () => true };
 }
+test('completed response storage failures still notify terminal receipt exactly once without acceptance or retry', {skip:!native}, async t=>{
+  for(const boundary of ['checkpoint','archive','receipt'])await t.test(boundary,async t=>{
+    const f=await fixture(t),protocol=require('../extension/protocol'),original=protocol.atomicJson;
+    let calls=0,notifications=0,audit,current=true;
+    t.mock.method(protocol,'atomicJson',function(root,file,value){
+      if((boundary==='checkpoint'&&file.startsWith('.flowboard/provider-results/'))||
+         (boundary==='archive'&&file.startsWith('.flowboard/recovery/provider-result-')))
+        throw Object.assign(new Error('controlled disk full'),{code:'ENOSPC'});
+      return original(root,file,value);
+    });
+    const result=await engine.advance({...f,current:()=>current,provider:'codex',publish:async()=>{},
+      beforeRequest:async()=>({id:'consumed-once'}),onResult:async value=>{notifications++;audit=structuredClone(value);if(boundary==='receipt')throw Object.assign(new Error('journal full'),{code:'ENOSPC'});},
+      invoke:async input=>{calls++;if(boundary==='archive')current=false;return {value:response(input),audit:{phase:'generate',outcome:'completed',usage:{output_tokens:17},teardown:{confirmed:true}}};}});
+    assert.equal(calls,1);assert.equal(notifications,1);assert.equal(audit.outcome,'completed');
+    assert.equal(audit.usage.output_tokens,17);assert.equal(audit.teardown.confirmed,true);
+    assert.equal(result.claims.length,0);assert.notEqual(result.publication?.ready,true);
+    if(boundary==='checkpoint'){assert.equal(audit.responseStorage.state,'failed');assert.equal(audit.retainedResponse,undefined);assert.equal(result.failureCode,'RESPONSE_STORAGE_FAILED');assert.match(result.error,/retention was not confirmed/);}
+    else {assert.ok(audit.retainedResponse);const saved=JSON.parse(fs.readFileSync(path.join(f.root,'.flowboard/provider-results',f.findingId+'.json')));assert.equal(saved.result.value.evidence[0].id,'addition');}
+    if(boundary==='archive'){assert.equal(audit.responseStorage.boundary,'immutable-archive');assert.equal(audit.responseStorage.partialRetention,true);}
+    if(boundary==='receipt')assert.equal(result.failureCode,'RECEIPT_STORAGE_FAILED');
+  });
+});
 // Controlled model-output fixture: tests protocol plumbing, not AI quality and
 // not a real security finding. The live-provider walkthrough is separate.
 function response(input) {
@@ -123,12 +145,16 @@ test('source changes and finding switches suppress late generated evidence, incl
 test('cross-claim references are rejected precisely without filtering the answer or buying a rewrite', {skip:!native}, async t=>{
   const f=await fixture(t);let calls=0,original;
   const result=await engine.advance({...f,provider:'codex',publish:async()=>{},invoke:async input=>{
-    calls++;const value=response(input);value.claims.push({...structuredClone(value.claims[0]),id:'second-claim'});original=structuredClone(value);
+    calls++;const value=response(input);value.claims.push({...structuredClone(value.claims[0]),id:'second-claim'});
+    value.transitions.push({...structuredClone(value.transitions[0]),id:'second-transition',claimId:'second-claim',evidence:['addition','missing-note']});original=structuredClone(value);
     return {value,audit:{phase:'generate',outcome:'completed'}};
   }});
   assert.equal(calls,1);assert.equal(result.failureCode,'REVIEW_REFERENCE_SCOPE');
   assert.match(result.error,/second-claim.*addition.*normal-counter/);
   assert.deepEqual(result.lastRejected.output,original);assert.ok(result.pendingResponse);assert.equal(result.claims.length,0);
+  assert.equal(result.lastRejected.validationProblems.length,3,'One bounded pass reports independently readable claim, transition-owner and missing-ID failures.');
+  assert.equal(result.lastRejected.validationProblems.at(-1).actualOwner,null);
+  assert.ok(result.lastRejected.validationProblems.every(item=>item.target&&item.action&&Array.isArray(item.allowedOwners)));
   const reopened=engine.read(f.root,f.findingId);assert.equal(reopened.lastRejected.output.claims[1].evidence[0],'addition');
   await engine.advance({...f,draft:reopened,provider:'none',localOnly:true,publish:async()=>{},invoke:()=>assert.fail('Local rejection recovery cannot dispatch')});
   assert.equal(reopened.failureCode,'REVIEW_REFERENCE_SCOPE');assert.equal(reopened.phase,'blocked');

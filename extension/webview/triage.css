@@ -547,6 +547,7 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 /* Guided mode stays on the native world/camera. The dock never replaces it. */
 .guide-preparation[hidden] { display:none; }
 .guide-preparation { position:fixed; top:64px; right:12px; width:min(650px, calc(100vw - 24px)); max-height:160px; overflow:auto; padding:12px; box-sizing:border-box; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; z-index:1000; font:14px/1.5 var(--vscode-font-family,system-ui,sans-serif); color:var(--fg); }
+.guide-preparation.retained-rejection:not(.expanded) { max-height:min(270px,42vh); }
 .guide-preparation.expanded { max-height:calc(100vh - 88px); resize:vertical; }
 .guide-preparing:not(.guide-open) #flowboard { top:236px; }
 .guide-status-row { display:flex; gap:8px; align-items:center; }

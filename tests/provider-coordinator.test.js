@@ -64,7 +64,18 @@ test('production coordinator waits for shared capacity without reserving, then g
   assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   await f.runner.ensure(); assert.equal(f.calls.length, 2, 'Opening a ready artifact does not acquire or dispatch another provider request.');
 });
-test('batch expiry aborts a real capacity wait without a reservation or protective-state reset', { skip: !native }, async t => {
+test('explicit deadline rearms an early callback without introducing a default deadline', t=>{
+  let clock=4000,callbacks=[],writes=0;
+  t.mock.method(Date,'now',()=>clock);t.mock.method(global,'setTimeout',(fn,delay)=>{callbacks.push({fn,delay});return callbacks.length;});t.mock.method(global,'clearTimeout',()=>{});
+  const runner=new ReportPreparation(os.tmpdir(),{}),abort=new AbortController();runner.save=()=>writes++;
+  runner.state={batch:{startedAt:new Date(clock).toISOString(),outcome:'pending'},jobs:{},mode:'running'};
+  runner.armDeadline();assert.equal(callbacks.length,0);
+  Object.assign(runner.state.batch,{stopPolicy:'explicit-user-v1',deadlineAt:new Date(4100).toISOString()});runner.tasks.set('controlled',{abort});
+  runner.armDeadline();assert.equal(callbacks[0].delay,100);
+  clock=4099;callbacks.shift().fn();assert.equal(callbacks.length,1);assert.equal(callbacks[0].delay,1);assert.equal(abort.signal.aborted,false);
+  clock=4100;callbacks.shift().fn();assert.equal(abort.signal.aborted,true);assert.equal(callbacks.length,0);assert.equal(writes,1);assert.equal(runner.state.batch.outcome,'deadline-exceeded');
+});
+test('batch expiry aborts a real capacity wait without a reservation or protective-state reset', { skip: !native,timeout:5000 }, async t => {
   const f = await fixture(t), first = await slots.acquire('codex', null, { directory: f.directory }), second = await slots.acquire('codex', null, { directory: f.directory });
   t.after(() => { first(); second(); });
   f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, batchDeadlineMs: 180 });

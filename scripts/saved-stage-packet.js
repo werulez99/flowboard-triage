@@ -6,7 +6,7 @@ const engine = require('../extension/investigation-engine');
 const format = require('../extension/challenge-format');
 const provider = require('../extension/semantic-provider');
 async function inspectSavedStage({ root, catalog, request, issue, findingId, saved = engine.read(root, findingId), candidateSeed }) {
-  if (!saved || !['challenge', 'complete'].includes(saved.checkpoint?.stage) || !saved.runs.some(run => run.resultAccepted) || saved.pendingResponse)
+  if (!saved || !['challenge', 'complete'].includes(saved.checkpoint?.stage) || !saved.rejectedProposal&&!saved.runs.some(run => run.resultAccepted) || saved.pendingResponse)
     throw new Error('A saved accepted generation/challenge checkpoint is required; generation is not authorized.');
   const draft = structuredClone(saved), original = JSON.stringify(saved);
   if (!engine.compatible(draft, catalog, request, issue) || !engine.sameSnapshot(draft.snapshot, engine.snapshot(catalog, request, issue)))

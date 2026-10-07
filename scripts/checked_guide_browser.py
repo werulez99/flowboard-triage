@@ -476,7 +476,14 @@ try:
                 assert 'Shared report allowance exhausted' in status_text
                 result['checks'].append('Exhausted shared allowance does not offer an ineffective finding continuation; retained work remains available.')
             if selected_job and selected_job.get('reason'):
-                assert selected_job['reason'] in status_text
+                if not selected_job.get('retainedRejection') or selected_job.get('failureKind') not in ['structural', 'validation']:
+                    assert selected_job['reason'] in status_text
+            if selected_job and selected_job.get('retainedRejection'):
+                assert 'Analysis was received, but its evidence links need correction.' in status_text
+                assert page.locator('.guide-preparation').get_by_role('button', name='Continue this finding', exact=True).count() == 0
+                assert page.locator('.guide-preparation').get_by_role('button', name='Repair saved analysis', exact=True).count() == int(bool(selected_job.get('repairAvailable')) and args.provider != 'none')
+                assert len(state['providerCalls']) == 0, 'Retained rejection inspection is local, never a repair request.'
+                result['checks'].append('Received rejection has a factual recovery message, no replay disguised as repair and no unaccepted tutorial.')
             questions = (selected_job or {}).get('missingInputs', [])
             if questions:
                 page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()

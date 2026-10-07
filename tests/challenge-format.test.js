@@ -113,6 +113,11 @@ test('all repair forms preserve evidence scope, including shared context, with a
   const changed = structuredClone(previous); changed.evidence[0].claimId = ''; changed.evidence[0].stance = 'context';
   // No silent host downgrade or discarded decisive assessment reference.
   changed.claims[0].status='unresolved';changed.walkthrough.assessment.opposingEvidence='';
+  assert.throws(()=>engine.accept(changed,draft,draft.sources),error=>error.code==='REVIEW_REFERENCE_SCOPE'&&error.validationProblems.some(p=>p.target==='/causal/events/event/evidenceId'));
+  // The old fixture retained a claim-owned runtime event on shared context.
+  // Remove that invalid fixture event explicitly to isolate review aggregation;
+  // this deliberately incomplete explanation still cannot publish.
+  changed.causal.events=[];changed.causal.order=[];changed.causal.relationships=[];
   const next = engine.accept(changed, draft, draft.sources); changed.explanationReviews = [{ ...update.explanationReviews[0], checkedSourceIds: ['absent'] }];
   assert.throws(() => engine.checkExplanations(changed, draft, next, draft.sources), error => {
     assert.deepEqual(new Set(error.validationProblems.map(p => p.code)), new Set(['EVIDENCE_SCOPE_CHANGED', 'EXPLANATION_REVIEW_INVALID', 'EXPLANATION_REVIEW_MISSING'])); return true;
@@ -136,6 +141,12 @@ test('explicit removal and fresh scoped note preserve checks/references but cann
   // c1 cannot retain a c2-only reference. Make the fixture's unresolved old
   // claim explicit instead of relying on lossy host filtering/downgrading.
   fixed.claims[0].evidence=[];fixed.claims[0].status='unresolved';fixed.claims[0].unknowns=['Its original material explanation was removed.'];
+  assert.throws(()=>engine.accept(fixed,draft,draft.sources),error=>error.code==='REVIEW_REFERENCE_SCOPE'&&error.validationProblems.length===9);
+  // Update causal dependents too; the earlier fixture left c1 obligations and
+  // its event pointing at c2-only evidence and tested only the final gate.
+  fixed.causal.obligations.push(...fixed.causal.obligations.map(o=>({...o,id:o.id+'-c2',claimId:'c2'})));
+  for(const o of fixed.causal.obligations.filter(o=>o.claimId==='c1')){o.evidence=[];o.state='open';o.reason='The original material explanation remains unresolved after removal.';}
+  fixed.causal.events[0].claimId='c2';
   const patch = { mode: format.PATCH, updates: Object.entries(fixed).filter(([key]) => !['explanationReviews', 'inputReviews', 'causal'].includes(key)).map(([key, value]) => ({ path: '/' + key, valueJSON: JSON.stringify(value) })),
     explanationReviews: [{ ...update.explanationReviews[0], result: 'removed' }, { ...update.explanationReviews[0], evidenceId: 'new-guard', result: 'added' }], checks: replaceRefs(update.causal.checks) };
   for (const [key, value] of Object.entries(fixed.causal)) if (key !== 'checks') patch.updates.push({ path: '/causal/' + key, valueJSON: JSON.stringify(value) });

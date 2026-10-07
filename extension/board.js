@@ -684,6 +684,13 @@ class TriageBoard {
       if (message.type === 'triage:investigationFocus') return this.focusInvestigation(model, message);
       if (message.type === 'triage:investigationDocumentation') return this.openDocumentation(model, message);
       if (message.type === 'triage:investigationRetry') return this.startInvestigation(model, true);
+      if(message.type==='triage:repairSavedAnalysis'){
+        if(!this.investigationCurrent(model))return;
+        const report=this.callbacks.reportPreparation?.();
+        if(!report)throw new Error('Open this imported finding through its report preparation to repair saved analysis.');
+        report.continueFinding(model.id,{repairSavedAnalysis:true})?.catch(error=>this.vscode.window.showErrorMessage(error.message));
+        return this.reportProgress();
+      }
       if (message.type === 'triage:investigationEnable') return this.enableInvestigation(model);
       if (message.type === 'triage:investigationCorrect') return this.correctInvestigation(model, message);
       if (message.type === 'triage:investigationTest') return this.runInvestigationTest(model, message);

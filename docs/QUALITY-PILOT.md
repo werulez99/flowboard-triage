@@ -1,5 +1,75 @@
 # Bounded fresh quality pilot
 
+## Received-proposal recovery (0.19.20)
+
+Completed transport accounting now runs exactly once even when the response
+checkpoint or superseded-response archive cannot be written. Completion, durable
+retention, ingestion and publication are separate outcomes. A receipt-journal
+write failure is reported explicitly, not claimed durable or refunded. Focused
+ENOSPC controls exercise each boundary, including the actual report coordinator.
+
+A complete reference-rejected generation can enter **Repair saved analysis**
+explicitly. Its complete input/output/source-unit checkpoint is archived before
+the last-response slot can change. The original is unaccepted revision context,
+not an accepted base. The repaired candidate stays private until full checkOnly
+verification covers both current content and justified original-to-candidate
+changes. Original evidence-to-claim ownership remains fixed. Reading and local
+replay are free of provider requests; they cannot correct a model's references.
+Typed bounded validation reports collect readable missing-ID/ownership problems
+across claims, transitions and causal references in one pass. Known question
+definitions are acquired before optional neighboring dependencies.
+
+Actual engine/coordinator/scoped-runner controls exercise nonzero accounting,
+one explicit repair, exact full verification, duplicate refusal, source/premise
+drift, retained original retrieval, independent siblings and provider-none reopen.
+A separate material-rule control remains blocked after structural repair and
+complete checking. These use deterministic responses, not real semantic proof.
+The prior active-correction and long checked-text controls remain mandatory.
+
+The retained real generation is still **unaccepted; no new checked guide**. All
+22 paid source units and its two-claim, 23-note original answer remain unchanged.
+Local validation found 15 independently checkable cross-claim references. Named
+callback, permission, observation, pool-swap and accounting definitions were
+acquired, but bounded dependency completion still lacks material local helpers.
+Source availability is not semantic review or an independent rounding rule.
+
+The initial source-expanded proposal measured 356,357 bytes. Removing a second
+serialization of the same rejected answer and prioritizing named questions gave
+a later 317,051-byte inspection. The final actual coordinator preflight measured
+318,235 bytes (different accumulated local acquisition receipts): 4,495 report,
+188,767 source, 41,827 original proposal, 43,168 metadata, 386 JSON envelope,
+39,136 instructions, 328 schema and 128 conservative adapter-framing bytes.
+The 262,144-byte bound rejected it **before reservation or dispatch**. This is
+not a claim that 318,235 is the minimum possible complete representation. No
+required code was trimmed and no limit increased. Final local index time was
+10.094 s and coordinator preparation 7.594 s; neither is model latency.
+
+New R/V counts are **0/0**, not a timeout or a successful review. The original G
+remains one paid attempt; its old manifest/receipts are unchanged. There is no
+new model identity, usage or cost. A valid continuation requires complete
+bounded source/metadata preparation first, not another generation or a paid
+request to discover the known local failure. Original-native 1.2.0 inspection
+with provider none and simulated editor IO shows the received-analysis message,
+the precise packet blocker and outstanding source questions without unchecked
+tutorial annotations. It is not Cursor activation or real guide playback.
+
+Final supported WSL/Node 20.20.1 sequential gate: **520 passed, zero failed or
+skipped**. The first full pass exposed two older fixtures with invalid causal
+ownership references; they now assert the earlier rejection and explicitly
+update their fictional dependents. The validator was not relaxed. Final checks
+also preserve the prior active-batch correction, immutable late-response and
+checked-text fidelity paths. All new callbacks and native status inspections
+were local; **zero new external provider requests** were made.
+
+A later gate stalled in an explicit-deadline capacity-wait control without a
+reservation. The one-shot wall-clock timer could return before its compared
+deadline and never rearm. A deterministic early-callback control now verifies
+rearming, cancellation at expiry and no default deadline. A cleanup duration
+assertion uses the existing monotonic receipt instead of adjustable wall time,
+with unchanged duration bounds. The interrupted gate is not counted as a pass;
+the final sequential run above completed on the delivered code. These local
+observations do not identify any historical remote timeout cause.
+
 ## Selected-finding correction during a batch (0.19.19)
 
 The board now saves a durable, revision-bound correction intent and a hold for

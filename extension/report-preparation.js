@@ -53,12 +53,12 @@ class ReportPreparation {
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
     this.pendingFindings = new Map(); this.admitting = new Map(); this.localEligible = new Set(); this.controlRevision = 0;
   }
-  continueFinding(id) {
+  continueFinding(id, { repairSavedAnalysis = false } = {}) {
     p.identifier(id, 'finding continuation ID');
     if (this.disposed) throw new Error('This report owner is closed. Reopen the report.');
     if (!store.readReport(this.root).issues.some(item => item.id === id)) throw new Error('The selected finding is no longer in this report.');
     if (!this.pendingFindings.has(id) && !this.admitting.has(id) && !this.localEligible.has(id) && !this.tasks.has(id))
-      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch });
+      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis });
     // Existing workers admit this at a durable stage boundary. No report-wide
     // resume, allowance increase or cancellation of a sibling is implied.
     return this.ensure();
@@ -183,7 +183,7 @@ class ReportPreparation {
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,
+      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, retainedRejection, repairAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,retainedRejection,repairAvailable,
         publishable: !!this.artifact(id), digest: this.artifact(id), outcome, publishedAt })),
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
@@ -353,8 +353,7 @@ class ReportPreparation {
       // A new host must still rebuild their current-source publication map.
       if (!fs.existsSync(path.join(this.root, '.flowboard/investigations'))) return;
     }
-    clearTimeout(this.deadlineTimer);
-    if (this.deadlineEnabled() && !this.expired()) this.deadlineTimer = setTimeout(() => this.expire(), Math.max(1, Date.parse(this.state.batch.deadlineAt) - Date.now()));
+    this.armDeadline();
     // Disabled providers must not make ordinary import eagerly index code.
     // Existing private/accepted artifacts still take the local revalidation
     // path below, including migration while report work is paused.
@@ -392,7 +391,7 @@ class ReportPreparation {
         job.state = 'queued'; job.publishable = false; job.accepted = null; this.accepted.delete(entry.id);
       } else if (checked(saved)) {
         this.accept(entry, saved, job);
-      } else if (saved.pendingResponse) {
+      } else if (saved.pendingResponse && !this.pendingFindings.get(entry.id)?.repairSavedAnalysis) {
         // A completed transport receipt is already paid. Revalidate/replay it
         // before provider, pause and allowance checks, without authorizing a
         // new request or resuming any sibling's paid work.
@@ -432,6 +431,11 @@ class ReportPreparation {
         } finally { if (this.admitting.get(id) === intent) this.admitting.delete(id); }
         const available = this.state.resources.limit - this.state.resources.requests;
         if (available <= 0) { job.reason = 'Shared report allowance exhausted during admission; no request was reserved.'; this.save(); continue; }
+        if(intent.repairSavedAnalysis){
+          const draft=engine.read(this.root,id);
+          engine.beginRejectedRepair({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry)});
+          job.checkpoint=draft.checkpoint;this.recoveryStatus(job,draft);
+        }
         // Only an exhausted selected-finding allowance can be renewed, bounded
         // by already authorized shared capacity. Sibling limits never change.
         if (job.requests >= job.requestLimit) job.requestLimit = job.requests + Math.min(available, config.findingRequestLimit || 6);
@@ -532,6 +536,14 @@ class ReportPreparation {
   issue(entry) { return { ...entry, reportText: entry.body }; }
   deadlineEnabled() { return this.state?.batch?.stopPolicy === 'explicit-user-v1' && Number.isFinite(Date.parse(this.state.batch.deadlineAt)); }
   expired() { return this.deadlineEnabled() && Date.now() >= Date.parse(this.state.batch.deadlineAt); }
+  armDeadline() {
+    clearTimeout(this.deadlineTimer); this.deadlineTimer=null;
+    if(this.disposed||!this.deadlineEnabled()||this.state.batch.outcome==='deadline-exceeded')return;
+    if(this.expired()){this.expire();return;}
+    // Timers are not a wall-clock guarantee. An early callback or clock
+    // adjustment must not strand an explicit-limit capacity wait forever.
+    this.deadlineTimer=setTimeout(()=>this.armDeadline(),Math.min(2147483647,Math.max(1,Date.parse(this.state.batch.deadlineAt)-Date.now())));
+  }
   observationOnly(id) { return this.options.phasePlan?.(id)?.join() === 'generate'; }
   requiresChallenge(id) {
     const phases = this.options.phasePlan?.(id);
@@ -703,10 +715,17 @@ class ReportPreparation {
   published(draft) { return !!draft && this.artifact(draft.findingId) === policy.digest(draft) && checked(draft); }
   recoveryStatus(job, draft) {
     job.failureKind = draft.failureKind || null;
-    const validation = draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
+    job.hasPrivateCandidate=!!draft.reviewCandidate;
+    job.retainedRejection=!job.hasPrivateCandidate&&(!!draft.lastRejected&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'||!!draft.rejectedProposal);
+    const repairPending=require('./rejected-proposal').eligible(draft)||draft.rejectedProposal?.state==='repair-pending'&&!draft.reviewCandidate;
+    job.repairAvailable=!!repairPending&&!draft.recoveryRequired&&!['local-reading','storage'].includes(draft.failureKind)&&!job.correctionHold&&['codex','claude'].includes(this.options.configuration().provider)&&
+      this.state.resources.requests<this.state.resources.limit&&job.requests<job.requestLimit&&this.options.phaseRemaining?.(job.id)!==false;
+    const validation = draft.validationProblems?.length ? draft.validationProblems : draft.lastRejected?.validationProblems?.length ? draft.lastRejected.validationProblems : draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
       (draft.publication?.details || []).filter(item => ['structural', 'capability'].includes(item.kind)).map(item => ({ code: item.kind === 'capability' ? 'ANALYSIS_CAPABILITY' : 'CAUSAL_BINDING_OR_COVERAGE', target: item.target, message: item.reason, action: item.action }));
-    job.validationProblems = validation.map(({ code, target, evidenceId, oldClaimId, proposedClaimId, message, action }) => ({ code, target, evidenceId, oldClaimId, proposedClaimId, message, action }));
-    job.missingInputs = (draft.questions || []).map(({ id, claimId, text, why, action }) => {
+    job.validationProblems = validation.map(({ code, target, evidenceId, oldClaimId, proposedClaimId, actualOwner,allowedOwners,message, action }) => ({ code, target, evidenceId, oldClaimId, proposedClaimId,actualOwner,allowedOwners,message, action }));
+    const questions=draft.reviewCandidate?.candidate.questions||draft.rejectedProposal?.proposal.questions||
+      (draft.pendingResponse&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'?draft.lastRejected?.output?.questions:draft.questions)||[];
+    job.missingInputs = questions.map(({ id, claimId, text, why, action }) => {
       const receipt = [...(draft.actions || [])].reverse().find(item => item.questionId === id);
       const sources = (receipt?.sourceIds || []).map(sourceId => draft.sources.find(unit => unit.id === sourceId)).filter(Boolean);
       return { id, claimId, text, why, action,

@@ -42,6 +42,7 @@ function gate(draft) {
   const fidelity=require('./review-content').mismatch(draft);
   if(fidelity)return {ready:false,policy:POLICY,problems:[fidelity],details:[{kind:'structural',reason:fidelity,action:'Inspect the retained checked representation and recover locally; do not regenerate or transfer approval.'}]};
   if (draft.reviewCandidate) return { ready: false, policy: POLICY, problems: ['A private candidate is saved; complete fresh verification is still required.'], details: [] };
+  if (draft.rejectedProposal) return {ready:false,policy:POLICY,problems:['Received analysis remains an unaccepted proposal. Repair and full fresh verification are required.'],details:[]};
   const problems = [], details = [], model = draft.causal;
   const fail = (reason, kind = 'structural', target = null) => { problems.push(reason); details.push({ kind, target, reason,
     action: kind === 'capability' ? 'This material route needs a supported analysis capability or independently verified versioned input; unchanged retries cannot establish it.' : kind === 'material-evidence' ? 'Obtain the named evidence; do not regenerate unchanged claims.' : kind === 'local-reading' ? 'Read the remaining local segments and challenge the affected claim.' : 'Repair the affected references or coverage, retaining accepted source and claims.' }); };
@@ -156,13 +157,13 @@ function expose(draft, report = null) {
   if (!draft) return null;
   const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
-    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory'])delete copy[key];
+    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected'])delete copy[key];
     return { ...copy, nativeSources: require('./event-source').projections(draft) };
   }
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory'])delete copy[key];
+  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory'])delete copy[key];
   for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',

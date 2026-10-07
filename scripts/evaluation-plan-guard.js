@@ -11,6 +11,7 @@ function packetIdentity(input) {
   return Object.fromEntries(['inputHash','sourcePacketHash','schemaHash','instructionHash'].map(k => [k,m[k]]));
 }
 function savedBase(draft) {
+  if(draft.rejectedProposal){const state=require('../extension/rejected-proposal').assertCurrent(draft,provider.schema);return {referenceOrigin:state.origin,referenceBase:state.proposal};}
   const earlier = require('../extension/challenge-format').earlier(draft, provider.schema);
   return { earlierDraft: draft.bindingPlan ? require('../extension/source-bindings').wire(earlier, draft.bindingPlan) : earlier,
     assembledEarlier: draft.bindingPlan ? require('../extension/source-bindings').derived(draft) : null };
@@ -38,8 +39,14 @@ class EvaluationPlanGuard {
     if (!receipts.length && engine.hash(packetIdentity(input))!==engine.hash(c.firstPacket)) deny('First outbound data/source/schema/instruction packet drifted.');
     if (input.phase==='challenge') {
       const base=this.acceptedBase(c.findingId);
-      if (!base || !engine.sameSnapshot(base.snapshot,input.snapshot) || base.pendingResponse || base.lastRejected ||
+      const rejected=base?.rejectedProposal&&['rejected-proposal-repair','candidate-verification'].includes(c.reviewPurpose);
+      if (!base || !engine.sameSnapshot(base.snapshot,input.snapshot) || base.pendingResponse || base.lastRejected&&!rejected ||
           !['challenge','complete'].includes(base.checkpoint?.stage)) deny('A compatible accepted stage is required, not a pending/rejected response.');
+      if(rejected){const state=require('../extension/rejected-proposal').assertCurrent(base,provider.schema);
+        if(c.originalProposalHash!==state.origin.recordHash || engine.hash(input.referenceOrigin)!==engine.hash(state.origin))deny('The exact unaccepted original proposal changed.');
+        const record=require('../extension/provider-result').read(this.root,c.findingId,state.original,{phase:'generate',snapshot:base.snapshot,corrections:base.corrections,previous:null});
+        if(!record||engine.hash(record.result.value)!==state.origin.responseHash)deny('Original proposal archive is missing or changed.');
+      }
       if (receipts.length && !base.runs?.some(r=>r.requestId===receipts[0].requestId && r.resultAccepted)) deny('The reserved generation was not accepted by the engine.');
       const expected=savedBase(base);
       if (c.reviewPurpose) {

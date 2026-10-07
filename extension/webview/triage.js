@@ -72,12 +72,12 @@
   const sharedAllowanceExhausted = () => Number.isFinite(reportPreparation?.requests) && Number.isFinite(reportPreparation?.requestLimit) && reportPreparation.requests >= reportPreparation.requestLimit;
   const canContinueFinding = () => {
     const job = preparationJob(active);
-    return !localAdmission() && !sharedAllowanceExhausted() && job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
+    return !localAdmission() && !sharedAllowanceExhausted() && job && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
-    job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
+    job?.retainedRejection ? 'Received analysis needs correction' : job?.failureKind==='storage' ? 'Response storage needs recovery' : job?.hasPrivateCandidate ? 'Private candidate needs verification' : job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
   const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
   function updatePreparationRows() {
@@ -234,7 +234,7 @@
       if (selectedJob?.missingInputs?.length) {
         const first = selectedJob.missingInputs[0];
         parent.append(element('h3', '', 'What still needs checking'), element('p', '', `${first.claimId} · ${first.text}`),
-          element('small', 'triage-muted', first.why), element('p', 'triage-muted', 'The accepted draft and paid responses are retained. Local source acquisition is not a completed semantic review.'));
+          element('small', 'triage-muted', first.why), element('p', 'triage-muted', selectedJob.retainedRejection?'The received analysis and paid responses are retained, but were not accepted. Local source acquisition is not a completed semantic review.':selectedJob.hasPrivateCandidate?'The private candidate and paid responses are retained. Complete fresh verification is still required.':'The accepted draft and paid responses are retained. Local source acquisition is not a completed semantic review.'));
         const needed = element('details'); needed.append(element('summary', '', 'Evidence needed before this finding can finish'));
         for (const item of selectedJob.missingInputs) {
           needed.append(element('p', '', `${item.claimId} / ${item.id}: ${item.text}`), element('small', 'triage-muted', item.why));
@@ -302,11 +302,13 @@
     if (waiting) {
       const progress = reportPreparation, state = preparationState || investigationDraft?.preparation;
       const job = preparationJob(active);
+      preparationSurface.classList.toggle('retained-rejection',!!job?.retainedRejection);
       const title = preparing ? 'Opening finding' : cardBlocked ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
       const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
       row.append(heading, expand);
       if (!preparing && canContinueFinding()) row.append(button('Continue this finding', () => send('triage:investigationRetry')));
+      if(!preparing&&job?.repairAvailable&&!localAdmission()&&!sharedAllowanceExhausted())row.append(button('Repair saved analysis',()=>send('triage:repairSavedAnalysis')));
       row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
       const selected = issueIdentifier() || preparing || 'No finding selected';
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code' })[stage] || stage || 'Reading code';
@@ -314,7 +316,11 @@
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
       const stopped = progress?.stopped?.find(job => job.id === active);
       const reason = cardBlocked ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
-      if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
+      if(job?.retainedRejection){
+        preparationSurface.append(element('p','guide-status-reason','Analysis was received, but its evidence links need correction. The original answer is retained and is not a checked tutorial.'),
+          element('small','triage-muted',job.repairAvailable?'Repair saved analysis starts a model request using the retained proposal; a separate full verification is still required.':job.failureKind==='local-reading'?'Complete local context and fit the whole review packet before a repair request. No new review has been sent; source and manual review remain available.':'No eligible repair request is available in the current provider/allowance or stage. Source and manual review remain available; local replay cannot correct the model’s links.'));
+        if(reason&&job.failureKind!=='structural'&&job.failureKind!=='validation')preparationSurface.append(element('p','guide-status-reason',reason));
+      }else if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
       if (sharedAllowanceExhausted()) preparationSurface.append(element('p', 'triage-warning', 'Shared report allowance exhausted. Continue this finding cannot add requests. Further provider work needs explicit additional allowance; saved work remains available.'));
       appendAdmission(preparationSurface);
       if (preparationExpanded && !preparing) {

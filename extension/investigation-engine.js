@@ -146,6 +146,7 @@ function read(root, id) {
     }
     if (value.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(value.causal[key], limits[key], `saved causal ${key}`);
     if (value.semanticInput) semanticInput.validate(value.semanticInput);
+    if(value.rejectedProposal)try{require('./rejected-proposal').assertCurrent(value,reviewSchema);}catch(error){value.recoveryRequired={code:error.code,reason:error.message};value.phase='blocked';value.failureKind='structural';value.error=error.message;}
     if (value.reviewCandidate) {
       try { candidates.assertCurrent(value, reviewSchema); }
       catch(error) {
@@ -466,7 +467,7 @@ function makeContext(catalog, request, issue) {
     return { id: `complete-${crypto.randomUUID()}`, kind: 'code-completion', outcome: added.length ? 'source-returned' : unread.size ? 'reading-limit' : 'context-already-available', performedAt: now(), sourceIds: added,
       result: added.length ? `Read ${added.length} additional declarations or internal helpers used by the selected statements. Their exact code is available to the second pass; no statement result was assumed.` : unread.size ? 'Some local code remains unread because the review reached its reading limit. This does not mean the code is missing.' : 'Relevant declarations and internal helpers within this check were already available. This does not establish that all implementations or recovery paths were inspected.' };
   };
-  const act = (question, claim) => {
+  const act = (question, claim, { definitionOnly = false } = {}) => {
     const before = new Set(units.map(unit => unit.id));
     // A still-unresolved claim may have no executable entry. An explicitly
     // qualified source name can scope LOOKUP without filling that semantic
@@ -509,6 +510,11 @@ function makeContext(catalog, request, issue) {
     const matched = new Set();
     const omittedLocal = [];
     const include = (fn, reason) => { const id = add(fn, reason); if (id) matched.add(id); else if (fn) omittedLocal.push(`${fn.contract || ''}::${fn.name} at ${catalog.relative(fn.file)}:${fn.startLine}`); return id; };
+    if(definitionOnly){
+      if(target)include(target,'Exact named question definition, reserved before optional neighboring dependency discovery. No semantic approval.');
+      return {id:`definition-${crypto.randomUUID()}`,questionId:question.id,claimId:question.claimId,kind:question.action,target:question.target,performedAt:now(),sourceIds:[...matched],
+        outcome:omittedLocal.length?'reading-limit':matched.size?'source-returned':'no-additional-context',result:omittedLocal.length?`Named local definition does not fit: ${omittedLocal.join('; ')}`:matched.size?'Exact named definition is available for the next review; dependencies still need completion.':'No exact local definition identified by this preliminary lookup.'};
+    }
     const enclosing = (fn, reason) => {
       if (fn.kind !== 'context') completionFunctions.set(catalog.key(fn),fn);
       const doc = catalog.document(catalog.relative(fn.file));
@@ -667,6 +673,8 @@ function canonicalEvidence(items, units) {
 function accept(output, draft, units, { candidateOnly = false } = {}) {
   const {text,list}=require('./review-content');
   require('./review-content').bounds(output);
+  const referenceProblems=require('./review-scope').referenceProblems(output);
+  if(referenceProblems.length)throw require('./review-scope').failure(referenceProblems);
   if (output?.bindingFormat !== undefined && output.bindingFormat !== require('./source-bindings').VERSION)
     throw Object.assign(new Error('This source-binding representation is not supported.'), { code: 'BINDING_VERSION' });
   if (output?.bindingFormat === require('./source-bindings').VERSION) {
@@ -760,6 +768,7 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   return accepted;
 }
 function invalidateCandidate(draft,reason,correctionId) {
+  if(draft.rejectedProposal){draft.rejectedProposalHistory=[...(draft.rejectedProposalHistory||[]),{...draft.rejectedProposal,invalidation:{reason,correctionId,at:now()}}];delete draft.rejectedProposal;}
   if(draft.reviewCandidate) {
     draft.invalidatedCandidates=[...(draft.invalidatedCandidates||[]),{reason,correctionId,at:now(),snapshot:structuredClone(draft.snapshot),candidate:structuredClone(draft.reviewCandidate),pendingResponse:draft.pendingResponse||null}];
     delete draft.reviewCandidate;
@@ -867,11 +876,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // for example when its decisive statement lies in an unread local tail.
     // Requiring an existing quote here restarts that prefix forever instead
     // of restoring the reading cursor and challenging the saved question.
-    const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && draft.claims.length &&
+    const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && (draft.rejectedProposal || draft.claims.length &&
       (!draft.claims.some(claim => claim.needsReassessment)||draft.phase==='corrected') && (draft.phase==='corrected'||draft.checkpoint?.stage === 'challenge' ||
         resumeQuestions ||
-        draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate');
-    if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft); }
+        draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate'));
+    if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft, {exactResponse:!!draft.rejectedProposal}); }
     else {
       // Pre-dispatch local acquisition is durable preparation too. Preserve
       // its exact current sources instead of silently discarding them when
@@ -944,13 +953,20 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       // Revisions can remove a note from the candidate, but its original
       // source is still required by the checker of that removal. Preserve the
       // accepted context until original-to-candidate review is complete.
-      const deferred = context.prioritize(result, draft.reviewCandidate ? draft.sources.map(unit => unit.id) : []);
+      const originalIds=draft.rejectedProposal?require('./rejected-proposal').originalSourceIds(root,draft,reviewSchema):[];
+      const deferred = context.prioritize(result, draft.reviewCandidate ? draft.sources.map(unit => unit.id) : originalIds);
       if (deferred.length) draft.actions.push({ id: `prioritize-${crypto.randomUUID()}`, kind: 'context-priority', outcome: 'candidates-deferred', sourceIds: [], performedAt: now(),
         result: `Reserved follow-up room by deferring unreferenced discovery candidates, not evidence: ${deferred.join('; ')}. These definitions remain in the local index.` });
       // The response already has a shared bounded question capacity. A fixed
       // prefix starves a fifth material local question behind four external
       // unknowns. Visit every question once and retain exact acquisition
       // receipts, not another model summary of the same unanswered question.
+      if(draft.rejectedProposal)for(const question of result.questions){
+        const acquisitionKey=hash(['named-definition-v1',ACQUISITION_VERSION,draft.snapshot,question]);
+        if(draft.actions.some(action=>action.kind==='question-definition'&&action.acquisitionKey===acquisitionKey&&action.sourceIds.every(id=>context.units.some(unit=>unit.id===id))))continue;
+        const direct=context.act(question,result.claims.find(c=>c.id===question.claimId),{definitionOnly:true});
+        draft.actions.push({...direct,kind:'question-definition',acquisitionKey});
+      }
       for (const question of result.questions) {
         ensure();
         const claim = result.claims.find(item => item.id === question.claimId);
@@ -969,6 +985,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       return progress;
     };
     const obtain = async (phase, previous = null, feedback = null) => {
+      if(phase==='challenge'&&draft.rejectedProposal)previous=require('./rejected-proposal').material(draft,context.units,reviewSchema);
       let data = input(phase);
       const reviewPurpose = phase === 'challenge' && !draft.pendingResponse ? candidates.purpose(draft, reviewSchema) : null;
       if (feedback) data.hostReview = feedback;
@@ -977,6 +994,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       else if (phase === 'challenge') data.repairOnly = true;
       if (reviewPurpose) {
         data = candidates.packet(data, draft, reviewSchema, reviewPurpose);
+        if(draft.rejectedProposal){data.bindingFormat=data.earlierDraft.bindingFormat;delete data.assembledEarlier;}
         // Compiled selectors belong to the candidate, never the old base.
         if (draft.reviewCandidate && data.bindingFormat) {
           const proposed = accept(draft.reviewCandidate.candidate, draft, context.units, { candidateOnly: true });
@@ -1017,15 +1035,23 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (transport) require('./semantic-provider').requestMetrics(input);
         if (transport) health.check(provider, healthOptions);
         const release = transport ? await require('./provider-slots').acquire(provider, signal, { ...providerResources, onProgress }) : () => {};
-        let reservation, terminalAudit;
+        let reservation, terminalAudit, terminalNotified = false;
+        const notifyTerminal = async () => {
+          if (terminalNotified || !terminalAudit) return;
+          terminalNotified = true;
+          try { await onResult?.(terminalAudit, reservation); }
+          catch (cause) { throw Object.assign(new Error('Provider completion was observed, but its terminal receipt could not be persisted. Do not redispatch; reconcile the reserved attempt and retained response.'),
+            { code: 'RECEIPT_STORAGE_FAILED', cause, audit: terminalAudit }); }
+        };
         try {
           if (transport) health.check(provider, healthOptions);
           ensure(); release.markDispatching?.();
           reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)), input, capacity: release.capacity });
+          if(input.reviewPurpose==='rejected-proposal-repair'&&persist){draft.rejectedProposal.state='repair-dispatched';await save();}
           const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
             onProcessStart: details => release.attachProcess?.(details) });
           terminalAudit = result.audit || {};
-          let retainedResponse;
+          let retainedResponse, storageFailure;
           if (persist) {
             // Keep the previous accepted argument and its source store intact
             // until the replacement is accepted. Recovery records exact unit
@@ -1033,10 +1059,19 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
             // a bounded model excerpt never becomes the canonical function.
             const units = context.units.map(({ id, name, signature, kind, contextKind, source, readThrough, reason, complete }) =>
               ({ id, name, signature, kind, contextKind, source, readThrough, reason, complete }));
-            retainedResponse = checkpoint.save(root, findingId, { input, result, units, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel }, { retain: !!signal?.aborted || !current() });
-            terminalAudit.retainedResponse=retainedResponse;
+            try {
+              retainedResponse = checkpoint.save(root, findingId, { input, result, units, snapshot: draft.snapshot, corrections: draft.corrections, previous: previousModel }, { retain: !!signal?.aborted || !current() });
+              terminalAudit.retainedResponse=retainedResponse;
+              terminalAudit.responseStorage={state:'retained'};
+            } catch (cause) {
+              if (cause.retainedResponse) terminalAudit.retainedResponse=cause.retainedResponse;
+              terminalAudit.responseStorage={state:'failed',code:cause.code||'WRITE_FAILED',boundary:cause.storageBoundary||'response-checkpoint',partialRetention:!!cause.retainedResponse};
+              storageFailure=Object.assign(new Error('Provider response completed, but local '+terminalAudit.responseStorage.boundary+' storage failed. '+(cause.retainedResponse?'The last-response checkpoint remains available. ':'Durable response retention was not confirmed. ')+'The attempt remains consumed; no review was accepted. Resolve storage before local recovery, not another model request.'),
+                {code:'RESPONSE_STORAGE_FAILED',cause,audit:terminalAudit});
+            }
           }
-          await onResult?.(terminalAudit, reservation);
+          await notifyTerminal();
+          if(storageFailure)throw storageFailure;
           ensure();
           if(retainedResponse){draft.pendingResponse=retainedResponse;await save();}
           if (transport) try { await health.record(provider, terminalAudit, healthOptions); }
@@ -1048,8 +1083,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           return result;
         } catch (error) {
           if (error.audit) {
-            terminalAudit = error.audit;
-            await onResult?.(error.audit, reservation);
+            terminalAudit ||= error.audit;
+            await notifyTerminal();
             if (transport) try { await health.record(provider, error.audit, healthOptions); }
             catch (healthError) { error.audit.healthUpdateError = { code: healthError.code || 'HEALTH_WRITE', message: text(healthError.message, 300) }; }
           } else if (reservation && !terminalAudit) {
@@ -1058,7 +1093,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
             // token usage, cost, or a claim that no dispatch occurred.
             terminalAudit = { requestId: reservation.id, phase, provider, outcome: 'failed', failureKind: 'host-interruption',
               finishedAt: now(), message: text(error.message, 300), usage: null, costUSD: null };
-            await onResult?.(terminalAudit, reservation);
+            await notifyTerminal();
           }
           throw error;
         }
@@ -1092,8 +1127,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (data.candidateOnly) {
           const proposed = challengeFormat.candidate(value, data.earlierDraft, formatSchema);
           const material = accept(proposed, draft, reviewUnits, { candidateOnly: true });
-          require('./review-scope').assert(draft, material);
-          for (const claim of draft.claims) if (!material.claims.some(item => item.id === claim.id)) throw new Error(`Candidate omitted material claim ${claim.id}.`);
+          const reference=previous||draft;
+          require('./review-scope').assert(reference, material);
+          for (const claim of reference.claims) if (!material.claims.some(item => item.id === claim.id)) throw new Error(`Candidate omitted material claim ${claim.id}.`);
           return { candidateWire: candidates.unchecked(proposed), candidateMaterial: material };
         }
         let candidateVerification;
@@ -1137,7 +1173,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if(['REVIEW_CONTENT_BOUND','REVIEW_CONTENT_MISMATCH','REVIEW_REFERENCE_SCOPE'].includes(error.code)) {
           // Preserve an unrepresentable answer or invalid claim reference;
           // do not silently change meaning or buy an automatic rewrite.
-          draft.lastRejected={phase,inputHash:response.audit?.inputHash,at:now(),error:error.message,output:response.value};
+          draft.lastRejected={phase,inputHash:response.audit?.inputHash,at:now(),error:error.message,validationProblems:error.validationProblems||[],output:response.value};
           throw error;
         }
         if (data.reviewPurpose) {
@@ -1201,9 +1237,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // challenge and completed-but-blocked checkpoints use this same boundary.
     let preparedNewCode = false;
     if (resumeChallenge && !draft.pendingResponse && !localOnly) {
-      const preparationSubject = draft.reviewCandidate ? { ...draft, ...accept(candidates.assertCurrent(draft, reviewSchema).candidate, draft, context.units, { candidateOnly: true }) } : draft;
+      const preparationSubject = draft.reviewCandidate ? { ...draft, ...accept(candidates.assertCurrent(draft, reviewSchema).candidate, draft, context.units, { candidateOnly: true }) } : draft.rejectedProposal ? {...draft,...require('./rejected-proposal').material(draft,context.units,reviewSchema)} : draft;
       const acquired = readQuestions(preparationSubject);
-      const deferred = context.prioritize(draft, [...(draft.reviewCandidate ? draft.sources.map(unit => unit.id) : []), ...draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds)], [...supersededCandidates]);
+      const deferred = context.prioritize(preparationSubject, [...(draft.reviewCandidate || draft.rejectedProposal ? draft.sources.map(unit => unit.id) : []), ...draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds)], [...supersededCandidates]);
       if (deferred.length) draft.actions.push({id:`priority-${crypto.randomUUID()}`,kind:'context-priority',outcome:'candidates-deferred',performedAt:now(),sourceIds:[],
         result:`After current question resolution, deferred only unreferenced candidates outside its required source set: ${deferred.join('; ')}. All accepted semantic references and newly requested code remain.`});
       ensure(); const completion = context.complete(preparationSubject, { finishQuestions: true }); draft.actions.push(completion);
@@ -1230,7 +1266,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const saveCandidate = async next => {
       if (!next.candidateWire) return false;
       const repairing = draft.reviewCandidate?.state === 'repair-requested';
-      const state = candidates.save(draft, next.candidateWire, reviewSchema, { kind: repairing ? 'candidate-repair' : 'candidate-completion',
+      const state = candidates.save(draft, next.candidateWire, reviewSchema, { kind: draft.rejectedProposal?'rejected-proposal-repair':repairing ? 'candidate-repair' : 'candidate-completion',
         requestId: draft.runs.at(-1)?.requestId, responseHash: draft.runs.at(-1)?.responseHash || null, at: now() });
       if (repairing) state.repairCount++;
       // Source acquisition concerns the new candidate, not acceptance of its
@@ -1277,6 +1313,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       // canonical fields now carry only the freshly checked result.
       draft.candidateHistory = [...(draft.candidateHistory || []), candidateState];
       delete draft.reviewCandidate;
+      if(draft.rejectedProposal){draft.rejectedProposalHistory=[...(draft.rejectedProposalHistory||[]),{...draft.rejectedProposal,state:'verified-candidate',candidateHash:candidateState.candidateHash}];delete draft.rejectedProposal;}
     }
     draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
     draft.publication = guidePolicy.gate(draft);
@@ -1300,9 +1337,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     if (error.code === 'INVESTIGATION_SUPERSEDED' || signal?.aborted || !current()) return draft;
     if (error.code === 'LOCAL_RECOVERY_PENDING') draft.yielded = true;
     draft.failureCode = error.code || null;
+    draft.validationProblems = error.validationProblems || [];
     draft.phase = 'blocked'; draft.failureKind = error.code === 'PROVIDER_CAPACITY' ? 'capacity' :
       ['PROVIDER_HEALTH_OPEN', 'PROVIDER_HEALTH_UNAVAILABLE', 'PROVIDER_TEARDOWN_UNCONFIRMED', 'PROVIDER_RESOURCE_UNAVAILABLE', 'PROVIDER_OWNERSHIP_UNAVAILABLE', 'PROVIDER_CAPACITY_CONFIGURATION'].includes(error.code) || error.audit?.teardown?.confirmed === false ? 'provider-health' :
-      ['REPORT_PAUSED', 'LOCAL_RECOVERY_PENDING'].includes(error.code) ? 'paused' : error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : ['LOCAL_READING_LIMIT', 'LOCAL_PACKET_LIMIT'].includes(error.code) ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
+      ['REPORT_PAUSED', 'LOCAL_RECOVERY_PENDING'].includes(error.code) ? 'paused' : ['RESPONSE_STORAGE_FAILED','RECEIPT_STORAGE_FAILED'].includes(error.code)?'storage':error.code === 'REPORT_BUDGET' ? 'report-budget' : error.code === 'FINDING_BUDGET' ? 'finding-budget' : ['LOCAL_READING_LIMIT', 'LOCAL_PACKET_LIMIT'].includes(error.code) ? 'local-reading' : error.code === 'REPORT_APPLICABILITY' ? 'applicability' : error.audit ? 'provider' : 'validation'; draft.error = text(error.message, 1000);
     if (error.audit) draft.runs.push(error.audit);
     // A failed provider/schema/challenge must not erase a usable earlier draft.
     try { await save(); } catch { /* never overwrite a changed source context */ }
@@ -1316,4 +1354,10 @@ function create({ findingId, request, issue, catalog }) {
     claims: [], evidence: [], transitions: [], questions: [], sources: [], actions: [], experiments: [], corrections: [], runs: [],
     conclusion: { status: 'insufficient-evidence', text: 'Preparation has not yet established source-based conclusions.', humanReviewed: false, origin: 'preparation' } };
 }
-module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };
+function beginRejectedRepair({root,draft,catalog,request,issue}) {
+  if(!sameSnapshot(draft.snapshot,snapshot(catalog,request,issue)))throw new Error('Rejected proposal no longer matches current report/source/premises.');
+  validateCurrent(catalog,draft);
+  const state=require('./rejected-proposal').begin(root,draft,reviewSchema);
+  draft.revision++;write(root,draft);return state;
+}
+module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, beginRejectedRepair, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };

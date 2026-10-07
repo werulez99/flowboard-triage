@@ -43,6 +43,58 @@ function verification(input) {
     checks:[...capacity.targets(input.earlierDraft.causal).map(t=>t.key),...(input.candidateRevisionTargets||[])].map(target=>({target,reason:'The uncaught false approval reverts this invocation and its intermediate writes; branch inputs remain bounded as reported.',evidence:input.earlierDraft.claims[0].evidence,documentation:[]}))};
   return value;
 }
+for(const missingRule of [false,true])test(`received unaccepted proposal repairs privately and fully verifies (${missingRule?'material rule stays blocked':'source refutation'})`,{skip:!native},async t=>{
+  const f=await fixture(t,'mixed');f.draft=engine.create(f);let original,calls=0;
+  await engine.advance({...f,invoke:async input=>{
+    calls++;const value=require('../scripts/fixtures/mixed-ready-output').response(input);delete value.walkthrough.steps;value.inputReviews=[];
+    value.claims.push({...structuredClone(value.claims[0]),id:'c2',allegation:'The same false condition permits successful settlement.'});
+    value.causal.obligations.push(...value.causal.obligations.map(o=>({...o,id:o.id+'-second',claimId:'c2'})));
+    if(missingRule){
+      // Gate control, not a new source interpretation: structural repair
+      // cannot erase an explicitly material normative premise.
+      const unknown='No supplied normative rule establishes the reported required treatment of this rejected request.';
+      value.claims[0].unknowns=[unknown];value.claims[0].status='unresolved';
+      value.questions=[{id:'rule',claimId:'c1',text:unknown,action:'missing-context',target:'Applicable specification',why:'The stated conclusion still depends on this premise.'}];
+      value.conclusion.limitations=[unknown];value.causal.outcome='blocked';
+      value.causal.obligations.find(o=>o.kind==='rule').state='open';value.walkthrough.assessment.result='unclear';
+    }
+    original=structuredClone(value);return {value,audit:{phase:'generate',outcome:'completed',requestId:'original-G'}};
+  }});
+  assert.equal(f.draft.failureCode,'REVIEW_REFERENCE_SCOPE');assert.ok(f.draft.validationProblems.length>1);
+  assert.equal(f.draft.claims.length,0);f.draft=engine.read(f.root,f.findingId);
+  const noCalls=()=>assert.fail('Opening/replay must not invoke');
+  await engine.advance({...f,localOnly:true,invoke:noCalls});assert.equal(calls,1);
+  engine.beginRejectedRepair(f);const reference=structuredClone(f.draft.rejectedProposal.original);
+  assert.equal(f.draft.claims.length,0);assert.equal(f.draft.reviewCandidate,undefined);
+  const bad=structuredClone(f.draft);bad.corrections.push({value:'new'});assert.throws(()=>require('../extension/rejected-proposal').assertCurrent(bad,provider.schema),/identity changed/);
+  await engine.advance({...f,invoke:async input=>{
+    calls++;assert.equal(input.reviewPurpose,'rejected-proposal-repair');assert.equal(input.referenceOrigin.kind,'received-rejected');assert.equal(input.candidateOnly,true);
+    const note={...input.earlierDraft.evidence[0],id:'guard-second',claimId:'c2'};
+    return{value:{mode:format.CANDIDATE,updates:[{path:'/evidence/guard-second',valueJSON:JSON.stringify(note)},
+      ...(missingRule?[{path:'/questions',valueJSON:JSON.stringify(input.earlierDraft.questions.map(q=>({...q,id:'rule-current'})))}]:[]),
+      {path:'/claims/c2/evidence',valueJSON:'["guard-second"]'},...input.earlierDraft.causal.obligations.filter(o=>o.claimId==='c2').map(o=>({path:'/causal/obligations/'+o.id+'/evidence',valueJSON:'["guard-second"]'}))]},audit:{phase:'challenge',outcome:'completed',requestId:'R'}};
+  }});
+  assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);assert.equal(f.draft.claims.length,0);
+  assert.equal(f.draft.reviewCandidate.acceptedBase,undefined);assert.equal(f.draft.reviewCandidate.referenceBase.evidence.length,1);
+  assert.equal(policy.gate(f.draft).ready,false);assert.equal(policy.expose(f.draft).rejectedProposal,undefined);
+  const savedOriginal=require('../extension/provider-result').read(f.root,f.findingId,reference,{phase:'generate',snapshot:f.draft.snapshot,corrections:f.draft.corrections,previous:null});
+  assert.deepEqual(savedOriginal.result.value,original,'Complete original G survives replacement last-response checkpoint.');
+  f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,invoke:async input=>{
+    calls++;assert.equal(input.checkOnly,true);assert.equal(input.earlierDraft.claims.length,2);
+    return {value:{result:'kept',problems:[],inputReviews:[],explanationReviews:input.earlierDraft.evidence.map(e=>({evidenceId:e.id,result:e.id==='guard'?'kept':'added',reason:e.explanation,checkedSourceIds:[e.sourceId]})),
+      checks:[...capacity.targets(input.earlierDraft.causal).map(t=>t.key),...input.candidateRevisionTargets].map(target=>({target,reason:'False fails the exact require; both alleged successful outcomes are prevented by the uncaught revert.',evidence:input.earlierDraft.evidence.map(e=>e.id),documentation:[]}))},audit:{phase:'challenge',outcome:'completed',requestId:'V'}};
+  }});
+  assert.equal(calls,3);assert.equal(f.draft.phase,missingRule?'blocked':'ready',f.draft.error);assert.equal(f.draft.claims.length,2);
+  assert.equal(f.draft.rejectedProposal,undefined);assert.equal(f.draft.rejectedProposalHistory[0].original.hash,reference.hash);
+  assert.deepEqual(f.draft.lastRejected.output,original);assert.equal(policy.expose(f.draft).lastRejected,undefined,'Immutable original remains private after either checked publication or a blocked disposition.');
+  assert.equal(engine.read(f.root,f.findingId).publication.ready,!missingRule);
+  if(missingRule){
+    const coordinator=new(require('../extension/report-preparation').ReportPreparation)(f.root,{configuration:()=>({provider:'none'}),catalog:async()=>f.catalog,invoke:()=>assert.fail('Blocked reopen is local')});
+    t.after(()=>coordinator.dispose());await coordinator.ensure();
+    assert.equal(coordinator.state.jobs[f.findingId].missingInputs[0].id,'rule-current','Status follows the verified blocked revision, not superseded original questions.');
+  }
+});
 test('ordinary imported candidate persists 32 notes and references, then checks original revisions without replacing the base early',{skip:!native},async t=>{
   const f=await fixture(t),base=await generation(f);let count=0;
   await engine.advance({...f,invoke:async input=>{count++;assert.equal(input.reviewPurpose,'candidate-completion');assert.ok(input.candidateOnly);assert.ok(!provider.responseSchema(input).properties.explanationReviews);return {value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'C'}};}});
