@@ -659,6 +659,13 @@ body { --guide-side-width:410px; --guide-bottom-height:0px; --guide-controls-bot
 .guide-open .triage-reading-location { top:calc(var(--guide-controls-bottom) + 4px); }
 .guide-reading .card.guide-active-card { max-height:calc(100vh - var(--guide-controls-bottom) - var(--guide-bottom-height) - 48px); }
 .guide-reading .guide-active-card .card-code { flex:1 1 auto; min-height:64px; max-height:calc(100vh - var(--guide-controls-bottom) - var(--guide-bottom-height) - 242px); }
+@media(max-width:800px) and (max-height:650px) {
+  .guide-reading .guide-active-card .card-header { padding:8px 12px; gap:4px; }
+  .guide-reading .guide-active-card .card-header > :has(> .card-title) { flex:1 1 200px; }
+  .guide-reading .guide-active-card .card-code { box-sizing:border-box; min-height:64px; }
+  .guide-aside .guide-caption { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .guide-aside .guide-caption .guide-current-operation { flex:none; margin-top:0; }
+}
 .guide-note-editing .guide-aside { display:none; }
 body.guide-note-editing.triage-drawer-open #flowboard { left:var(--triage-drawer-width); right:0; }
 .triage-list .triage-preparation-badge { display:inline-block; margin:8px 8px 0 0; padding:2px 6px; border:1px solid var(--border); border-radius:4px; font-size:12px; }

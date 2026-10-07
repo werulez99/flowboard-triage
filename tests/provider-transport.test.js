@@ -7,6 +7,22 @@ const provider = require('../extension/semantic-provider'), slots = require('../
 const text = '// café source; \u0431\u044a\u043b\u0433\u0430\u0440\u0441\u043a\u0438; 🧪; 日本語';
 const input = { phase: 'generate', finding: { title: 'fictional-transport-check', reportParagraphs: [{ text }] }, sources: [{ code: text }], documentation: [], earlierDraft: { value: 'unchanged' } };
 const usage = { input_tokens: 11, output_tokens: 7 };
+test('deadline includes synchronous launch setup and distinguishes delayed host callback from cleanup',async()=>{
+  const wait=()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,80);
+  for(const boundary of ['setup','callback']){
+    let blocked=false;
+    await assert.rejects(provider.runCodex(input,{timeoutMs:30,
+      spawn:fakeProcess({hanging:true,inspect:()=>{if(boundary==='setup')wait();}}),
+      onProgress:event=>{if(boundary==='callback'&&event.event==='input.write.completed'&&!blocked){blocked=true;wait();}}
+    }),error=>{
+      const a=error.audit;assert.equal(a.failureKind,'timeout');assert.equal(a.teardown.confirmed,true);
+      assert.ok(a.deadline.callbackLatenessMs>=40);assert.ok(a.monotonic.stopRequestedMs>=a.deadline.callbackElapsedMs);
+      assert.equal(a.monotonic.cleanupMs,a.monotonic.durationMs-a.monotonic.stopRequestedMs);
+      if(boundary==='setup')assert.equal(a.deadline.timerDelayMs,0,'Setup cannot start a fresh full timeout.');
+      assert.equal(a.monotonic.firstSubstantiveContentMs,null);return true;
+    });
+  }
+});
 function wire(value = { text }, mode = 'codex') {
   return Buffer.from(mode === 'codex' ? [ { type: 'thread.started', thread_id: 'fictional-thread' },
     { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(value) } }, { type: 'turn.completed', usage } ].map(JSON.stringify).join('\n') :

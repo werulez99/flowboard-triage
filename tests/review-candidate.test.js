@@ -3,12 +3,13 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const engine=require('../extension/investigation-engine'),provider=require('../extension/semantic-provider'),candidate=require('../extension/review-candidate');
 const format=require('../extension/challenge-format'),policy=require('../extension/guide-policy'),capacity=require('../extension/review-capacity');
 const native=process.env.FLOWBOARD_EXTENSION_PATH;
-async function fixture(t) {
+async function fixture(t,kind='route',index=0) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'candidate-route-'));
-  fs.cpSync(path.join(__dirname,'../scripts/fixtures/route-preparation/project'),root,{recursive:true});
-  await require('../extension/report').importReport(path.join(__dirname,'../scripts/fixtures/route-preparation/report.md'),root,native,{deferMapping:true});
+  const folder=kind==='time'?'teaching-preparation/time':`${kind}-preparation`;
+  fs.cpSync(path.join(__dirname,`../scripts/fixtures/${folder}/project`),root,{recursive:true});
+  await require('../extension/report').importReport(path.join(__dirname,`../scripts/fixtures/${folder}/report.md`),root,native,{deferMapping:true});
   const indexed=await require('../extension/runner-adapter').analyze(native,root,{mode:'source'}),catalog=new(require('../extension/source').SourceCatalog)(root,indexed.runner,indexed.result);
-  const report=require('../extension/store').readReport(root),issue=report.issues[0],entry=require('../extension/report').parseReport(report.originalReport,{manifest:true}).issues[0];
+  const report=require('../extension/store').readReport(root),issue=report.issues[index],entry=require('../extension/report').parseReport(report.originalReport,{manifest:true}).issues[index];
   const controller=new(require('../extension/report-preparation').ReportPreparation)(root,{}),request=controller.request(entry,catalog,report);controller.dispose();
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   return {root,catalog,request,issue,findingId:issue.id,current:()=>true,publish:async()=>{},provider:'codex',yieldAfterStage:true};
@@ -122,4 +123,107 @@ test('removed original material evidence still needs its own fresh revision revi
   }});
   assert.equal(policy.gate(f.draft).ready,false);assert.match(f.draft.error,/preview-first/);
   assert.deepEqual(f.draft.reviewCandidate.acceptedBase,old);
+});
+test('checked long qualifications and claim reasoning survive candidate save, verification and publication exactly',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);
+  const qualification=' MATERIAL SCOPE: only this false-approval invocation rolls back; no historical deployment loss is established.';
+  const explanation='The checked guard bounds this source interpretation. '.repeat(82)+qualification;
+  const reason='The same guarded condition applies to this invocation. '.repeat(45)+qualification;
+  assert.ok(explanation.length>4000);assert.ok(reason.length>2000);
+  await engine.advance({...f,invoke:async input=>{const v=proposal(input);v.updates[1].valueJSON=JSON.stringify(explanation);v.updates.push({path:'/claims/c1/reason',valueJSON:JSON.stringify(reason)});return{value:v,audit:{phase:'challenge',outcome:'completed'}};}});
+  assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);
+  f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,invoke:async input=>{assert.equal(input.earlierDraft.evidence.find(e=>e.id==='approval-guard').explanation,explanation);return{value:verification(input),audit:{phase:'challenge',outcome:'completed'}};}});
+  assert.equal(f.draft.phase,'ready',f.draft.error);
+  const saved=engine.read(f.root,f.findingId),model=require('../extension/webview/walkthrough-model').build(policy.expose(saved),f.issue.reportText);
+  assert.equal(saved.evidence.find(e=>e.id==='approval-guard').note,explanation);
+  assert.equal(saved.claims[0].reason,reason);assert.equal(model.steps.find(s=>s.analyticalEvidence.id==='approval-guard').analyticalEvidence.note,explanation);
+});
+test('human correction of a saved private candidate remains readable and cannot inherit its checks',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed'}})});
+  const old=structuredClone(f.draft.reviewCandidate);
+  const model={id:f.findingId,investigationDraft:f.draft};let invalidated=0;
+  const board={root:f.root,callbacks:{reportPreparation:()=>({invalidate:()=>invalidated++,loop:Promise.resolve(),ensure:()=>assert.fail('Correction is not request authority')})},
+    investigationCurrent:()=>true,publishInvestigation:async(_model,draft)=>{f.draft=draft;},startInvestigation:()=>assert.fail('Correction cannot launch a request')};
+  await require('../extension/board').TriageBoard.prototype.correctInvestigation.call(board,model,{revision:f.draft.revision,change:{claimId:'c1',field:'conditions',value:'The reported path uses approved=false only.',reason:'Retain the scoped condition.'}});
+  assert.equal(invalidated,1);
+  const reopened=engine.read(f.root,f.findingId);assert.equal(reopened.phase,'corrected');assert.equal(reopened.reviewCandidate,undefined);
+  assert.equal(reopened.invalidatedCandidates.at(-1).candidate.candidateHash,old.candidateHash);assert.equal(reopened.corrections.at(-1).value,'The reported path uses approved=false only.');
+  assert.equal(policy.gate(reopened).ready,false);assert.equal(reopened.candidateVerification,undefined);
+  f.draft=reopened;let calls=0;
+  await engine.advance({...f,invoke:async input=>{calls++;assert.equal(input.reviewPurpose,'candidate-completion');assert.equal(input.phase,'challenge');throw Object.assign(Error('Controlled capture, no transport'),{code:'LOCAL_RECOVERY_PENDING'});}});
+  assert.equal(calls,1);assert.equal(f.draft.corrections.at(-1).value,'The reported path uses approved=false only.');
+});
+test('legacy correction drift is recovered only when the exact recorded transition explains it',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed'}})});
+  const candidateState=structuredClone(f.draft.reviewCandidate);
+  engine.correct(f.draft,{claimId:'c1',field:'conditions',value:'approved=false',reason:'Scoped correction'});
+  // Reproduce the old writer: correction was saved but its candidate remained.
+  f.draft.reviewCandidate=candidateState;delete f.draft.invalidatedCandidates;delete f.draft.correctionHistory;
+  engine.write(f.root,f.draft);
+  const recovered=engine.read(f.root,f.findingId);
+  assert.equal(recovered.recoveryRequired,undefined);assert.equal(recovered.candidateRecovery.kind,'recorded-correction');
+  assert.equal(recovered.reviewCandidate,undefined);assert.equal(recovered.invalidatedCandidates[0].candidate.candidateHash,candidateState.candidateHash);
+  assert.equal(recovered.corrections.at(-1).value,'approved=false');assert.equal(policy.gate(recovered).ready,false);
+  const tampered=structuredClone(f.draft);tampered.reviewCandidate.candidate.evidence[0].explanation+=' Unsupported edit.';tampered.revision++;engine.write(f.root,tampered);
+  const refused=engine.read(f.root,f.findingId);assert.equal(refused.recoveryRequired.code,'CANDIDATE_STALE');
+  assert.throws(()=>candidate.assertCurrent(refused,provider.schema),/identity changed/);
+  await engine.advance({...f,draft:refused,invoke:async()=>assert.fail('Read-only drift must never dispatch')});
+});
+test('unsupported text and lists reject before freeze, and a proven legacy promotion mismatch stays unpublished',{skip:!native},async t=>{
+  const content=require('../extension/review-content'),unicode='\u{1F9EA}'.repeat(content.MAX_TEXT);
+  assert.equal(content.text(unicode),unicode);assert.equal(format.valid(unicode,content.string),true,'Schema and persistence count Unicode characters alike.');
+  assert.throws(()=>content.text(unicode+'!'),/bound/);assert.equal(format.valid(unicode+'!',content.string),false);
+  const f=await fixture(t);await generation(f);
+  const units=f.draft.sources,wire=candidate.wire(f.draft,provider.schema);
+  for(const mutate of [v=>v.evidence[0].explanation='x'.repeat(16385),v=>v.claims[0].conditions=Array.from({length:13},(_,i)=>`Distinct condition ${i}`)]){
+    const value=structuredClone(wire);mutate(value);
+    assert.throws(()=>engine.accept(value,f.draft,units,{candidateOnly:true}),/bound|schema|structural/);
+    assert.throws(()=>candidate.save(f.draft,value,provider.schema,{kind:'controlled'}),/bound|structural/);
+    assert.equal(f.draft.reviewCandidate,undefined);
+  }
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed'}})});
+  await engine.advance({...f,invoke:async input=>({value:verification(input),audit:{phase:'challenge',outcome:'completed'}})});
+  assert.equal(f.draft.publication.ready,true);
+  const before=structuredClone(f.draft.candidateHistory);delete f.draft.checkedContentHash;
+  f.draft.evidence[0].note=f.draft.evidence[0].note.slice(0,20);
+  assert.equal(policy.gate(f.draft).ready,false);assert.match(policy.gate(f.draft).problems[0],/semantic content differs/);
+  assert.deepEqual(f.draft.candidateHistory,before);
+  const unsupported=await fixture(t);unsupported.draft=engine.create(unsupported);let calls=0;
+  await engine.advance({...unsupported,invoke:async input=>{calls++;const value=fixed(input);value.evidence[0].explanation='x'.repeat(16385);return{value,audit:{phase:'generate',outcome:'completed'}};}});
+  assert.equal(calls,1,'Unsupported representation must not buy an automatic rewrite.');
+  assert.equal(unsupported.draft.failureCode,'REVIEW_CONTENT_BOUND');assert.ok(unsupported.draft.pendingResponse);
+  assert.equal(unsupported.draft.lastRejected.output.evidence[0].explanation.length,16385);
+  assert.equal(unsupported.draft.reviewCandidate,undefined);assert.equal(policy.gate(unsupported.draft).ready,false);
+});
+test('complete, qualified and externally blocked explanations omit no-op authorship but retain full checks and blocked reuse',{skip:!native},async t=>{
+  for(const mode of ['supported','complete','qualified','external']){
+    const f=await fixture(t,mode==='supported'?'time':'mixed',mode==='external'?2:0),purposes=[];
+    f.draft=engine.create(f);
+    const invoke=async input=>{
+      purposes.push(input.phase==='generate'?'generate':input.reviewPurpose||(input.checkOnly?'checkOnly':'patch'));
+      const value=mode==='supported'?require('../scripts/fixtures/teaching-output').response(input,'time'):require('../scripts/fixtures/mixed-ready-output').response(input);
+      if(mode==='qualified'&&input.phase==='generate')value.claims[0].conditions.push('This source-level result is limited to accepted=false; a true input can return normally.');
+      return {value,audit:{phase:input.phase,outcome:'completed'}};
+    };
+    await engine.advance({...f,invoke});f.draft=engine.read(f.root,f.findingId);
+    await engine.advance({...f,invoke});f.draft=engine.read(f.root,f.findingId);
+    assert.deepEqual(purposes,['generate','checkOnly'],mode);
+    assert.equal(f.draft.causal.checks.length,capacity.targets(f.draft.causal).length);assert.equal(f.draft.explanationReviews.length,f.draft.evidence.length);
+    assert.equal(policy.gate(f.draft).ready,mode!=='external',f.draft.error);
+    if(mode==='qualified')assert.match(f.draft.claims[0].conditions.at(-1),/true input can return/);
+    if(mode==='external'){
+      assert.equal(f.draft.failureKind,'material-evidence');assert.equal(f.draft.checkpoint.stage,'complete');
+      const semantic=structuredClone(require('../extension/review-content').project(f.draft));
+      await engine.advance({...f,invoke:async()=>assert.fail('Unchanged checked external blocker must not restart authoring or checking')});
+      assert.deepEqual(require('../extension/review-content').project(f.draft),semantic);
+      engine.correct(f.draft,{claimId:'c1',field:'conditions',value:'A new receiver identity is supplied by the researcher.'});
+      assert.equal(candidate.needsCompletion(f.draft),true);assert.equal(policy.gate(f.draft).ready,false);
+    }else{
+      assert.equal(engine.revalidate(f.draft,f.catalog,f.request,f.issue),true);
+      assert.equal(policy.gate(f.draft).ready,true);
+    }
+  }
 });

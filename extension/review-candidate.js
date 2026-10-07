@@ -46,6 +46,9 @@ function assertCurrent(draft, schema) {
 function save(draft, candidate, schema, provenance) {
   const prior = draft.reviewCandidate && assertCurrent(draft, schema);
   const acceptedBase = prior?.acceptedBase || wire(draft, schema), proposed = unchecked(candidate);
+  require('./review-content').bounds(proposed);
+  const wireSchema=proposed.bindingFormat?require('./source-bindings').schema(schema):schema;
+  if(!format.valid(proposed,wireSchema))throw new Error('Private candidate exceeds its supported structural contract; it was not frozen.');
   scope.assert(acceptedBase, proposed);
   for (const claim of acceptedBase.claims) if (!proposed.claims.some(item => item.id === claim.id))
     throw new Error(`Private candidate omitted material claim ${claim.id}.`);
@@ -59,8 +62,18 @@ function save(draft, candidate, schema, provenance) {
   return draft.reviewCandidate;
 }
 function needsCompletion(draft) {
-  return !!draft.causal && (draft.questions.length > 0 || draft.claims.some(item => item.status === 'unresolved' || item.unknowns.length) ||
-    draft.conclusion.limitations.length > 0);
+  if (!draft.causal) return false;
+  if (draft.claims.some(item => item.needsReassessment)) return true;
+  const required=new Set([...draft.evidence.map(item=>item.sourceId),...draft.claims.map(item=>item.entry)]);
+  if(draft.claims.some(item=>item.status==='unresolved'||item.unknowns.length)&&draft.sources.some(unit=>required.has(unit.id)&&Number.isInteger(unit.readThrough)&&unit.readThrough<unit.source.endLine))return true;
+  // A limitation is not an authoring task. First acquire the named local
+  // definition; an unavailable external fact still needs review, not an empty
+  // candidate patch. Only actual acquisition receipts establish local work.
+  return draft.questions.some(question => {
+    const action = [...draft.actions].reverse().find(item => item.questionId === question.id);
+    return action && ['source-returned', 'context-already-available', 'reading-limit'].includes(action.outcome) &&
+      action.sourceIds.some(id => draft.sources.some(unit => unit.id === id));
+  });
 }
 function purpose(draft, schema) {
   if (!draft.reviewCandidate) return needsCompletion(draft) ? 'candidate-completion' : null;

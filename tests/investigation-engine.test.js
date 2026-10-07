@@ -103,7 +103,7 @@ test('model references must quote exact supplied source; a valid path cannot val
   output.evidence[0].quote = '        counter += amount;'; output.evidence[0].line = 900;
   assert.throws(() => engine.accept(output, context.draft, units), /outside/);
   output.evidence[0].line = 13; output.claims[0].evidence = [];
-  assert.equal(engine.accept(output, context.draft, units).claims[0].status, 'unresolved');
+  assert.throws(() => engine.accept(output, context.draft, units), /semantic content differs/, 'Reject an unsupported assessment; do not silently rewrite its checked status.');
 });
 test('source changes and finding switches suppress late generated evidence, including saved results', { skip: !native }, async t => {
   for (const change of ['source', 'selection']) {

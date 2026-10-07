@@ -111,6 +111,8 @@ test('all repair forms preserve evidence scope, including shared context, with a
   const shared = structuredClone(previous); shared.evidence[0].claimId = '';
   assert.throws(() => format.apply({ ...patch, updates: [{ path: '/evidence/guard/claimId', valueJSON: '"c1"' }] }, shared, schema), /claim ""/);
   const changed = structuredClone(previous); changed.evidence[0].claimId = ''; changed.evidence[0].stance = 'context';
+  // No silent host downgrade or discarded decisive assessment reference.
+  changed.claims[0].status='unresolved';changed.walkthrough.assessment.opposingEvidence='';
   const next = engine.accept(changed, draft, draft.sources); changed.explanationReviews = [{ ...update.explanationReviews[0], checkedSourceIds: ['absent'] }];
   assert.throws(() => engine.checkExplanations(changed, draft, next, draft.sources), error => {
     assert.deepEqual(new Set(error.validationProblems.map(p => p.code)), new Set(['EVIDENCE_SCOPE_CHANGED', 'EXPLANATION_REVIEW_INVALID', 'EXPLANATION_REVIEW_MISSING'])); return true;
@@ -131,6 +133,9 @@ test('explicit removal and fresh scoped note preserve checks/references but cann
     return value === 'guard' ? 'new-guard' : value;
   };
   const fixed = replaceRefs(replacement), update = delta(draft);
+  // c1 cannot retain a c2-only reference. Make the fixture's unresolved old
+  // claim explicit instead of relying on lossy host filtering/downgrading.
+  fixed.claims[0].evidence=[];fixed.claims[0].status='unresolved';fixed.claims[0].unknowns=['Its original material explanation was removed.'];
   const patch = { mode: format.PATCH, updates: Object.entries(fixed).filter(([key]) => !['explanationReviews', 'inputReviews', 'causal'].includes(key)).map(([key, value]) => ({ path: '/' + key, valueJSON: JSON.stringify(value) })),
     explanationReviews: [{ ...update.explanationReviews[0], result: 'removed' }, { ...update.explanationReviews[0], evidenceId: 'new-guard', result: 'added' }], checks: replaceRefs(update.causal.checks) };
   for (const [key, value] of Object.entries(fixed.causal)) if (key !== 'checks') patch.updates.push({ path: '/causal/' + key, valueJSON: JSON.stringify(value) });

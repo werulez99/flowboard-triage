@@ -438,7 +438,7 @@ test('sealed projected input drift is withdrawn durably on first reopen without 
   t.after(() => reopened.dispose()); await reopened.ensure();
   const after = engine.read(f.root, 'I-1'), job = reopened.status().jobs.find(job => job.id === 'I-1');
   assert.equal(after.failureCode, 'LOCAL_GATE_WITHDRAWN', JSON.stringify(job)); assert.equal(after.checkpoint.stage, 'challenge'); assert.equal(after.phase, 'blocked');
-  assert.equal(job.state, 'blocked'); assert.ok(job.validationProblems.length); assert.match(job.reason, /parameter premise/);
+  assert.equal(job.state, 'blocked'); assert.ok(job.validationProblems.length); assert.match(job.reason, /checked semantic content/);
   assert.equal(policy.expose(after).causal, undefined); assert.equal(reopened.published(engine.read(f.root, 'I-2')), true);
   assert.equal(JSON.stringify([after.claims, after.evidence, after.causal, after.runs]), preserved);
   assert.deepEqual(reopened.state.resources, resources); assert.equal(f.calls.length, 4);
@@ -472,6 +472,8 @@ test('single saved-review guard rejects the next internal repair before coordina
 test('an unpaid recovered incomplete review exposes its real blockers, not a transport retry invitation', { skip: !native }, async t => {
   const f = await fixture(t); await f.runner.ensure(); const calls = f.calls.length;
   const draft = engine.read(f.root, 'I-1'); draft.claims[0].unknowns = ['A separately asserted external receiver is not established.'];
+  // Historical pre-seal artifact, not authority to mutate a new sealed review.
+  delete draft.checkedContentHash;
   draft.phase = 'blocked'; draft.failureKind = 'paused'; draft.failureCode = 'LOCAL_RECOVERY_PENDING'; draft.yielded = true;
   draft.runs.at(-1).reusedResponse = true; draft.checkpoint.stage = 'challenge'; draft.checkpoint.feedback = {}; delete draft.publication;
   draft.revision++; engine.write(f.root, draft); const claimHash = engine.hash(draft.claims);

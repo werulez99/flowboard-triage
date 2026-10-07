@@ -1,5 +1,41 @@
 # Source investigation runtime — 0.19.2
 
+## Checked content and corrections (0.19.18)
+
+`review-content` defines the lossless semantic projection shared by acceptance,
+candidate comparison and publication. Wire `evidence.explanation` maps verbatim
+to stored `note`; line spans map to `source.line/endLine`; conclusion wire status
+maps to `scopedStatus`. Causal order/fields are preserved; the legacy walkthrough
+outline is deterministically derived from those same events, not independently
+authored. Absent legacy documentation/causal fields map to empty/null. Exact
+source-line quotation whitespace is canonicalized before source binding, not
+after verification. Nonsemantic host provenance and fresh check records are
+separate from this content identity.
+
+Supported semantic text is bounded at 16,384 characters, IDs at 100 and existing
+finite list capacities remain enforced. Schema, candidate assembly and ordinary
+acceptance reject unsupported content rather than slicing it. Promotion compares
+the actual stored projection with the frozen candidate and seals its content
+hash. Proven divergence against retained checked candidate history withholds
+publication; unaffected legacy guides are not globally invalidated or regenerated.
+Missing historical content is never invented.
+
+A supported human correction archives the old active candidate/check eligibility,
+premise identities, accepted argument and pending-response reference in the same
+atomic finding write. Saving a correction is local, not provider authorization.
+The corrected finding stays readable and dependent claims require reassessment.
+Old broken correction records recover locally only when reversing the exact
+recorded correction reconstructs the retained base and premise identity; other
+candidate drift stays read-only with a precise recovery state. No stale check can
+approve changed premises. Paid raw answers and user decisions remain separate.
+
+Authoring eligibility depends on a real acquired local dependency or a recorded
+premise amendment, not the presence of any question/limitation. Full verification
+still checks an unavailable external dependency; `conclusion.limitations` stays
+a material publication blocker. Complete scope conditions are not automatically
+converted from those blockers. Unchanged checked blocked dispositions can stop
+locally after bounded acquisition finds no new evidence.
+
 This is a bounded defensive review of a selected report, not an autonomous vulnerability scanner. Quotes and source identity are checked mechanically; their interpretations are not automatically proven. Generated work never changes the researcher's manual finding verdict.
 
 Current additions: caller-path and bounded internal-helper effects, exact failed-navigation retry, pre-generation acquisition of named local premises, and shared direct/helper failure-payload classification. Earlier failure reachability, call-time parameter writes, typed catches, exhausted-allowance local recovery and no-guide navigation cancellation remain. Current policy is `checked-explanation-v9`. A sealed v7/v8 artifact can be migrated only after current source, construction metadata, path and failure-class checks succeed locally; old unchecked guidance does not become Ready by migration. Version 0.19.2 does not change this policy or invalidate compatible guides for a diagnostic-only transport change. The provider and editor verification record is in [Guided reading](GUIDED-READING.md); the historical quality matrix below is not a current-model certification.

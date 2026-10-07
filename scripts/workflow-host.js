@@ -157,6 +157,12 @@ async function start(options = {}) {
       mixedHeld = false;
     }
     const result = { value: require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
+    if(options.routeFixture&&options.longQualification){
+      const explanation='The checked guard bounds this source interpretation. '.repeat(82)+' MATERIAL SCOPE: only this false-approval invocation rolls back; no historical deployment loss is established.';
+      const note=result.value.evidence?.find(e=>e.id==='approval-guard');if(note)note.explanation=explanation;
+      const check=result.value.explanationReviews?.find(e=>e.evidenceId==='approval-guard');if(check)check.reason=explanation;
+      if(input.checkOnly&&input.earlierDraft.evidence.find(e=>e.id==='approval-guard').explanation!==explanation)throw Error('The full qualification did not reach verification.');
+    }
     record.result = structuredClone(result); return result;
   } : undefined;
   let replay;
@@ -397,6 +403,7 @@ if (require.main === module) {
     mixedFixture: process.argv.includes('--mixed-fixture'),
     localRetryFixture: process.argv.includes('--local-retry-fixture'),
     routeFixture: process.argv.includes('--route-fixture'),
+    longQualification: process.argv.includes('--long-qualification'),
     teachingFixture: process.argv.includes('--teaching-fixture') ? process.argv[process.argv.indexOf('--teaching-fixture') + 1] : null,
     productionSelection: process.argv.includes('--production-selection'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,

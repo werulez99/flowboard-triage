@@ -108,7 +108,7 @@ function valid(value, schema) {
   if (schema.anyOf) return schema.anyOf.some(option => valid(value, option));
   if (schema.enum && !schema.enum.includes(value)) return false;
   if (schema.type === 'null') return value === null;
-  if (schema.type === 'string' && (typeof value !== 'string' || schema.pattern && !new RegExp(schema.pattern).test(value))) return false;
+  if (schema.type === 'string' && (typeof value !== 'string' || schema.maxLength && Array.from(value).length > schema.maxLength || schema.pattern && !new RegExp(schema.pattern).test(value))) return false;
   if (schema.type === 'integer' && !Number.isSafeInteger(value)) return false;
   if (schema.type === 'array') return Array.isArray(value) && (!schema.maxItems || value.length <= schema.maxItems) && value.every(item => valid(item, schema.items));
   if (schema.type === 'object') return !!value && typeof value === 'object' && !Array.isArray(value) &&

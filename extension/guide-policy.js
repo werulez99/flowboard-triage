@@ -12,7 +12,7 @@ function digest(draft) {
     semanticInput: draft.semanticInput, inputReviews: draft.inputReviews, ...(draft.bindingPlan ? { bindingPlan: draft.bindingPlan } : {}),
     ...(draft.candidateVerification ? { candidateVerification: draft.candidateVerification } : {}) })).digest('hex');
 }
-const str = { type: 'string' }, strings = { type: 'array', items: str };
+const str = require('./review-content').string, strings = { type: 'array', items: str };
 const object = properties => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
 const dispatchSchema = object({ kind: { enum: ['internal', 'internal-library', 'self', 'constructor', 'local-instance', 'observed-external', 'unresolved', 'not-applicable'] },
   receiver: str, implementation: str, evidence: strings,
@@ -38,6 +38,9 @@ const schema = object({
   checks: { type: 'array', maxItems: limits.checks, items: object({ target: str, reason: str, evidence: strings, documentation: strings }) }
 });
 function gate(draft) {
+  if(draft.recoveryRequired)return {ready:false,policy:POLICY,problems:[draft.recoveryRequired.reason],details:[]};
+  const fidelity=require('./review-content').mismatch(draft);
+  if(fidelity)return {ready:false,policy:POLICY,problems:[fidelity],details:[{kind:'structural',reason:fidelity,action:'Inspect the retained checked representation and recover locally; do not regenerate or transfer approval.'}]};
   if (draft.reviewCandidate) return { ready: false, policy: POLICY, problems: ['A private candidate is saved; complete fresh verification is still required.'], details: [] };
   const problems = [], details = [], model = draft.causal;
   const fail = (reason, kind = 'structural', target = null) => { problems.push(reason); details.push({ kind, target, reason,
@@ -68,10 +71,11 @@ function gate(draft) {
   if (draft.conclusion?.limitations?.length) fail(draft.conclusion.limitations[0], 'material-evidence');
   const required = new Set([...draft.evidence.map(item => item.sourceId), ...draft.claims.map(item => item.entry)]);
   for (const unit of units.values()) if (required.has(unit.id) && Number.isInteger(unit.readThrough) && unit.readThrough < unit.source.endLine) fail(`Local code remains unread: ${unit.source.file}:${unit.readThrough + 1}-${unit.source.endLine}. The complete function is available locally.`, 'local-reading', unit.id);
-  if (!nonempty(model.scope) || !nonempty(model.summary) || !['supported', 'refuted'].includes(model.outcome)) fail('The material explanation or its scoped conclusion is incomplete.');
+  if (!nonempty(model.scope) || !nonempty(model.summary) || !['supported', 'refuted','blocked'].includes(model.outcome)) fail('The material explanation or its scoped conclusion is incomplete.');
+  else if(model.outcome==='blocked') fail('The checked explanation retains a material blocker.','material-evidence');
   const assessment = draft.walkthrough?.assessment;
-  if (!assessment || assessment.result !== ({ supported: 'valid', refuted: 'invalid' })[model.outcome] || !nonempty(assessment.why)) fail('The preliminary assessment does not match the checked explanation.');
-  else {
+  if (!assessment || assessment.result !== ({ supported: 'valid', refuted: 'invalid',blocked:'unclear' })[model.outcome] || !nonempty(assessment.why)) fail('The preliminary assessment does not match the checked explanation.');
+  else if(model.outcome!=='blocked') {
     const stance = model.outcome === 'supported' ? 'supports' : 'contradicts';
     const id = assessment[stance === 'supports' ? 'supportingEvidence' : 'opposingEvidence'];
     if (!refs([id]) || evidence.get(id)?.stance !== stance) fail('The preliminary assessment has no exact decisive code link.');
@@ -89,12 +93,13 @@ function gate(draft) {
   const identities = new Set();
   for (const item of obligations) {
     if (!nonempty(item.id) || identities.has(item.id) || !claims.has(item.claimId) || !nonempty(item.question) || !nonempty(item.reason) ||
-      !['established', 'refuted', 'not-applicable'].includes(item.state) || !refs(item.evidence, item.documentation) || !check(capacity.target('obligation', item), item.evidence)) fail(`${item.claimId || 'Report'}: ${item.question || 'An evidence requirement'} remains open or unchecked.`);
+      !['established', 'refuted', 'not-applicable','open'].includes(item.state) || !refs(item.evidence, item.documentation) || !check(capacity.target('obligation', item), item.evidence)) fail(`${item.claimId || 'Report'}: ${item.question || 'An evidence requirement'} remains open or unchecked.`);
+    else if(item.state==='open') fail(`${item.claimId}: ${item.question} remains materially open after checking.`,'material-evidence',item.id);
     identities.add(item.id);
     if (model.outcome === 'supported' && draft.claims.find(claim => claim.id === item.claimId)?.status === 'supported' && ['rule', 'impact', 'behavior'].includes(item.kind) && item.state !== 'established') fail(`A supported violation requires an established ${item.kind}.`);
   }
   if (model.outcome === 'supported' && !draft.claims.some(claim => ['supported', 'narrowed'].includes(claim.status) && ['rule', 'impact', 'behavior'].every(kind => obligations.some(item => item.claimId === claim.id && item.kind === kind && item.state === 'established')))) fail('A supported outcome needs at least one checked claim with established behavior, rule and impact; refuted secondary claims do not establish it.');
-  if (model.outcome === 'supported' && (draft.property.basis === 'report-assumption' || !(draft.property.evidence?.length || draft.property.documentation?.length))) fail('The expected rule has no independent checked basis.');
+  if (model.outcome === 'supported' && (!['source-contract','test-expectation','local-documentation'].includes(draft.property.basis) || !(draft.property.evidence?.length || draft.property.documentation?.length))) fail('The expected rule has no independent checked basis.');
   if (model.outcome === 'refuted' && !draft.evidence.some(item => item.stance === 'contradicts')) fail('No decisive counterevidence refutes the allegation.');
   const eventIds = new Set(), frames = new Map(), transactions = new Map(), participants = new Map();
   for (const event of events) {
@@ -151,12 +156,13 @@ function expose(draft, report = null) {
   if (!draft) return null;
   const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
-    const copy = structuredClone(draft); delete copy.reviewCandidate; delete copy.candidateHistory; delete copy.candidateVerification;
+    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory'])delete copy[key];
     return { ...copy, nativeSources: require('./event-source').projections(draft) };
   }
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
+  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory'])delete copy[key];
   for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',

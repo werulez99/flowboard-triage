@@ -4,9 +4,7 @@
 const capacity = require('../../extension/review-capacity');
 function response(input) {
   if (input.finding.id === 'I-4') return {};
-  // Authoring preserves this fixture's indispensable external blocker. It is
-  // not solved by a new UI stage; the following full check stays unpublished.
-  if (input.candidateOnly) return { mode:'candidate-patch-v1', updates:[] };
+  if (input.candidateOnly) throw new Error('An unchanged external dependency has no candidate amendment; retain its full verification instead.');
   const remote = input.finding.id === 'I-3', count = input.finding.id === 'I-2';
   const name = remote ? 'remoteFinish' : count ? 'checkCount' : 'finish';
   const unit = input.sources.find(item => item.name === `GuardBook::${name}`);

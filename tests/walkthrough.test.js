@@ -176,7 +176,7 @@ test('ordinary selection prepares guide, completes missing helpers, keeps remote
   const inputs = [], host = await start({ reading: true, provider: 'codex', invoke: async input => {
     inputs.push(structuredClone(input)); const result = response(input);
     result.value.walkthrough = { steps: result.value.evidence.map(entry => ({ evidenceId: entry.id, title: 'Inspect the recorded behavior', paragraphId: input.finding.reportParagraphs[0].id, phrase: '' })),
-      assessment: { result: 'invalid', why: 'Fixture deliberately overgeneralizes the local contradiction.', supportingEvidence: '', opposingEvidence: 'credit-record' } };
+      assessment: { result: 'invalid', why: 'Fixture deliberately overgeneralizes the local contradiction.', supportingEvidence: '', opposingEvidence: input.phase==='challenge'?'credit-record':'' } };
     return result;
   } });
   t.after(() => host.close());

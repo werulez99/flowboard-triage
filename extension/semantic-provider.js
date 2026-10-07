@@ -8,27 +8,28 @@ const { TextDecoder } = require('node:util');
 const challengeFormat = require('./challenge-format');
 const { limits } = require('./review-capacity');
 
-const string = { type: 'string' };
+const string = require('./review-content').string;
+const identityString={type:'string',maxLength:100};
 const strings = { type: 'array', items: string, maxItems: 12 };
 const evidenceReferences = { type: 'array', items: string, maxItems: limits.evidence };
 function object(properties) { return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false }; }
 const schema = object({
   inputReviews: require('./semantic-input').reviewSchema,
   causal: require('./guide-policy').schema,
-  property: object({ text: string, basis: { enum: ['report-assumption', 'source-contract', 'test-expectation', 'local-documentation', 'unresolved'] }, evidence: evidenceReferences, documentation: strings }),
-  claims: { type: 'array', maxItems: limits.claims, items: object({ id: string, allegation: string, actor: string, entry: string,
+  property: object({ text: string, basis: { enum: ['report-assumption', 'source-contract', 'test-expectation', 'local-documentation', 'unresolved'] }, evidence: evidenceReferences, documentation: {...strings,maxItems:6} }),
+  claims: { type: 'array', maxItems: limits.claims, items: object({ id: identityString, allegation: string, actor: string, entry: string,
     implementation: string, conditions: strings, requiredFacts: strings, supportsIf: string, contradictsIf: string,
     status: { enum: ['unresolved', 'supported', 'contradicted', 'narrowed'] }, reason: string, evidence: evidenceReferences,
     unknowns: strings, nextQuestion: string }) },
-  evidence: { type: 'array', maxItems: limits.evidence, items: object({ id: string, claimId: string,
+  evidence: { type: 'array', maxItems: limits.evidence, items: object({ id: identityString, claimId: string,
     sourceId: string, line: { type: 'integer' }, endLine: { type: 'integer' }, quote: string,
     stance: { enum: ['supports', 'contradicts', 'context'] }, explanation: string }) },
   explanationReviews: { type: 'array', maxItems: limits.explanationReviews, items: object({ evidenceId: string,
     result: { enum: ['kept', 'repaired', 'removed', 'added'] }, reason: string, checkedSourceIds: strings }) },
-  transitions: { type: 'array', maxItems: limits.transitions, items: object({ id: string, claimId: string, label: string,
+  transitions: { type: 'array', maxItems: limits.transitions, items: object({ id: identityString, claimId: string, label: string,
     before: string, after: string, timing: { enum: ['within-transaction', 'transaction-outcome', 'later-action', 'unknown'] },
     conditions: strings, evidence: evidenceReferences }) },
-  questions: { type: 'array', maxItems: limits.questions, items: object({ id: string, claimId: string, text: string,
+  questions: { type: 'array', maxItems: limits.questions, items: object({ id: identityString, claimId: string, text: string,
     action: { enum: ['inspect', 'callers', 'symbol', 'references', 'missing-context'] }, target: string, why: string }) },
   conclusion: object({ status: { enum: ['insufficient-evidence', 'contradicted-in-scope', 'supported-in-scope', 'mixed'] }, text: string, limitations: strings }),
   walkthrough: object({
@@ -161,6 +162,7 @@ function diagnosticReason(detail) {
 function runTransport(input, options, spec) {
   const metrics = spec.metrics, requestId = options.requestId || crypto.randomUUID(), timeoutMs = options.timeoutMs || spec.timeoutMs;
   const startedAt = new Date().toISOString(), start = Date.now(), outputLimit = Math.max(1, Math.min(MAX_OUTPUT_BYTES, options.outputLimitBytes || MAX_OUTPUT_BYTES));
+  const monotonicStart=performance.now(), elapsed=()=>performance.now()-monotonicStart;
   const audit = { provider: `${spec.provider}-cli`, requestId, phase: input.phase, ...(input.reviewPurpose ? { reviewPurpose: input.reviewPurpose } : {}), responseMode: input.candidateOnly ? 'candidate-patch' : input.checkOnly ? 'check' : input.repairOnly ? 'patch' : input.phase,
     startedAt, queuedAt: options.capacity?.queuedAt || null, slotAcquiredAt: options.capacity?.acquiredAt || null, queueWaitMs: options.capacity?.waitMs ?? null,
     processStartedAt: null, firstActivityAt: null, firstProviderEventAt: null, firstReasoningContentAt: null, firstSubstantiveContentAt: null, finalStructuredContentAt: null,
@@ -180,6 +182,8 @@ function runTransport(input, options, spec) {
     stdoutBytes: 0, stderrBytes: 0, outputBytes: 0, eventCount: 0, toolEvents: 0, finalReceived: false, usage: null,
     costUSD: null, exitCode: null, cancellationReason: null, failureKind: null, outcome: 'pending',
     teardown: null,
+    monotonic: { clock:'performance.now', processStartMs:null, inputWriteStartMs:null, inputWriteCompleteMs:null,
+      firstProviderEventMs:null, firstSubstantiveContentMs:null, finalContentMs:null, stopRequestedMs:null, cleanupMs:null, durationMs:null },
     diagnostics: { events: [], droppedEvents: 0, reportedErrors: 0, lastReportedError: null, stderr: null,
       stderrEvents: [], stderrEventCount: 0, droppedStderrEvents: 0, timeoutContext: null, timeoutDiagnostic: null } };
   return new Promise((resolve, reject) => {
@@ -240,6 +244,8 @@ function runTransport(input, options, spec) {
         try { spec.cleanup?.(); } catch { audit.cleanupWarning = 'The temporary provider directory could not be removed.'; }
       } else audit.cleanupWarning = 'The temporary provider directory is retained while process cleanup is unconfirmed.';
       audit.finishedAt = new Date().toISOString(); audit.exitCode = code; audit.durationMs = Date.now() - start;
+      audit.monotonic.durationMs=elapsed();
+      if(audit.monotonic.stopRequestedMs!==null)audit.monotonic.cleanupMs=audit.monotonic.durationMs-audit.monotonic.stopRequestedMs;
       audit.outputBytes = audit.stdoutBytes + audit.stderrBytes;
       try { finishStderr(); } catch { audit.diagnostics.incompleteStderrUtf8 = true; }
       if (audit.stderrBytes) audit.diagnostics.stderr = { ...audit.diagnostics.stderr, messageBytes: audit.stderrBytes, messageHash: stderrHash.digest('hex') };
@@ -269,6 +275,7 @@ function runTransport(input, options, spec) {
       stopped ||= error;
       if (done || stopStartedAt) return;
       stopStartedAt = new Date().toISOString();
+      audit.monotonic.stopRequestedMs=elapsed();
       audit.teardown = { ...lifecycle?.record, confirmed: false, requestedAt: stopStartedAt, triggerKind: stopped.failureKind, forced: false };
       lifecycle?.signal('SIGTERM');
       force = setTimeout(() => {
@@ -296,6 +303,7 @@ function runTransport(input, options, spec) {
       try { event = JSON.parse(line); }
       catch { stop(failure('Codex returned an invalid event stream.', 'transport')); return; }
       audit.eventCount++; audit.firstProviderEventAt ||= new Date().toISOString();
+      audit.monotonic.firstProviderEventMs ??= elapsed();
       const eventType = diagnosticEventTypes.has(event.type) ? event.type : 'other';
       const diagnostic = { at: new Date().toISOString(), elapsedMs: Date.now() - start, type: eventType };
       if (event.item?.type) diagnostic.itemKind = diagnosticItemKinds.has(event.item.type) ? event.item.type : 'other';
@@ -317,6 +325,7 @@ function runTransport(input, options, spec) {
       const content = event.item?.type === 'agent_message' && typeof event.item.text === 'string' && event.item.text.length > 0;
       if (event.item?.type === 'reasoning' && typeof event.item.text === 'string' && event.item.text.length > 0) audit.firstReasoningContentAt ||= new Date().toISOString();
       if (content) audit.firstSubstantiveContentAt ||= new Date().toISOString();
+      if(content)audit.monotonic.firstSubstantiveContentMs ??= elapsed();
       progress(eventType, !!content);
       // Nonterminal error events can announce a reconnect. A later completed
       // turn supersedes that transient transport notice, not its audit history.
@@ -328,6 +337,7 @@ function runTransport(input, options, spec) {
       }
       if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
         final = event.item.text; audit.finalReceived = true;
+        audit.monotonic.finalContentMs=elapsed();
         spec.captureResponse?.(final);
         try { JSON.parse(final); audit.finalStructuredContentAt ||= new Date().toISOString(); } catch { /* A malformed final value is classified after exit. */ }
       }
@@ -345,15 +355,19 @@ function runTransport(input, options, spec) {
     }
     catch (error) { return complete(failure(`The ${spec.provider} CLI could not start: ${error.message}`, 'spawn'), null); }
     audit.pid = child.pid;
-    child.once('spawn', () => { audit.processStartedAt = new Date().toISOString(); progress('started'); });
+    child.once('spawn', () => { audit.processStartedAt = new Date().toISOString(); audit.monotonic.processStartMs=elapsed(); progress('started'); });
+    audit.deadline.timerScheduledElapsedMs=elapsed();
+    audit.deadline.timerDelayMs=Math.max(0,timeoutMs-audit.deadline.timerScheduledElapsedMs);
     timer = setTimeout(() => {
+      audit.deadline.callbackElapsedMs=elapsed();
+      audit.deadline.callbackLatenessMs=Math.max(0,audit.deadline.callbackElapsedMs-timeoutMs);
       emitStderr(false);
       const reported = observedDiagnostic();
       audit.diagnostics.timeoutDiagnostic = reported || null;
       audit.diagnostics.timeoutContext = reported ? reported.stream === 'stderr' ? 'stderr-diagnostic' : 'provider-reported-error' : audit.firstSubstantiveContentAt ? 'incomplete-result' : 'silent-deadline';
       const reason = reported ? ` Observed diagnostic context: the provider reported ${diagnosticReason(reported)}; this does not establish the timeout cause.` : '';
       stop(failure(`${spec.provider === 'codex' ? 'Codex' : 'Claude'} source review timed out.${reason} Accepted earlier stages, if any, are saved.`, 'timeout'));
-    }, timeoutMs);
+    }, audit.deadline.timerDelayMs);
     options.signal?.addEventListener('abort', cancel, { once: true }); if (options.signal?.aborted) cancel();
     const receive = (chunk, stderrStream) => {
       if (done || stopped) return;
@@ -379,6 +393,7 @@ function runTransport(input, options, spec) {
     child.stdin.once('finish', () => {
       if (done || audit.inputWrite.errorAt) return;
       audit.inputWrite.completedAt = new Date().toISOString(); audit.inputWrite.completedBytes = audit.stdinBytes;
+      audit.monotonic.inputWriteCompleteMs=elapsed();
       progress('input.write.completed'); // Child pipe only, not a remote receipt.
     });
     child.stdin.once('close', () => {
@@ -425,6 +440,7 @@ function runTransport(input, options, spec) {
           }
           let value; try { value = result.structured_output || JSON.parse(result.result); } catch { throw failure('Claude returned malformed structured JSON. The earlier draft is preserved.', 'parse'); }
           audit.firstSubstantiveContentAt ||= new Date().toISOString(); audit.finalStructuredContentAt = new Date().toISOString(); audit.finalReceived = true;
+          audit.monotonic.firstSubstantiveContentMs ??= elapsed();audit.monotonic.finalContentMs=elapsed();
           audit.turns = result.num_turns; audit.costUSD = result.total_cost_usd ?? null; audit.usage = result.usage || null;
           audit.models = Object.keys(result.modelUsage || {}); audit.effectiveConfiguration.observedModels = audit.models;
           progress('result.completed', true); settle(null, value);
@@ -434,6 +450,7 @@ function runTransport(input, options, spec) {
     try { if (child.pid) options.onProcessStart?.(lifecycle.record); }
     catch { stop(failure('The provider process ownership could not be saved. The process is being stopped before review input is sent.', 'ownership', 'PROVIDER_OWNERSHIP_UNAVAILABLE')); return; }
     audit.inputWrite.startedAt = new Date().toISOString();
+    audit.monotonic.inputWriteStartMs=elapsed();
     try { child.stdin.end(spec.stdin, error => { if (error) inputFailure(error); }); }
     catch (error) { inputFailure(error); }
   });

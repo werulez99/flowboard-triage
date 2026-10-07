@@ -582,7 +582,9 @@ class TriageBoard {
     investigationEngine.correct(draft, message.change || {});
     if (this.callbacks.investigationPersistence !== false) investigationEngine.write(this.root, draft);
     await this.publishInvestigation(model, draft);
-    return report ? report.ensure() : this.startInvestigation(model, true);
+    // Saving a human premise is local work, not permission to buy another
+    // interpretation. The ordinary explicit continuation remains available.
+    return draft;
   }
   async runInvestigationTest(model, message) {
     if (!this.investigationCurrent(model)) throw new Error('Refresh the source context before running an existing regression.');

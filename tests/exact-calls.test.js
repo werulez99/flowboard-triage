@@ -385,7 +385,7 @@ function checkedPipeline(draft, selectors = false) {
   const output = {
     property: draft.property,
     claims: draft.claims.map(claim => ({ ...claim, allegation: 'The described invocation rejects the request.',
-      actor: 'Caller', entry: 'caller', implementation: 'The supplied local fixture only.',
+      actor: 'Caller', entry: draft.sources.some(u=>u.id==='caller')?'caller':draft.evidence[0].sourceId, implementation: 'The supplied local fixture only.',
       conditions: ['Only the explicitly described source invocation.'], reason: 'Check exact source semantics.',
       evidence: draft.evidence.map(item => item.id), requiredFacts: [], supportsIf: '', contradictsIf: '', nextQuestion: '' })),
     evidence: draft.evidence.map(item => ({ ...item, line: item.source.line, endLine: item.source.endLine, explanation: item.note })),
@@ -474,6 +474,7 @@ test('native reviewed direct/enclosing callable frames have identical root param
       const whole = { ...original, id: 'whole', name: 'Code details', contextKind: 'excerpt', code: source,
         source: { ...original.source, line: 1, endLine: source.split('\n').length }, readThrough: source.split('\n').length };
       draft.sources = [original, whole];
+      draft.claims[0].evidence=['guard','return'];draft.property.evidence=['guard','return'];
       draft.evidence = [0, 1].map(index => ({ ...draft.evidence[1], id: index ? 'return' : 'guard', sourceId: enclosing ? 'whole' : 'callee',
         source: { ...original.source, line: guardLine + index, endLine: guardLine + index }, quote: source.split('\n')[guardLine + index - 1] }));
       const event = draft.causal.events[1];

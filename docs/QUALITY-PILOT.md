@@ -1,5 +1,50 @@
 # Bounded fresh quality pilot
 
+## Local fidelity/recovery correction (0.19.18)
+
+No external request was made. The real result remains eight lifetime production
+reservations, five selected-finding attempts, and no new checked guide. The
+private seed is not a complete candidate. C's timeout does not unlock V/R/V2.
+
+Retained A/B/C receipts use the same isolated CLI 0.160.1 arguments, medium
+reasoning and disabled tools, but different tasks, schemas and packet identities.
+A produced content after 261.349 seconds; B/C produced no captured assistant
+answer. The nonterminal disabled-tool-host notice also occurred in successful A.
+No retained evidence establishes a remote cause. C wrote locally within 83 ms of
+adapter start (71 ms write); its timer was installed before that write. The
+6.215-second late stop therefore is not explained by setup placement or 14 ms
+cleanup. Old wall-only observations cannot distinguish callback scheduling delay
+from a wall-clock change. New receipts separately record monotonic timer setup,
+callback lateness, stop and cleanup; synchronous setup no longer starts another
+full timeout. Local stall controls demonstrate those boundaries, not C's cause.
+The useful next diagnostic observation is the remote request/turn trace correlated
+with C's retained thread ID and UTC interval. No live retry/probe was performed.
+
+Deterministic production-path controls now preserve long checked qualifications,
+recover recorded human corrections, and remove an external-blocker's empty
+authoring request: generation → checkOnly (two callbacks), versus the previous
+generation → empty candidate → verification (three). The material unknown and
+the source/explanation checks and all nine causal targets remain covered; compatible
+reopen reuses the blocked disposition. Supported and conditionally scoped complete cases
+also take direct verification. Actual acquired local amendment work still uses
+candidate completion. This is request-count evidence, not fresh-model latency.
+
+The retained evaluation journals and original paid artifacts were only read.
+The historical temporary L-90/L-127 workspace paths were absent at this session's
+inventory; no obsolete backup was restored over them and no current playback or
+accounting observation is claimed for those unavailable paths.
+
+Final supported WSL/Node 20.20.1 sequential gate: **504 passed, zero failed or
+skipped** (56.986 s). Focused reader checks used the original native 1.2.0 at
+1440×900, 800×600, 801×600 and 761×900, with the short pane also inspected in
+light theme. Actual screenshots show the full transition above the bottom dock
+and visible, focused outline/assessment after revealing a collapsed panel.
+A separate fixed-response production-path check preserves a 4,456-character
+evidence explanation, including its final scope qualification, through checking,
+storage and native rendering. These are local controls, not a new real review.
+The 28 local navigation samples had median 10.6 ms and maximum 25.9 ms; the
+single saved reopen is not a general warm-open or provider-throughput result.
+
 ## Private candidate completion and native reader (0.19.17)
 
 The same v27/v28 continuation was reconciled before launch: no earlier C/V/R/V2

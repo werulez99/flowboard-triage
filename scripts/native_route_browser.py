@@ -25,13 +25,16 @@ parser.add_argument('--samples',type=int,default=3,choices=range(1,11))
 parser.add_argument('--reopens',type=int,default=20,choices=range(1,51))
 parser.add_argument('--baseline',action='store_true',help='Record the known stale rollback-watch defect instead of asserting its fix; all other checks still run.')
 parser.add_argument('--reader-scenes',action='store_true',help='Capture a finite matched set of native reader scenes, without external requests.')
+parser.add_argument('--reader-fixes',action='store_true',help='Focused collapsed-target and short-dock interaction controls.')
+parser.add_argument('--observe-reader-baseline',action='store_true',help='Record known reader defects without treating them as a pass.')
+parser.add_argument('--long-qualification',action='store_true',help='Controlled production-boundary response with a material suffix past 4000 characters.')
 args=parser.parse_args()
 repository=Path(__file__).resolve().parent.parent
 output=Path(args.output);output.mkdir(parents=True,exist_ok=True)
 env=os.environ.copy()
 if args.product_extension:env['FLOWBOARD_TRIAGE_EXTENSION_PATH']=str(Path(args.product_extension).resolve())
 started=time.monotonic()
-process=subprocess.Popen(['node',str(repository/'scripts/workflow-host.js'),'--route-fixture','--defer-mapping']+(['--production-selection'] if args.production_selection else []),cwd=repository,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+process=subprocess.Popen(['node',str(repository/'scripts/workflow-host.js'),'--route-fixture','--defer-mapping']+(['--production-selection'] if args.production_selection else [])+(['--long-qualification'] if args.long_qualification else []),cwd=repository,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
 result={'boundary':'Actual importer, parser, coordinator, gate, storage and native renderer; fixed fictional answers and simulated editor transport. No real model, protocol execution or Cursor activation.',
     'checks':[],'samples':args.samples,'reopenSamples':args.reopens,'machine':{'platform':platform.platform(),'cpuCount':os.cpu_count()},
     'fixtureHashes':{str(file.relative_to(repository)):hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted((repository/'scripts/fixtures/route-preparation').rglob('*')) if file.is_file()}}
@@ -237,13 +240,15 @@ try:
             if args.production_selection:
                 assert sum(t['event']=='index-start' for t in traces)==warm_index_count,'Warm production selection unexpectedly reindexed unchanged source.'
         result['checks'].append('Compatible saved reopen retains the same accepted artifact and repeated-invocation position with no new controlled requests.')
-        if args.reader_scenes:
+        if args.reader_scenes or args.reader_fixes:
             result['readerScenes']=[]
             scenes=[(1440,900,'attempt','dark'),(1440,900,'check-guard','dark'),(1440,900,'first-write','dark'),
                 (1440,900,'second-write','dark'),(1440,900,'preview-return','dark'),(1440,900,'first-return','dark'),
                 (1440,900,'second-call','dark'),(1440,900,'rollback','dark'),(1024,800,'first-write','dark'),
                 (801,600,'first-write','dark'),(761,900,'first-write','dark'),(800,900,'first-write','dark'),
                 (801,900,'first-write','dark'),(1024,800,'first-write','light')]
+            if args.reader_fixes:
+                scenes=[(1440,900,'first-write','dark'),(800,600,'first-write','dark'),(801,600,'first-write','dark'),(761,900,'first-write','dark'),(800,600,'first-write','light')]
             for width,height,identity,theme in scenes:
                 page.set_viewport_size({'width':width,'height':height})
                 page.evaluate("theme=>{document.body.classList.remove('vscode-dark','vscode-light');document.body.classList.add('vscode-'+theme)}",theme)
@@ -252,28 +257,74 @@ try:
                 page.locator('.guide-outline').evaluate('(n)=>{n.open=false}')
                 page.wait_for_timeout(120)
                 verify(identity)
+                filename=f'scene-{width}x{height}-{identity}-{theme}.png'
+                page.screenshot(path=str(output/filename))
                 if modern_reader:
                     actual=page.evaluate('''()=>{
                       const title=document.querySelector('.guide-active-card .card-title'),r=title.getBoundingClientRect(),header=title.closest('.card-header').getBoundingClientRect();
                       const footer=document.querySelector('.guide-active-card .guide-handoff'),f=footer.getBoundingClientRect(),caption=document.querySelector('.guide-caption').getBoundingClientRect();
+                      const board=document.querySelector('#flowboard').getBoundingClientRect(),dock=document.querySelector('.guide-aside').getBoundingClientRect();
                       const current=document.querySelector('.guide-current-title');
                       return {titleFits:r.left>=header.left&&r.right<=header.right&&title.scrollWidth<=title.clientWidth+1&&title.scrollHeight<=title.clientHeight+1,
-                        next:footer.querySelector('strong').textContent,footerScroll:footer.scrollHeight>footer.clientHeight+1,footerVisible:f.bottom<=innerHeight&&f.top>=0,
+                        next:footer.querySelector('strong').textContent,footerScroll:footer.scrollHeight>footer.clientHeight+1,
+                        footerVisible:f.bottom<=board.bottom+1&&f.top>=board.top-1&&f.left>=board.left-1&&f.right<=board.right+1&&!(f.left<dock.right&&f.right>dock.left&&f.top<dock.bottom&&f.bottom>dock.top+1),
+                        footer:{top:f.top,bottom:f.bottom},board:{top:board.top,bottom:board.bottom},dock:{top:dock.top,left:dock.left},
                         captionVisible:caption.width>0&&caption.top>=0&&caption.bottom<=innerHeight,currentVisible:current.getBoundingClientRect().height>0,
                         valuesFit:[...document.querySelectorAll('.guide-values')].every(n=>n.scrollWidth<=n.clientWidth+1)};
                     }''')
-                    assert actual['titleFits'] and actual['footerVisible'] and not actual['footerScroll'] and actual['captionVisible'] and actual['valuesFit'],actual
+                    if not args.observe_reader_baseline:assert actual['titleFits'] and actual['footerVisible'] and not actual['footerScroll'] and actual['captionVisible'] and actual['valuesFit'],actual
                     if width>800:assert actual['currentVisible'],actual
                     next_index=order.index(identity)+1
                     if next_index<len(order):assert actual['next']=='Next · '+events[order[next_index]]['title'],actual
-                filename=f'scene-{width}x{height}-{identity}-{theme}.png'
-                page.screenshot(path=str(output/filename))
-                result['readerScenes'].append({'file':filename,'viewport':[width,height],'event':identity,'theme':theme,'scale':page.evaluate('scale')})
+                result['readerScenes'].append({'file':filename,'viewport':[width,height],'event':identity,'theme':theme,'scale':page.evaluate('scale'),'geometry':actual if modern_reader else None})
                 if modern_reader and identity=='first-write' and width==1024:
                     page.locator('.guide-values').scroll_into_view_if_needed()
                     page.screenshot(path=str(output/f'values-{width}x{height}-{theme}.png'))
                     page.get_by_role('button',name='Current operation',exact=True).click();verify(identity)
             page.evaluate("()=>{document.body.classList.remove('vscode-light');document.body.classList.add('vscode-dark')}")
+        if args.reader_fixes:
+            page.set_viewport_size({'width':1440,'height':900});page.wait_for_timeout(120)
+            result['collapsedTargets']=[]
+            for destination in ['outline','assessment']:
+                if destination=='assessment':
+                    controls.locator('.guide-options').evaluate('(n)=>{n.open=true}')
+                    hide=controls.get_by_role('button',name='Hide assessment',exact=True)
+                    if hide.count():hide.click()
+                    controls.locator('.guide-options').evaluate('(n)=>{n.open=false}')
+                toggle=controls.get_by_role('button',name='Hide explanation',exact=True)
+                if toggle.count():toggle.click()
+                page.wait_for_timeout(80)
+                collapsed=page.evaluate("()=>({paths:document.querySelectorAll('.guide-anchor path').length,hidden:getComputedStyle(document.querySelector('.guide-aside')).display==='none'})")
+                if destination=='outline':controls.get_by_role('button',name='Step outline',exact=True).click()
+                else:
+                    controls.locator('.guide-options summary').click()
+                    controls.get_by_role('button',name='Show assessment',exact=True).click()
+                page.wait_for_timeout(120)
+                target=page.evaluate('''kind=>{const aside=document.querySelector('.guide-aside'),target=aside.querySelector(kind==='outline'?'.guide-outline summary':'.guide-opinion'),r=target.getBoundingClientRect(),a=aside.getBoundingClientRect(),caption=aside.querySelector('.guide-caption').getBoundingClientRect();return {visible:getComputedStyle(aside).display!=='none'&&r.width>0&&r.top>=Math.max(a.top,caption.bottom)-1&&r.top<a.bottom,focused:document.activeElement===target,event:aside.querySelector('.guide-annotation').dataset.stepId}}''',destination)
+                page.screenshot(path=str(output/f'collapsed-{destination}.png'))
+                result['collapsedTargets'].append({'destination':destination,'collapsed':collapsed,'target':target})
+                if not args.observe_reader_baseline:assert collapsed['hidden'] and collapsed['paths']==0 and target['visible'] and target['focused'] and target['event']=='first-write',result['collapsedTargets'][-1]
+            if args.observe_reader_baseline:
+                show=controls.get_by_role('button',name='Show explanation',exact=True)
+                if show.count():show.click()
+            controls.get_by_role('button',name='Step outline',exact=True).click()
+            page.locator('.guide-outline').get_by_role('button',name=events['first-write']['title'],exact=True).click()
+            page.locator('.guide-outline').evaluate('(n)=>{n.open=false}')
+            page.wait_for_timeout(80)
+            if not args.observe_reader_baseline:
+                controls.get_by_role('button',name='Hide explanation',exact=True).click()
+                wait_state(lambda s:(s.get('snapshots',{}).get('I-1',{}).get('state',{}).get('view',{}).get('walkthrough') or {}).get('pane',{}).get('collapsed') is True)
+                page.evaluate('()=>{window.routeClosing=true;clearInterval(window.routeTimer)}');page.wait_for_timeout(60)
+                request('/action',{'name':'reopen'});page.reload();page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:library")')
+                page.locator('[data-finding-id="I-1"]').click();page.wait_for_selector('.guide-annotation',state='attached')
+                assert page.locator('body').evaluate('(n)=>n.classList.contains("guide-pane-collapsed")')
+                assert page.locator('.guide-anchor path').count()==0
+                controls.get_by_role('button',name='Step outline',exact=True).click()
+                page.locator('.guide-outline').get_by_role('button',name=events['first-write']['title'],exact=True).click()
+                page.locator('.guide-outline').evaluate('(n)=>{n.open=false}')
+                page.wait_for_timeout(80);verify('first-write')
+                assert len(request('/state')['providerCalls'])==2
+                result['checks'].append('Collapsed preference persists across actual host reopen; explicit outline reveals it and preserves the invocation, with zero new callbacks.')
         # The problematic responsive boundaries, including a short pane, use
         # the same checked route; no replacement mockup or CSS-only viewport.
         for width in [759,760,761,799,800,801,1050,1051,1280,1440]:
@@ -281,6 +332,18 @@ try:
             verify('first-write')
             if width in [761,801]:page.screenshot(path=str(output/f'width-{width}.png'))
         result['checks'].append('The checked route remains readable at all requested boundary widths, including an 801×600 pane.')
+        if args.long_qualification:
+            controls.locator('.guide-options').evaluate('(n)=>{n.open=true}')
+            show=controls.get_by_role('button',name='Show assessment',exact=True)
+            if show.count():show.click()
+            note=page.locator('.guide-aside .guide-opinion p').filter(has_text='MATERIAL SCOPE: only this false-approval invocation rolls back; no historical deployment loss is established.')
+            result['longQualification']={'matches':note.count(),'storedLength':len(next(e['note'] for e in draft['evidence'] if e['id']=='approval-guard'))}
+            assert note.count()==1 and len(note.inner_text())>4000,result['longQualification']
+            assert note.text_content()==next(e['note'] for e in draft['evidence'] if e['id']=='approval-guard'), 'Compare exact DOM text, not innerText whitespace layout normalization.'
+            note.evaluate('(n)=>{const a=n.closest(".guide-aside");a.scrollTop+=n.getBoundingClientRect().bottom-a.getBoundingClientRect().bottom+24}')
+            page.screenshot(path=str(output/'long-qualification.png'))
+            result['checks'].append('The exact >4000-character checked evidence note, including its material scope suffix, survives storage, verification and actual native assessment rendering.')
+            page.get_by_role('button',name='Current operation',exact=True).click();verify('first-write')
         result.update(navigation=summary(latencies),withinFunction=summary(within),crossFunction=summary(cross),cachedHostReopen=summary(opening),codeLines=sum(len(unit['code'].splitlines()) for unit in units.values()),events=len(order),functions=5,
             domElements=verify('first-write')['domElements'],pageErrors=errors,hostErrors=state['errors'],externalProviderRequests=0,
             targets={'cachedFirstReadableP95Under500ms':summary(opening)['p95Ms']<500 if summary(opening)['p95Ms'] is not None else None,'stepP95Under100ms':summary(latencies)['p95Ms']<100 if summary(latencies)['p95Ms'] is not None else None})

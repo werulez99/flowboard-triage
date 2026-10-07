@@ -1,4 +1,29 @@
-# Native reader acceptance — 0.19.17
+# Native reader acceptance — 0.19.18
+
+## Focused reader corrections
+
+Matched original-native RouteBook scenes reproduce 0.19.17's collapsed outline
+and short bottom-dock overlap. Explicit Outline/Show assessment now reveals the
+pane, scrolls to its visible destination and transfers keyboard focus without
+changing the invocation. A hidden/clipped annotation endpoint produces no dotted
+connector. Collapse and compatible reopen retain their local reading state.
+
+At 800×600 the old transition extended below the canvas into the explanation
+dock. The short layout reserves height for the header, readable code rows and
+complete next-action reason together; secondary controls share the header row,
+and the explanation caption uses one row when space permits. There is no tiny
+footer scroller. Full function text remains available in the ordinary code
+scroller. The driver now checks the footer against the actual canvas and dock,
+not merely the window. Matched controls cover 800×600 and 801×600 at the same
+height, 1440×900 desktop, 761×900 bottom dock and the changed short scene in light
+and dark themes. Fixture source and teaching text are unchanged in this comparison.
+
+`native_route_browser.py --reader-fixes --samples 1 --reopens 1` checks actual
+clicks, focus, hidden connectors, saved collapsed reopen, exact invocation and
+source navigation. `--long-qualification` separately uses a fixed local response
+with a material evidence qualification after character 4000 and verifies its
+complete native assessment rendering. These are isolated synthetic workspaces,
+not a new real finding or observed Cursor activation; zero external calls.
 
 This is developer inspection of rendered controls, not user-tested comprehension
 or fresh-model quality. Screenshots and raw measurements remain private, outside

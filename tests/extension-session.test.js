@@ -319,8 +319,8 @@ test('workspace removal cancels source acquisition and a later explicit re-add o
   assert.deepEqual(calls, []); assert.ok(old.disposed); assert.equal(old.tasks.size, 0);
   env.vscode.workspace.workspaceFolders = [folder]; env.callbacks.folders({ removed: [], added: [folder] });
   const restored = env.board.callbacks.reportPreparation(); assert.notEqual(restored, old); await restored.ensure();
-  assert.equal(restored.status().ready, 2); assert.equal(calls.length, 9, 'The intact manifest resumes once, including private construction/checking of the blocked control.');
-  assert.deepEqual(calls.filter(([id])=>id==='I-3').map(([,purpose])=>purpose),['generate','candidate-completion','candidate-verification']);
+  assert.equal(restored.status().ready, 2); assert.equal(calls.length, 8, 'The external blocker needs a full check, not an empty authoring request.');
+  assert.deepEqual(calls.filter(([id])=>id==='I-3').map(([,purpose])=>purpose),['generate','challenge']);
   assert.equal(env.analysis.count, 2, 'The removed owner cannot cache or revive its late index.');
 });
 test('workspace removal releases a capacity waiter without reserving or dispatching a request', { skip: !native }, async t => {

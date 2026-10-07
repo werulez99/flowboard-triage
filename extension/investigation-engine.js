@@ -146,7 +146,16 @@ function read(root, id) {
     }
     if (value.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(value.causal[key], limits[key], `saved causal ${key}`);
     if (value.semanticInput) semanticInput.validate(value.semanticInput);
-    if (value.reviewCandidate) candidates.assertCurrent(value, reviewSchema);
+    if (value.reviewCandidate) {
+      try { candidates.assertCurrent(value, reviewSchema); }
+      catch(error) {
+        if(error.code!=='CANDIDATE_STALE')throw error;
+        if(!recoverCorrectedCandidate(value)) {
+          value.recoveryRequired={code:error.code,reason:'Private candidate identity drift is not explained by a recorded researcher correction. Preserved history is read-only; inspect it before continuing.'};
+          value.phase='blocked';value.failureKind='structural';value.error=value.recoveryRequired.reason;
+        }
+      }
+    }
     if (value.inputReviews !== undefined && (!Array.isArray(value.inputReviews) || value.inputReviews.length > 44 || value.inputReviews.some(item => !item || typeof item !== 'object' || Array.isArray(item)))) throw new Error('Invalid saved researcher-input reviews.');
     if (!value.snapshot || !/^[a-f0-9]{64}$/.test(value.snapshot.sourceDigest) || !/^[a-f0-9]{64}$/.test(value.snapshot.reportHash) || !Number.isSafeInteger(value.revision) || value.revision < 0 || typeof value.phase !== 'string' || typeof value.property?.text !== 'string' || typeof value.property?.basis !== 'string' || typeof value.conclusion?.text !== 'string') throw new Error('Invalid investigation identity, rule or conclusion.');
     const refs = new Map();
@@ -656,6 +665,8 @@ function canonicalEvidence(items, units) {
   });
 }
 function accept(output, draft, units, { candidateOnly = false } = {}) {
+  const {text,list}=require('./review-content');
+  require('./review-content').bounds(output);
   if (output?.bindingFormat !== undefined && output.bindingFormat !== require('./source-bindings').VERSION)
     throw Object.assign(new Error('This source-binding representation is not supported.'), { code: 'BINDING_VERSION' });
   if (output?.bindingFormat === require('./source-bindings').VERSION) {
@@ -666,6 +677,7 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   if (Array.isArray(output?.evidence)) output = { ...output, evidence: canonicalEvidence(output.evidence, units) };
   if (output?.bindingFormat) output = require('./source-bindings').compile(output, units);
   if (!output || !Array.isArray(output.claims) || !output.claims.length || output.claims.length > limits.claims || !Array.isArray(output.evidence) || !output.property || !output.conclusion) throw new Error('Model returned no usable claim/evidence structure.');
+  require('./review-content').bounds(require('./review-content').project(output));
   for (const key of ['claims', 'evidence', 'transitions', 'questions']) capacity.assertLength(output[key] || [], limits[key], key);
   if (output.walkthrough?.steps !== undefined) capacity.assertLength(output.walkthrough.steps, limits.steps, 'walkthrough steps');
   if (output.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(output.causal[key], limits[key], key);
@@ -690,7 +702,7 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
     if (!text(item.explanation)) throw new Error('Evidence must explain how the source bears on the claim.');
     if (!item.claimId && ['supports', 'contradicts'].includes(item.stance)) throw new Error('A supporting or challenging note must name its report statement. Shared code context is not a statement result.');
     return { id, findingId: draft.findingId, claimId: item.claimId || '', sourceId: unit.id, function: unit.contextKind ? null : { name: unit.name, signature: unit.signature || '', line: unit.source.line, endLine: unit.declarationEndLine || unit.source.endLine }, source: { ...unit.source, line: item.line, endLine: item.endLine },
-      quote: item.quote, note: text(item.explanation, 4000), stance: ['supports', 'contradicts'].includes(item.stance) ? item.stance : 'context',
+      quote: item.quote, note: text(item.explanation), stance: ['supports', 'contradicts'].includes(item.stance) ? item.stance : 'context',
       origin: 'model-interpretation', quoteVerified: true, interpretationVerified: false,
       basis: unit.kind === 'test-source' ? 'test-reference' : 'inference' };
   });
@@ -705,14 +717,14 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
     }
   }
   const refs = value => list(value, limits.evidence).filter(id => evidenceIds.has(id));
-  const property = { text: text(output.property.text), basis: ['source-contract', 'test-expectation', 'local-documentation'].includes(output.property.basis) ? output.property.basis : 'report-assumption', evidence: refs(output.property.evidence),
-    documentation: list(output.property.documentation, 6).filter(id => draft.documentation?.excerpts.some(item => item.id === id)) };
-  if (!property.evidence.length && !property.documentation.length) property.basis = 'report-assumption';
+  const property = { text: text(output.property.text), basis: ['source-contract', 'test-expectation', 'local-documentation','unresolved'].includes(output.property.basis) ? output.property.basis : 'report-assumption', evidence: refs(output.property.evidence),
+    documentation: list(output.property.documentation ?? [], 6).filter(id => draft.documentation?.excerpts.some(item => item.id === id)) };
+  if (!property.evidence.length && !property.documentation.length && property.basis!=='unresolved') property.basis = 'report-assumption';
   const transitions = (output.transitions || []).filter(item => ids.has(item.claimId)).map(item => ({ id: text(item.id, 100), claimId: item.claimId,
     label: text(item.label), before: text(item.before), after: text(item.after), timing: ['within-transaction', 'transaction-outcome', 'later-action'].includes(item.timing) ? item.timing : 'unknown',
     conditions: list(item.conditions), evidence: refs(item.evidence).filter(id => evidence.some(entry => entry.id === id && (!entry.claimId || entry.claimId === item.claimId))), origin: 'source-prediction', observed: false }));
   const questions = (output.questions || []).filter(item => ids.has(item.claimId)).map(item => ({
-    id: text(item.id, 100), claimId: item.claimId, text: text(item.text), action: ['inspect', 'callers', 'symbol', 'references'].includes(item.action) ? item.action : 'missing-context', target: text(item.target, 1000), why: text(item.why) }));
+    id: text(item.id, 100), claimId: item.claimId, text: text(item.text), action: ['inspect', 'callers', 'symbol', 'references'].includes(item.action) ? item.action : 'missing-context', target: text(item.target), why: text(item.why) }));
   const presentation = output.walkthrough;
   // The checked causal order already supplies this exact presentation. Asking
   // the model for a second outline wastes output and can produce a conflicting
@@ -722,10 +734,10 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
     return event ? [{ evidenceId: event.evidenceId, title: event.title, paragraphId: event.paragraphId, phrase: event.phrase }] : [];
   }) : Array.isArray(presentation?.steps) ? presentation.steps : [];
   const prepared = presentation ? { steps: steps.filter(step => evidenceIds.has(step.evidenceId)).map(step => ({
-    evidenceId: step.evidenceId, title: text(step.title, 180), paragraphId: text(step.paragraphId, 100), phrase: text(step.phrase, 2000)
+    evidenceId: step.evidenceId, title: text(step.title), paragraphId: text(step.paragraphId), phrase: text(step.phrase)
   })), assessment: {
     result: ['valid', 'invalid'].includes(presentation.assessment?.result) ? presentation.assessment.result : 'unclear',
-    why: text(presentation.assessment?.why, 2000),
+    why: text(presentation.assessment?.why),
     supportingEvidence: evidence.find(item => item.id === presentation.assessment?.supportingEvidence && item.stance === 'supports')?.id || '',
     opposingEvidence: evidence.find(item => item.id === presentation.assessment?.opposingEvidence && item.stance === 'contradicts')?.id || ''
   } } : null;
@@ -734,23 +746,65 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   // structural projection may omit attestations; ordinary acceptance cannot.
   const inputProblems = candidateOnly ? [] : semanticInput.problems({ ...draft, sources: units, claims, evidence, causal: output.causal, inputReviews }, false);
   if (inputProblems.length) throw new Error(inputProblems.join('\n'));
-  return { property, claims, evidence, transitions, questions, inputReviews, bindingPlan: output.bindingPlan || null, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
-    scopedStatus: claims.some(claim => claim.status === 'unresolved') ? 'partial' : text(output.conclusion.status, 100),
-    text: text(output.conclusion.text, 4000), limitations: list(output.conclusion.limitations), origin: 'model-draft', humanReviewed: false } };
+  const accepted={ property, claims, evidence, transitions, questions, inputReviews, bindingPlan: output.bindingPlan || null, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
+    scopedStatus: text(output.conclusion.status, 100),
+    text: text(output.conclusion.text), limitations: list(output.conclusion.limitations), origin: 'model-draft', humanReviewed: false } };
+  require('./review-content').equal(output,accepted);
+  return accepted;
 }
-function correct(draft, change) {
-  if (!['property', 'actor', 'entry', 'implementation', 'conditions'].includes(change.field) || !text(change.value)) throw new Error('Choose an investigation field and a nonempty correction.');
-  if (change.claimId && !draft.claims.some(claim => claim.id === change.claimId)) throw new Error('The selected claim is not in this investigation.');
-  const correction = { id: crypto.randomUUID(), claimId: change.claimId || null, field: change.field, value: text(change.value), reason: text(change.reason), origin: 'researcher', independentlySupported: false, at: now() };
-  draft.corrections.push(correction); draft.corrections = draft.corrections.slice(-30);
+function invalidateCandidate(draft,reason,correctionId) {
+  if(draft.reviewCandidate) {
+    draft.invalidatedCandidates=[...(draft.invalidatedCandidates||[]),{reason,correctionId,at:now(),snapshot:structuredClone(draft.snapshot),candidate:structuredClone(draft.reviewCandidate),pendingResponse:draft.pendingResponse||null}];
+    delete draft.reviewCandidate;
+  }
+  if(draft.candidateHistory||draft.checkedContentHash||draft.candidateVerification) {
+    draft.invalidatedReviews=[...(draft.invalidatedReviews||[]),{reason,correctionId,at:now(),candidateHistory:draft.candidateHistory||[],candidateVerification:draft.candidateVerification||null,checkedContentHash:draft.checkedContentHash||null}];
+    delete draft.candidateHistory;delete draft.candidateVerification;delete draft.checkedContentHash;
+  }
+  delete draft.pendingResponse;delete draft.publication;delete draft.recoveryRequired;delete draft.checkedBlocker;
+}
+function correctionEffects(draft,correction) {
   for (const claim of draft.claims) if (!correction.claimId || claim.id === correction.claimId) {
     claim.previousAssessment = { status: claim.status, reason: claim.reason };
     claim.status = 'unresolved'; claim.reason = 'Researcher correction changed a premise. Reassess this scoped claim against the correction; existing quotes are not renewed proof.';
     claim.needsReassessment = true;
   }
   for (const transition of draft.transitions) if (!correction.claimId || transition.claimId === correction.claimId) transition.needsReassessment = true;
-  draft.conclusion = { status: 'insufficient-evidence', text: 'A researcher correction changed the investigation premises. Dependent conclusions are unresolved until reassessed.', humanReviewed: false, origin: 'correction-invalidation' };
-  draft.phase = 'corrected'; draft.revision++;
+  draft.conclusion = { status: 'insufficient-evidence', text: 'A researcher correction changed the investigation premises. Dependent conclusions are unresolved until reassessed.', limitations:[], humanReviewed: false, origin: 'correction-invalidation' };
+  draft.phase = 'corrected';
+}
+function recoverCorrectedCandidate(draft) {
+  const state=draft.reviewCandidate;
+  if(draft.phase!=='corrected'||draft.conclusion?.origin!=='correction-invalidation')return false;
+  for(let n=0;n<draft.corrections.length;n++) {
+    const previous=structuredClone(draft);previous.corrections=draft.corrections.slice(0,n);
+    if(candidates.identity(previous)!==state.contextHash)continue;
+    const added=draft.corrections.slice(n);
+    if(added.some(c=>c.origin!=='researcher'||!['property','actor','entry','implementation','conditions'].includes(c.field)||!c.value?.trim()||!c.id||!c.at||c.claimId&&!draft.claims.some(x=>x.id===c.claimId)))return false;
+    // Only the exact fields changed by the old supported correction operation
+    // can be reversed to the retained base. Other drift still fails strictly.
+    for(const c of previous.claims)if(added.some(a=>!a.claimId||a.claimId===c.id)) {
+      const old=state.acceptedBase.claims.find(x=>x.id===c.id);if(!old)return false;c.status=old.status;c.reason=old.reason;
+    }
+    previous.conclusion={...structuredClone(state.acceptedBase.conclusion),scopedStatus:state.acceptedBase.conclusion.status};
+    try{candidates.assertCurrent(previous,reviewSchema);}catch{return false;}
+    const expected=structuredClone(previous);for(const c of added)correctionEffects(expected,c);
+    if(require('./review-content').hash(require('./review-content').project(expected))!==require('./review-content').hash(require('./review-content').project(draft)))return false;
+    invalidateCandidate(draft,'Recovered the exact recorded researcher-correction transition; old candidate is not verification-eligible.',added.at(-1).id);
+    draft.candidateRecovery={kind:'recorded-correction',at:now(),correctionIds:added.map(c=>c.id)};return true;
+  }
+  return false;
+}
+function correct(draft, change) {
+  const text=require('./review-content').text;
+  if (!['property', 'actor', 'entry', 'implementation', 'conditions'].includes(change.field) || !text(change.value)) throw new Error('Choose an investigation field and a nonempty correction.');
+  if (change.claimId && !draft.claims.some(claim => claim.id === change.claimId)) throw new Error('The selected claim is not in this investigation.');
+  const correction = { id: crypto.randomUUID(), claimId: change.claimId || null, field: change.field, value: text(change.value), reason: text(change.reason||''), origin: 'researcher', independentlySupported: false, at: now() };
+  if(draft.reviewCandidate)candidates.assertCurrent(draft,reviewSchema);
+  draft.correctionHistory=[...(draft.correctionHistory||[]),{correctionId:correction.id,correction,at:now(),snapshot:structuredClone(draft.snapshot),argument:challengeFormat.earlier(draft,reviewSchema),pendingResponse:draft.pendingResponse||null,priorCorrections:structuredClone(draft.corrections)}];
+  invalidateCandidate(draft,'Researcher correction changed the candidate premises.',correction.id);
+  draft.corrections.push(correction); draft.corrections = draft.corrections.slice(-30);
+  correctionEffects(draft,correction);draft.revision++;
   return correction;
 }
 function checkExplanations(output, previous, next, units) {
@@ -773,7 +827,7 @@ function checkExplanations(output, previous, next, units) {
     if (old && !inspected(check.checkedSourceIds, old.sourceId) || item && !inspected(check.checkedSourceIds, item.sourceId)) throw new Error(`The explanation check for ${check.evidenceId} did not inspect its referenced function (${old?.sourceId || item?.sourceId}).`);
     if (check.result === 'removed' ? !old || !!item : !item || (check.result === 'added' ? !!old : !old)) throw new Error('The explanation check does not match the retained or removed note.');
     if (check.result === 'kept' && (['note', 'quote', 'stance', 'claimId', 'sourceId'].some(key => old[key] !== item[key]) || JSON.stringify(old.source) !== JSON.stringify(item.source))) throw new Error('A changed explanation must be marked repaired, not kept.');
-    const record = { evidenceId: check.evidenceId, result: check.result, reason: text(check.reason), checkedSourceIds: [...new Set(check.checkedSourceIds)], origin: 'model-challenge', independentlyVerified: false };
+    const record = { evidenceId: check.evidenceId, result: check.result, reason: require('./review-content').text(check.reason), checkedSourceIds: [...new Set(check.checkedSourceIds)], origin: 'model-challenge', independentlyVerified: false };
     reviewed.add(check.evidenceId); accepted.push(record);
     } catch (error) { problems.push({ code: 'EXPLANATION_REVIEW_INVALID', evidenceId: check?.evidenceId || '', message: error.message }); }
   }
@@ -781,6 +835,7 @@ function checkExplanations(output, previous, next, units) {
   if (problems.length) throw scope.failure(problems);
   for (const record of accepted) { const item = next.evidence.find(item => item.id === record.evidenceId); if (item) item.explanationReview = record; }
   next.explanationReviews = accepted;
+  next.checkedContentHash=require('./review-content').hash(require('./review-content').project(next));
   return next;
 }
 async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false, prepareRequest, candidateSeed }) {
@@ -792,6 +847,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     draft.revision++; if (persist) write(root, draft); await publish(draft);
   };
   try {
+    if(draft.recoveryRequired)return draft;
     ensure(); workspaceSnapshot.validate(catalog, { force: true }); const context = makeContext(catalog, request, issue);
     const priorNoProgress = draft.checkpoint?.noProgress, priorRepeated = draft.checkpoint?.repeated || 0;
     if (priorNoProgress && priorRepeated && sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && !draft.claims.some(claim => claim.needsReassessment)) {
@@ -799,13 +855,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       await save(); return draft;
     }
     const lastAccepted = [...draft.runs].reverse().find(run => run.resultAccepted);
-    const resumeQuestions = draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' && draft.questions.length || draft.failureKind === 'local-reading');
+    const resumeQuestions = draft.phase !== 'corrected' && !draft.claims.some(claim=>claim.needsReassessment) && draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' || draft.failureKind === 'local-reading');
     // An accepted incomplete generation can honestly have no evidence yet,
     // for example when its decisive statement lies in an unread local tail.
     // Requiring an existing quote here restarts that prefix forever instead
     // of restoring the reading cursor and challenging the saved question.
     const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && draft.claims.length &&
-      !draft.claims.some(claim => claim.needsReassessment) && (draft.checkpoint?.stage === 'challenge' ||
+      (!draft.claims.some(claim => claim.needsReassessment)||draft.phase==='corrected') && (draft.phase==='corrected'||draft.checkpoint?.stage === 'challenge' ||
         resumeQuestions ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate');
     if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft); }
@@ -910,7 +966,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       const reviewPurpose = phase === 'challenge' && !draft.pendingResponse ? candidates.purpose(draft, reviewSchema) : null;
       if (feedback) data.hostReview = feedback;
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
-      if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
+      if (phase === 'challenge' && !feedback && !repairUsed && !reviewPurpose) data.checkOnly = true;
       else if (phase === 'challenge') data.repairOnly = true;
       if (reviewPurpose) {
         data = candidates.packet(data, draft, reviewSchema, reviewPurpose);
@@ -1052,6 +1108,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           if (entry.source.endLine > readTo) throw Object.assign(new Error(`Evidence ${entry.id} refers to local code not yet supplied: ${entry.source.file}:${entry.source.line}-${entry.source.endLine}. Request that segment before explaining it.`), { code: 'LOCAL_READING_LIMIT' });
         }
         const checked = previous ? checkExplanations(value, previous, accepted, reviewUnits) : accepted;
+        if(data.checkOnly&&data.reviewPurpose)require('./review-content').equal(require('./review-content').fromWire(data.earlierDraft,reviewUnits),checked);
         if (candidateVerification) checked.candidateVerification = candidateVerification;
         return checked;
         } catch (error) {
@@ -1065,6 +1122,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       let accepted;
       try { accepted = validate(response.value); }
       catch (error) {
+        if(['REVIEW_CONTENT_BOUND','REVIEW_CONTENT_MISMATCH'].includes(error.code)) {
+          // Host representation failure is not a reason to buy a rewrite.
+          // Keep the exact paid pending response for local diagnosis/replay.
+          draft.lastRejected={phase,inputHash:response.audit?.inputHash,at:now(),error:error.message,output:response.value};
+          throw error;
+        }
         if (data.reviewPurpose) {
           // A completed checker disagreement is semantic feedback. A timeout,
           // malformed result or host binding error never opens a repair slot.

@@ -112,14 +112,19 @@
   function sizeGuidePane() {
     const bottom = innerWidth <= 800;
     const width = Math.max(320, Math.min(innerWidth - 368, guidePane.width || Math.min(520, innerWidth * .38)));
-    const height = Math.max(230, Math.min(innerHeight - 360, guidePane.height || innerHeight * .42));
+    // Short bottom docks must leave room for the complete header, readable
+    // code rows AND the transition. A saved preference is not an occlusion
+    // license; it is restored when the viewport has enough height again.
+    const minimum = innerHeight <= 650 ? 180 : 230;
+    const maximum = Math.max(minimum, innerHeight - (innerHeight <= 650 ? 410 : 360));
+    const height = Math.max(minimum, Math.min(maximum, guidePane.height || innerHeight * .42));
     document.body.style.setProperty('--guide-side-width', `${bottom || guidePane.collapsed ? 0 : width}px`);
     document.body.style.setProperty('--guide-bottom-height', `${!bottom || guidePane.collapsed ? 0 : height}px`);
     document.body.classList.toggle('guide-pane-collapsed', guidePane.collapsed);
     guideResize.setAttribute('aria-orientation', bottom ? 'horizontal' : 'vertical');
     guideResize.setAttribute('aria-valuenow', String(Math.round(bottom ? height : width)));
-    guideResize.setAttribute('aria-valuemin', bottom ? '230' : '320');
-    guideResize.setAttribute('aria-valuemax', String(bottom ? Math.max(230, innerHeight - 360) : Math.max(320, innerWidth - 368)));
+    guideResize.setAttribute('aria-valuemin', bottom ? String(minimum) : '320');
+    guideResize.setAttribute('aria-valuemax', String(bottom ? maximum : Math.max(320, innerWidth - 368)));
   }
   const resizeGuide = value => {
     if (innerWidth <= 800) guidePane.height = value; else guidePane.width = value;
@@ -146,11 +151,12 @@
     cancelAnimationFrame(anchorFrame);
     anchorFrame = requestAnimationFrame(() => {
       guideAnchor.replaceChildren();
-      if (guideMode !== 'guided' || guideAside.hidden || !checkedLocation) return;
+      if (guideMode !== 'guided' || guideAside.hidden || guidePane.collapsed || !guideAside.getClientRects().length || !checkedLocation) return;
       const card = cards.get(selectedCard), row = card?.codeEl.querySelector(`[data-source-line="${checkedLocation.line}"]`), note = guideAside.querySelector('.guide-line-link');
       if (!row || !note) return;
       const r = row.getBoundingClientRect(), c = card.codeEl.parentElement.getBoundingClientRect(), n = note.getBoundingClientRect(), a = guideAside.getBoundingClientRect();
-      if (r.bottom < c.top || r.top > c.bottom || n.bottom < a.top || n.top > a.bottom) return;
+      const caption=guideAside.querySelector('.guide-caption')?.getBoundingClientRect();
+      if (!n.width || !n.height || r.bottom < c.top || r.top > c.bottom || n.top < Math.max(a.top,caption?.bottom||0) || n.bottom > a.bottom) return;
       const x = Math.min(c.right, flowboard.getBoundingClientRect().right) - 3, y = Math.max(c.top, r.top) + Math.min(r.height, 24) / 2;
       // Overlaid explanation anchors must never draw over original code,
       // including a neighboring card crossed by a return connection.
@@ -641,7 +647,7 @@
     const opinionLabel = FlowboardWalkthrough.assessment(investigationDraft?.phase === 'ready' ? guide.draft : investigationDraft, sourceStale);
     const extras = element('details', 'guide-options'); extras.append(element('summary', '', 'Options'));
     extras.append(button('Restart', () => guideGo(0)), button('Readable size', () => { const card = cards.get(selectedCard); if (card) focusReadable(card); }), button(guideWrap ? 'Turn wrapping off' : 'Wrap code', () => { guideWrap = !guideWrap; renderGuide(); schedulePersist(); }),
-      button(guideOpinion ? 'Hide assessment' : 'Show assessment', () => { guideOpinion = !guideOpinion; renderGuide(); schedulePersist(); }));
+      button(guideOpinion ? 'Hide assessment' : 'Show assessment', () => { if(!guideOpinion)revealGuideSection('assessment');else {guideOpinion=false;renderGuide();schedulePersist();} }));
     guideControls.append(extras);
     guideControls.append(button(guidePane.collapsed ? 'Show explanation' : 'Hide explanation', () => {
       if (!guidePane.collapsed) guideHiddenScroll = guideAside.scrollTop;
@@ -649,7 +655,7 @@
       if (!guidePane.collapsed) guideAside.scrollTop = guideHiddenScroll;
       window.dispatchEvent(new Event('resize')); schedulePersist();
     }, 'guide-pane-toggle'));
-    guideControls.append(button('Step outline', () => { disclosureState.set('guide-outline', true); const outline = guideAside.querySelector('.guide-outline'); if (outline) { outline.open = true; guideAside.scrollTop += outline.getBoundingClientRect().top - guideAside.getBoundingClientRect().top - 12; } }));
+    guideControls.append(button('Step outline', () => revealGuideSection('outline')));
     if (focusedControl) ([...guideControls.querySelectorAll('button')].find(item => item.textContent === focusedControl && !item.disabled) || next.disabled && back || next).focus({ preventScroll: true });
     measureGuideControls();
     guideAside.append(element('small', 'triage-muted', `${issueIdentifier()} · Checked against saved code, not an executed trace`));
@@ -808,10 +814,7 @@
       } else {
         const result = FlowboardWalkthrough.assessment(guide.draft);
         handoff.append(element('strong', '', `End of the checked explanation · ${result.label}`), element('p', '', result.why), button('Review assessment', () => {
-          guideOpinion = true; renderGuide();
-          const opinion = guideAside.querySelector('.guide-opinion');
-          if (opinion) guideAside.scrollTop += opinion.getBoundingClientRect().top - guideAside.getBoundingClientRect().top - 12;
-          schedulePersist();
+          revealGuideSection('assessment');
         }, 'guide-conclusion-action'));
       }
       card.el.append(handoff);
@@ -1039,6 +1042,19 @@
   }
   function section(title) { const node = element('section', 'triage-section'); node.append(element('h3', '', title)); return node; }
   function resetViewportScroll() { flowboard.scrollLeft = 0; flowboard.scrollTop = 0; }
+  function revealGuideSection(section) {
+    guidePane.collapsed=false;
+    if(section==='outline')disclosureState.set('guide-outline',true);else guideOpinion=true;
+    renderGuide();window.dispatchEvent(new Event('resize'));
+    requestAnimationFrame(()=>{
+      const target=guideAside.querySelector(section==='outline'?'.guide-outline summary':'.guide-opinion');
+      if(!target)return;
+      target.tabIndex=-1;
+      const top=guideAside.querySelector('.guide-caption').getBoundingClientRect().bottom;
+      guideAside.scrollTop+=target.getBoundingClientRect().top-top-12;
+      target.focus({preventScroll:true});placeGuideAnchor();schedulePersist();
+    });
+  }
   function focusReadable(card) {
     resetViewportScroll(); scale = 1;
     // Start at the function header, not halfway down a tall source card.
