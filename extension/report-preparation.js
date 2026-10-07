@@ -455,6 +455,12 @@ class ReportPreparation {
   deadlineEnabled() { return this.state?.batch?.stopPolicy === 'explicit-user-v1' && Number.isFinite(Date.parse(this.state.batch.deadlineAt)); }
   expired() { return this.deadlineEnabled() && Date.now() >= Date.parse(this.state.batch.deadlineAt); }
   observationOnly(id) { return this.options.phasePlan?.(id)?.join() === 'generate'; }
+  requiresChallenge(id) {
+    const phases = this.options.phasePlan?.(id);
+    // A trusted evaluation window owes only its permitted remaining phases.
+    // Ordinary reports still protect every admitted finding's challenge.
+    return phases === undefined || phases.includes('challenge') && this.options.phaseRemaining?.(id) !== false;
+  }
   expire() {
     if (!this.expired() || this.disposed || this.state.batch.outcome === 'completed') return;
     this.state.batch.outcome = 'deadline-exceeded'; this.state.batch.finishedAt ||= now();
@@ -519,7 +525,7 @@ class ReportPreparation {
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
-        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly,
+        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly, prepareRequest: this.options.prepareRequest,
         beforeRequest: async data => {
           const phases = this.options.phasePlan?.(entry.id);
           if (phases && !phases.includes(data.phase)) throw Object.assign(new Error('This authorized phase plan does not permit the next request; retained observation remains unpublished.'), { code: 'REPORT_PAUSED' });
@@ -528,7 +534,7 @@ class ReportPreparation {
           if (this.state.resources.requests >= this.state.resources.limit) throw Object.assign(new Error(`Report request allowance exhausted (${this.state.resources.requests}/${this.state.resources.limit}). Accepted stages are saved.`), { code: 'REPORT_BUDGET' });
           if (job.requests >= job.requestLimit) throw Object.assign(new Error(`Finding ${job.id} request allowance exhausted (${job.requests}/${job.requestLimit}). Other findings may continue.`), { code: 'FINDING_BUDGET' });
           const challengeCapacity = () => {
-            const owed = batch.owedChallenges(Object.values(this.state.jobs), entry.id, id => !this.observationOnly(id)) + (data.phase === 'generate' && !this.observationOnly(entry.id) ? 1 : 0);
+            const owed = batch.owedChallenges(Object.values(this.state.jobs), entry.id, id => this.requiresChallenge(id)) + (data.phase === 'generate' && this.requiresChallenge(entry.id) ? 1 : 0);
             if (this.state.resources.limit - this.state.resources.requests <= owed) throw Object.assign(new Error(`Remaining allowance is reserved for ${owed} mandatory challenges of admitted findings; no new request was reserved.`), { code: 'FINDING_BUDGET' });
           };
           challengeCapacity();

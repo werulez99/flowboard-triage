@@ -76,6 +76,12 @@ test('actual preparation renderer retains selected job reason and shows current 
   context.active = 'A'; context.FlowboardWalkthrough.build = () => ({ ready: true }); vm.runInNewContext('renderPreparation()', context);
   assert.equal(surface.hidden, true, 'An independent ready walkthrough is not covered by the local refusal.');
   context.active = 'B'; context.reportPreparation.admission = null; context.FlowboardWalkthrough.build = () => null;
+  for (const expanded of [false, true]) {
+    context.preparationExpanded = expanded; vm.runInNewContext('renderPreparation()', context);
+    assert.ok(!flat(surface).some(n => n.tag === 'button' && n.text === 'Continue this finding'));
+    assert.match(flat(surface).map(n => n.text).join('\n'), /Shared report allowance exhausted.*explicit additional allowance/);
+  }
+  context.reportPreparation.requestLimit = 3;
   vm.runInNewContext('renderPreparation()', context); assert.ok(flat(surface).some(n => n.text === 'Continue this finding'));
   context.guideAvailability = { ready: false, reason: 'The walkthrough needs one missing function card.' };
   vm.runInNewContext('renderPreparation()', context);

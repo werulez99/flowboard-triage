@@ -669,7 +669,7 @@ test('authorized two pairs plus generation-only observation consumes exactly fiv
   assert.equal(require('../extension/batch-plan').owedChallenges([{id:'ordinary', state:'paused', checkpoint:{stage:'challenge'}}], 'other'), 1);
 });
 
-test('runner/coordinator additive challenge plan preserves four prior attempts and never dispatches a third continuation', { skip: !native }, async t => {
+for (const selectedCount of [1, 2]) test(`runner/coordinator additive plan admits ${selectedCount} challenges over four prior attempts without sibling debt`, { skip: !native }, async t => {
   const f = await fixture(t, 2, input => {
     const value = response({ ...input, checkOnly: false });
     if (input.phase === 'challenge') {
@@ -688,12 +688,13 @@ test('runner/coordinator additive challenge plan preserves four prior attempts a
   const {entries,report}=reconcile(f.root),cases=[];
   for(const entry of entries){const issue=f.runner.issue(entry),request=f.runner.request(entry,catalog,report),saved=engine.read(f.root,entry.id);
     const {packet}=await require('../scripts/saved-stage-packet').inspectSavedStage({root:f.root,catalog,request,issue,findingId:entry.id,saved});
-    cases.push({findingId:entry.id,phases:['challenge'],timeoutMs:600000,snapshotHash:engine.hash(saved.snapshot),retainedBaseHash:engine.hash(savedBase(saved)),firstPacket:packetIdentity(packet)});
+    const firstPacketPath=path.join(f.root,'.flowboard',entry.id+'-approved-input.json');fs.writeFileSync(firstPacketPath,JSON.stringify(packet));
+    cases.push({findingId:entry.id,phases:['challenge'],timeoutMs:600000,snapshotHash:engine.hash(saved.snapshot),retainedBaseHash:engine.hash(savedBase(saved)),firstPacket:packetIdentity(packet),firstPacketPath});
   }
-  const manifest={root:f.root,referenceHash:'separate-controlled-reference',maximumRequests:2,cases,
+  const manifest={root:f.root,referenceHash:'separate-controlled-reference',maximumRequests:selectedCount,cases:cases.slice(0,selectedCount),
     continuation:{parentManifestHash:'controlled-parent',baseline,baselineHash:engine.hash(baseline)}};
   let ledger={manifestHash:engine.hash(manifest),used:0,receipts:[]};
-  const approval={authorized:true,manifestHash:engine.hash(manifest),maximumRequests:2};
+  const approval={authorized:true,manifestHash:engine.hash(manifest),maximumRequests:selectedCount};
   const guard=new EvaluationPlanGuard({manifest,approval,ledger,root:f.root,save:()=>{},acceptedBase:id=>engine.read(f.root,id)});
   assert.equal(guard.continuation(f.runner.state).baselineRequests,4);assert.equal(f.runner.state.resources.limit,5,'Inactive checking does not apply allowance.');
   const changed=structuredClone(f.runner.state);changed.resources.requests=3;assert.throws(()=>guard.continuation(changed),/baseline/i);
@@ -703,11 +704,13 @@ test('runner/coordinator additive challenge plan preserves four prior attempts a
   f.runner.dispose();await f.runner.loop;
   const runner=new ReportPreparation(f.root,executionOptions({manifest,guard,catalog:async()=>catalog,invoke}));t.after(()=>runner.dispose());
   await runCases(runner,manifest);
-  assert.deepEqual(callbacks,['challenge','challenge']);assert.equal(ledger.used,2);assert.equal(runner.status().requests,6);assert.equal(runner.state.resources.limit,6);
+  assert.deepEqual(callbacks,Array(selectedCount).fill('challenge'),JSON.stringify(runner.status().jobs.map(j=>({id:j.id,reason:j.reason}))));assert.equal(ledger.used,selectedCount);assert.equal(runner.status().requests,4+selectedCount);assert.equal(runner.state.resources.limit,4+selectedCount);
   for(const [id,receipt]of Object.entries(priorReceipts))assert.deepEqual(runner.state.resources.receipts[id],receipt);
-  assert.equal(runner.status().ready,2);
+  assert.equal(runner.status().ready,selectedCount);
+  if(selectedCount===1){assert.equal(runner.state.jobs['I-2'].requests,2);assert.equal(runner.state.jobs['I-2'].publishable,false);assert.equal(runner.requiresChallenge('I-2'),false);}
+  assert.equal(f.runner.requiresChallenge('I-2'),true,'An ordinary sibling still needs its mandatory review.');
   const accounting=JSON.stringify(accountingBaseline(runner.state));
-  await runCases(runner,manifest);assert.equal(callbacks.length,2);assert.equal(JSON.stringify(accountingBaseline(runner.state)),accounting);
+  await runCases(runner,manifest);assert.equal(callbacks.length,selectedCount);assert.equal(JSON.stringify(accountingBaseline(runner.state)),accounting);
   ledger=JSON.parse(JSON.stringify(ledger));const reopened=new EvaluationPlanGuard({manifest,approval,ledger,root:f.root,save:()=>assert.fail('No refund'),acceptedBase:id=>engine.read(f.root,id)});
   assert.ok(reopened.continuation(runner.state));assert.throws(()=>reopened.authorize({phase:'challenge',finding:{id:'I-1'}}),/Aggregate/);
 });

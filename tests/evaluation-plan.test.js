@@ -1,6 +1,18 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {EvaluationPlanGuard,packetIdentity}=require('../scripts/evaluation-plan-guard'),{hash}=require('../extension/investigation-engine');
+test('prepared exact input survives only acquisition-history/source-order changes without relaxing packet hashes',t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-prepared-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const input={phase:'generate',finding:{id:'A'},snapshot:{project:'controlled'},sources:[{id:'a',code:'complete A'},{id:'b',code:'complete B'}],actions:[{kind:'code-completion',result:'Source acquired'}]};
+  const firstPacketPath=path.join(root,'input.json');fs.writeFileSync(firstPacketPath,JSON.stringify(input));
+  const manifest={root,referenceHash:'outside-packet',maximumRequests:1,cases:[{findingId:'A',phases:['generate'],timeoutMs:600000,snapshotHash:hash(input.snapshot),firstPacket:packetIdentity(input),firstPacketPath}]};
+  const ledger={manifestHash:hash(manifest),used:0,receipts:[]},approval={authorized:true,manifestHash:hash(manifest),maximumRequests:1};
+  const guard=new EvaluationPlanGuard({manifest,ledger,approval,root,save:()=>assert.fail('Preparation cannot reserve')});
+  const reordered={...input,sources:[...input.sources].reverse(),actions:[{kind:'code-completion',result:'Already acquired'}]};
+  assert.deepEqual(guard.preparedInput(reordered),input);assert.equal(ledger.used,0);
+  for(const delta of [{sources:[{id:'a',code:'changed'}]}, {finding:{id:'A',premise:'new'}},{earlierDraft:{changed:true}},{questions:['new']},{actions:[{kind:'experiment'}]}])assert.throws(()=>guard.preparedInput({...reordered,...delta}));
+  fs.writeFileSync(firstPacketPath,JSON.stringify({...input,actions:[]}));assert.throws(()=>guard.preparedInput(reordered),/Frozen approved packet changed/);
+});
 test('five-call manifest keeps per-case phases nontransferable and packet/source/schema drift fails before reservation',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-plan-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const input={phase:'generate',finding:{id:'A'},snapshot:{project:'controlled'},sources:[]};

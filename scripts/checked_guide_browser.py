@@ -470,6 +470,11 @@ try:
             status_text = page.locator('.guide-preparation').inner_text()
             assert 'Make room for the walkthrough' not in status_text, 'Unpublished analysis is not a card-capacity failure.'
             selected_job = next((j for j in (state.get('reportPreparation') or {}).get('jobs', []) if j['id'] == args.finding), None)
+            preparation = state.get('reportPreparation') or {}
+            if isinstance(preparation.get('requests'), (int, float)) and isinstance(preparation.get('requestLimit'), (int, float)) and preparation['requests'] >= preparation['requestLimit']:
+                assert page.locator('.guide-preparation').get_by_role('button', name='Continue this finding', exact=True).count() == 0
+                assert 'Shared report allowance exhausted' in status_text
+                result['checks'].append('Exhausted shared allowance does not offer an ineffective finding continuation; retained work remains available.')
             if selected_job and selected_job.get('reason'):
                 assert selected_job['reason'] in status_text
             questions = (selected_job or {}).get('missingInputs', [])

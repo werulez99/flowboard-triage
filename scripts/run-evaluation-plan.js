@@ -32,7 +32,7 @@ async function verifyAdmission(manifest) {
         packet=input;throw Object.assign(Error('Offline capture; no reservation.'),{code:'LOCAL_READING_LIMIT'});
       }});
     }
-    if(!packet)throw Error('No admissible next packet.');guard.check(packet);verified.push(c.findingId);
+    if(!packet)throw Error('No admissible next packet.');guard.check(guard.preparedInput(packet));verified.push(c.findingId);
   }
   if(engine.hash(before)!==engine.hash(inventory()))throw Error('Offline verification changed retained records.');
   console.log(JSON.stringify({manifestHash:engine.hash(manifest),verified,providerRequests:0,newReservations:0,baselineRequests:journal.resources.requests,savedRecordsUnchanged:true}));
@@ -45,7 +45,7 @@ function verifyParent(manifest) {
 }
 function executionOptions({manifest,guard,catalog,invoke}) {
   return {configuration:()=>({provider:'codex',executable:manifest.executable,workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
-    catalog,phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
+    catalog,prepareRequest:input=>guard.preparedInput(input),phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
     log:message=>console.error(message)};
 }
 async function runCases(coordinator,manifest) {

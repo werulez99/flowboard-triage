@@ -67,9 +67,10 @@
     const notice = localAdmission();
     if (notice) parent.append(element('p', 'guide-status-reason', `This host cannot continue: ${notice.reason}`), element('small', 'triage-muted', notice.action));
   }
+  const sharedAllowanceExhausted = () => Number.isFinite(reportPreparation?.requests) && Number.isFinite(reportPreparation?.requestLimit) && reportPreparation.requests >= reportPreparation.requestLimit;
   const canContinueFinding = () => {
     const job = preparationJob(active);
-    return !localAdmission() && job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
+    return !localAdmission() && !sharedAllowanceExhausted() && job && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
@@ -275,6 +276,7 @@
       const stopped = progress?.stopped?.find(job => job.id === active);
       const reason = cardBlocked ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
+      if (sharedAllowanceExhausted()) preparationSurface.append(element('p', 'triage-warning', 'Shared report allowance exhausted. Continue this finding cannot add requests. Further provider work needs explicit additional allowance; saved work remains available.'));
       appendAdmission(preparationSurface);
       if (preparationExpanded && !preparing) {
         const body = element('div', 'guide-status-details'); preparationContent(body); preparationSurface.append(body);

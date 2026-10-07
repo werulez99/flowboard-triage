@@ -1,4 +1,111 @@
-# Bounded fresh quality pilot (0.19.12)
+# Bounded fresh quality pilot
+
+## Authorized single-challenge continuation (0.19.14)
+
+The exact prepared challenge was dispatched once. It timed out without
+substantive content or a structured final answer: **one reserved, one dispatched,
+zero completed answers, zero engine-accepted reviews and zero new published
+guides**. This is an observed operational failure, not an unmeasured attempt or
+a verdict about the finding. No answer exists to replay or assess against the
+eight retained source obligations. Their local source preparation remains useful,
+but none received a fresh semantic attestation from this attempt.
+
+| Receipt boundary | Observation |
+| --- | ---: |
+| Capacity queue wait | 9 ms |
+| Request wall-clock limit | 600,000 ms |
+| Adapter wall including finite teardown | 601,932 ms |
+| First provider event (startup, not substantive content) | 785 ms |
+| Serialized input JSON | 189,931 bytes |
+| Actual stdin / schema | 226,959 / 1,580 bytes |
+| Actual stdin plus schema / conservative bound | 228,539 / 228,617 bytes |
+| Supplied source units | 34 |
+| stdout / stderr (no final answer) | 335 / 119 bytes |
+
+Configured transport remained the pinned CLI 0.160.1, medium reasoning,
+disabled tools and strict patch schema. Observed model, token usage and USD cost
+were unavailable. Startup included a nonterminal disabled-tool-host diagnostic;
+stderr was classified as connection-related. Those categories do not establish
+the cause of the entire timeout. The owned process group ended with confirmed
+cleanup and closed streams; no escaped-daemon guarantee is claimed. There was
+no fallback or second request. The parent remains historical 4/5, the separate
+continuation is exhausted 1/1, and lifetime production reservations are five.
+The four old answers, original accepted argument and human records are retained.
+
+Two local execution blockers were corrected before this dispatch:
+
+- An unapproved paused sibling's challenge debt incorrectly consumed the only
+  selected continuation slot. Trusted evaluation plans now protect only their
+  permitted remaining phases; ordinary reports still protect every required
+  challenge. Actual runner/coordinator controls cover one and two selected
+  challenges on a nonzero four-attempt baseline, and generation-only isolation.
+- The refused admission had persisted legitimate local acquisition receipts.
+  Subsequent preparation reordered identical source units and host acquisition
+  history, changing the proposed packet hash. A developer-only hook now permits
+  exact frozen-packet reuse only after comparing every material field, source
+  byte/metadata field, premise, question and accepted base. Non-acquisition
+  actions must also match. Normal identity/currentness/authorization checks still
+  run; the sent input hash was the originally approved hash. No packet, approval,
+  producer instruction, schema, adapter, reference or semantic answer was edited
+  to fit. Compatible already-paid response recovery bypasses this hook.
+
+Focused source-only follow-up corrected an overly broad earlier classification:
+the second incomplete case's reported receiver has explicit local deployment
+script wiring. That establishes a source-level integration, not an observed live
+implementation. Receiving value and initiating collection are different
+capabilities; collection, privileged upgrade recovery and the scope of the
+expected rule still require interpretation. The core source-conditional route
+does not need an unrelated deployed receiver identity, while the separately
+reported receiver alternative cannot simply be dropped. Its paid answer is
+unchanged and no request was made for it. The generation-only case's versioned
+external implementation and timing prerequisites remain unavailable.
+
+There is no new acceptance-to-readable timing or new tutorial to inspect.
+The next useful step is local diagnosis of the recorded transport failure before
+specifying any separately authorized paid continuation. This run does not show
+whether the complete shared-metadata context would yield a finished explanation,
+and does not establish real batch throughput. The existing 500 ms warm-open
+target remains separate backlog; no performance matrix was repeated.
+
+The first supported WSL/Node 20.20.1 sequential gate passed **478 tests, zero
+failed/skipped**, in 168.340 s. Four focused changed-admission controls passed
+before execution (other tests filtered). Earlier red controls exposed the
+single-case sibling debt and the need to preserve matching non-acquisition
+actions, rather than indiscriminately rejecting them. No source, ownership,
+request limit or publication assertion was weakened.
+
+Installed native inspection then reproduced a small status-action defect: the
+real timed-out job correctly displayed its retained question and withheld its
+private guide, but still offered finding continuation despite exhausted shared
+allowance. The compact/expanded surface now explains that additional allowance
+is required and omits that ineffective action. It does not add permission,
+alter counters, hide the timeout or affect an independently Ready guide.
+Its focused native-navigation controls passed 10/10. The final canonical gate
+after that correction passed **478 tests, zero failed/skipped**, in 100.169 s
+on the same WSL/Node 20.20.1/native 1.2.0 environment. The two suite durations
+are test observations, not a product speed comparison.
+
+Final installed 0.19.14/native 1.2.0 inspection passed three blocked-state groups:
+the actual exhausted limit has no ineffective finding-Continue button, retained
+questions/acquisition details are visible, and incomplete annotations stay
+withheld. It used provider `none`, zero requests and simulated editor IO. This
+is the actual timed-out finding, not a substitute accepted fixture or retained
+guide. Source/package/installed content matched 62 files, normalizing only
+Cursor-generated manifest metadata; the public package allowlist has 222 files.
+The parent private inventory and protected paid/human records stayed unchanged.
+This operation changed the selected working investigation and owned report
+journal; its compiled accepted base hash is unchanged. Final inventory also
+detected a concurrent original-workspace journal update reporting changed code,
+still paused at 68/68. That workspace was not written by this operation; the
+writer was not established from the available journal (no live lock remained).
+The intervening state was preserved, not overwritten with an obsolete inventory.
+
+Actual remote-host logs found on October 7 record activation of **0.19.13**.
+That is newer evidence than the historical 0.19.6 log, but is not activation
+of the installed 0.19.14. No desktop control was available. Save editor work,
+run **Developer: Reload Window**, then **Flowboard Triage: Diagnose Setup** and
+inspect **Output -> Flowboard Triage** for active version/path and native 1.2.0.
+Do not resume an exhausted report to inspect activation.
 
 ## Local continuation follow-up (0.19.13)
 

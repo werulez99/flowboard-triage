@@ -48,6 +48,25 @@ class EvaluationPlanGuard {
     }
     return c.timeoutMs;
   }
+  preparedInput(input) {
+    const c=this.manifest.cases.find(c=>c.findingId===input.finding?.id);
+    if(!c?.firstPacketPath || this.ledger.receipts.some(r=>r.findingId===c.findingId))return input;
+    this.phasePlan(c.findingId); // trusted exact approval, never report/model input
+    const frozen=JSON.parse(fs.readFileSync(c.firstPacketPath));
+    if(engine.hash(packetIdentity(frozen))!==engine.hash(c.firstPacket))deny('Frozen approved packet changed.');
+    const equivalent=value=>{
+      const expanded=require('../extension/packet-context').expand(value);
+      // Local acquisition can persist before an admission refusal. Only source
+      // ordering and host acquisition history may differ; every current source
+      // byte/metadata field, premise, question and accepted base must match.
+      const {actions,...rest}=expanded;
+      const nonAcquisitionActions=(actions||[]).filter(a=>!['source-preparation','code-completion','context-priority','inspect','symbol','callers','references','missing-context'].includes(a.kind));
+      return {...rest,nonAcquisitionActions,sources:[...rest.sources].sort((a,b)=>a.id.localeCompare(b.id))};
+    };
+    if(engine.hash(equivalent(input))!==engine.hash(equivalent(frozen)))deny('Current material input differs from the frozen approved packet.');
+    this.check(frozen);
+    return frozen; // send the EXACT approved bytes, not a replacement identity
+  }
   phasePlan(findingId) {
     if (this.approval?.authorized !== true || this.approval.manifestHash !== engine.hash(this.manifest) || this.approval.maximumRequests !== this.manifest.maximumRequests || this.root !== this.manifest.root)
       deny('No trusted evaluation phase plan for this workspace/approval.');

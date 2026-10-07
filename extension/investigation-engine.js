@@ -773,7 +773,7 @@ function checkExplanations(output, previous, next, units) {
   next.explanationReviews = accepted;
   return next;
 }
-async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false }) {
+async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false, prepareRequest }) {
   delete draft.yielded;
   const ensure = () => { if (signal?.aborted || !current()) throw Object.assign(new Error('Investigation superseded; partial work is preserved.'), { code: 'INVESTIGATION_SUPERSEDED' }); catalog.assertFresh(); };
   const save = async () => {
@@ -888,6 +888,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if (phase === 'challenge' && !feedback && !repairUsed && !draft.questions.length && !draft.claims.some(claim => claim.status === 'unresolved' || claim.unknowns.length) && !draft.checkpoint?.newContext && !hasNewCode) data.checkOnly = true;
       else if (phase === 'challenge') data.repairOnly = true;
       data = require('./packet-context').compact(data);
+      if (!draft.pendingResponse && !localOnly && prepareRequest) { data = prepareRequest(data); ensure(); }
       const call = async input => {
         const transport = invoke === runProvider || invoke.isProviderTransport === true;
         const health = require('./provider-health'), healthOptions = { ...providerResources, executable };
