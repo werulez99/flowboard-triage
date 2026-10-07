@@ -4,6 +4,22 @@
 const fs=require('node:fs'),path=require('node:path');
 const engine=require('../extension/investigation-engine'),provider=require('../extension/semantic-provider');
 const {EvaluationPlanGuard,packetIdentity}=require('./evaluation-plan-guard');
+// Private answer retention at the existing spawn boundary. Never retain
+// reasoning/tool events or arbitrary stderr. A malformed final JSON answer is
+// still an immutable answer, even when the adapter cannot return parsed value.
+function retainAnswers(file, launch=require('node:child_process').spawn) {
+  return (...args)=>{
+    const descriptor=fs.openSync(file,'wx',0o600);
+    let child;try{child=launch(...args);}catch(error){fs.closeSync(descriptor);throw error;}
+    const decoder=new(require('node:string_decoder').StringDecoder)('utf8');let buffer='',bytes=0;
+    const line=value=>{try{const event=JSON.parse(value);if(event.type==='item.completed'&&event.item?.type==='agent_message'&&typeof event.item.text==='string')
+      fs.writeSync(descriptor,JSON.stringify({receivedAt:new Date().toISOString(),text:event.item.text})+'\n');}catch{/* Transport separately rejects malformed events. */}};
+    const append=text=>{buffer+=text;let i;while((i=buffer.indexOf('\n'))>=0){line(buffer.slice(0,i));buffer=buffer.slice(i+1);}};
+    child.stdout.on('data',chunk=>{bytes+=Buffer.byteLength(chunk);if(bytes<=provider.MAX_OUTPUT_BYTES)append(decoder.write(Buffer.from(chunk)));});
+    child.once('close',()=>{try{if(bytes<=provider.MAX_OUTPUT_BYTES){append(decoder.end());if(buffer)line(buffer);}}finally{fs.closeSync(descriptor);}});
+    return child;
+  };
+}
 async function verifyAdmission(manifest) {
   const verified=[];
   const root=fs.realpathSync(manifest.root),native=process.env.FLOWBOARD_EXTENSION_PATH;
@@ -94,7 +110,7 @@ async function main() {
       // Raw immutable packets/responses remain private beside the manifest.
       const prefix=path.join(path.dirname(file),`request-${ledger.used}`);
       fs.writeFileSync(prefix+'-input.json',JSON.stringify(input,null,2),{flag:'wx',mode:0o600});
-      try { const result=await provider.runProvider(input,{...options,timeoutMs:receipt.timeoutMs});
+      try { const result=await provider.runProvider(input,{...options,timeoutMs:receipt.timeoutMs,spawn:retainAnswers(prefix+'-response.jsonl')});
         fs.writeFileSync(prefix+'-result.json',JSON.stringify(result,null,2),{flag:'wx',mode:0o600});guard.result(receipt,input,result);return result;
       } catch(error){guard.result(receipt,input,null,error);throw error;}
     };invoke.isProviderTransport=true;
@@ -107,4 +123,4 @@ async function main() {
   } finally {coordinator?.dispose();await coordinator?.loop;ownership.removeOwned(lock,owner.owner);}
 }
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});
-module.exports={main,verifyAdmission,executionOptions,runCases,verifyParent};
+module.exports={main,verifyAdmission,executionOptions,runCases,verifyParent,retainAnswers};

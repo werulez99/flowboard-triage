@@ -80,6 +80,10 @@ test('actual preparation renderer retains selected job reason and shows current 
     context.preparationExpanded = expanded; vm.runInNewContext('renderPreparation()', context);
     assert.ok(!flat(surface).some(n => n.tag === 'button' && n.text === 'Continue this finding'));
     assert.match(flat(surface).map(n => n.text).join('\n'), /Shared report allowance exhausted.*explicit additional allowance/);
+    if (expanded) {
+      assert.equal(flat(surface).find(n => n.text === 'Resume entire report').disabled, false);
+      assert.match(flat(surface).map(n => n.text).join('\n'), /Resume entire report explicitly adds ordinary report allowance/);
+    }
   }
   context.reportPreparation.requestLimit = 3;
   vm.runInNewContext('renderPreparation()', context); assert.ok(flat(surface).some(n => n.text === 'Continue this finding'));

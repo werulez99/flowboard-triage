@@ -1,6 +1,13 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {EvaluationPlanGuard,packetIdentity}=require('../scripts/evaluation-plan-guard'),{hash}=require('../extension/investigation-engine');
+test('private final-answer retention preserves malformed JSON without collecting reasoning',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-answer-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const file=path.join(root,'answer.jsonl'),capture=require('../scripts/run-evaluation-plan').retainAnswers;
+  const events=[{type:'item.completed',item:{type:'reasoning',text:'DO_NOT_RETAIN'}},{type:'item.completed',item:{type:'agent_message',text:'{broken café'}},{type:'turn.completed',usage:{}}];
+  const child=capture(file)(process.execPath,['-e',`process.stdout.write(${JSON.stringify(events.map(JSON.stringify).join('\n'))})`],{stdio:['pipe','pipe','pipe']});
+  await new Promise(resolve=>child.once('close',resolve));const raw=fs.readFileSync(file,'utf8');assert.ok(!raw.includes('DO_NOT_RETAIN'));assert.equal(JSON.parse(raw).text,'{broken café');
+});
 test('prepared exact input survives only acquisition-history/source-order changes without relaxing packet hashes',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-prepared-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const input={phase:'generate',finding:{id:'A'},snapshot:{project:'controlled'},sources:[{id:'a',code:'complete A'},{id:'b',code:'complete B'}],actions:[{kind:'code-completion',result:'Source acquired'}]};

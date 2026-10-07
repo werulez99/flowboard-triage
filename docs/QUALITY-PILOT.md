@@ -1,5 +1,134 @@
 # Bounded fresh quality pilot
 
+## Transport diagnosis and bounded live follow-up (0.19.15)
+
+The separately authorized source-free structured probe succeeded, but the one
+full retained challenge **again timed out without substantive or final content**.
+No new review was engine-accepted or published, and there is no answer to replay.
+Both nontransferable slots are consumed: one diagnostic reservation and one
+production reservation. No retry, fallback, sibling or generation was launched.
+
+| Observed boundary | Source-free probe | Retained challenge |
+| --- | ---: | ---: |
+| Reserved / dispatched | 1 / 1 | 1 / 1 |
+| Structured answers completed | 1 (`ok: true`) | 0 |
+| Adapter wall, including cleanup | 15,533 ms | 601,893 ms |
+| Capacity queue wait | 7 ms | 7 ms |
+| Prepared / completed child stdin bytes | 224 / 224 | 226,959 / 226,959 |
+| Child input-write duration | 1 ms | 46 ms |
+| First provider startup event | 791 ms | 177 ms |
+| First substantive content | 8,234 ms | none |
+| stdout / stderr bytes | 586 / 0 | 335 / 119 |
+| Owned process-group cleanup | confirmed | confirmed |
+
+The challenge retained the same exact input/source/instruction/schema hashes,
+34 source units, accepted semantic base and 228,617-byte conservative bound.
+Actual prepared stdin plus schema was 228,539 bytes. Completion of the write to
+the child pipe is now observed; **remote-provider delivery is not acknowledged**.
+This rules out an unfinished local input write for this attempt, not remote
+delivery, large-task compatibility, server availability or a specific root cause.
+At 277,248 ms stderr supplied a nonterminal connection-category diagnostic.
+The host deadline, not a confirmed terminal provider error, ended the attempt.
+No authentication failure, malformed request rejection or substantive reasoning
+event was observed. Absence of visible reasoning is not proof of a hang.
+
+The previous timeout's raw stderr was not retained; its 119 bytes were below the
+old truncation threshold. Truncation did not establish its cause. Earlier
+successful generation/patch runs, both timeouts and the new successful probe
+share the same disabled-tool-host notice hash. That startup notice is not a
+terminal failure or evidence that disabled tools caused this timeout. Prior
+successful tasks are not a controlled latency comparison with this challenge.
+The pinned CLI remained 0.160.1, isolated user configuration, medium reasoning,
+disabled tools and the original structured formats. Local login status passed.
+No CLI upgrade, model switch, weaker review or reduced source context was used.
+Probe usage was 9,362 input / 15 output tokens (zero reported reasoning-output
+tokens); challenge usage, observed model and USD cost were unavailable. Model
+selection remained the CLI default with user config ignored, not the editor's
+interactive model selection. No 200-finding throughput claim follows.
+
+Generic transport fixes now record input-write start/completion/error/early
+close; a failed unfinished pipe stops owned work finitely and enters shared
+health accounting. A secondary teardown error cannot replace cancellation or
+timeout or reject a completed answer. Stderr uses incremental UTF-8 decoding,
+4,096-byte line fragments and first-eight/latest-56 bounded safe events, retaining
+categories/codes/counts/hashes rather than raw messages or credentials. A later
+relevant diagnostic takes precedence over startup noise as *context*, never as
+an invented timeout cause. Transient reconnects may still end successfully;
+confirmed terminal turn failures stop promptly. The private runner also retains
+final agent messages even if their JSON cannot be ingested, without retaining
+reasoning/tool content. This attempt had no final agent message to retain.
+
+After the live attempt, a focused timestamp correction distinguished receipt of
+an unterminated stderr fragment from its later classification at timeout. That
+correction was locally tested, not tested by another paid call. The actual live
+connection diagnostic was newline-terminated and was already timestamped when
+received. The frozen live adapter hash remains in the private manifests; it is
+not relabeled as the later delivered adapter.
+
+All eight retained questions still need semantic review: expected-rule basis;
+owner/reentrancy definitions; guard settlement; destination declarations;
+receiving/accrual/collection; upgrade authority; configuration and recipient
+constraints; and accrued-value collection. Locally supplied code is not a new
+attestation. The response established or contradicted none of these questions.
+The earlier source-level receiver wiring for the other incomplete case is not
+reinvestigated; the external implementation/timing case is unchanged. Neither
+received a request.
+
+A disposable ordinary coordinator control reproduced exhausted allowance after
+generation plus failed challenge. Finding continuation spent nothing. Explicit
+report Resume added its ordinary allowance and completed the *retained challenge*
+without regeneration. Thus Resume was not ineffective and was not blanket-disabled.
+The expanded UI now explains that distinct scope, unfinished siblings and the
+fact that it cannot override a restricted evaluation plan or settle absent
+evidence. No Resume was invoked on the private evaluation. Local reading and
+saved-response recovery remain separate from new model requests.
+
+The historical parent stays 4/5; the previous continuation stays 1/1. This new
+challenge window is 1/1 and production lifetime is six reserved attempts. The
+diagnostic probe has its own 1/1 reservation, not a finding-stage receipt.
+No counters were reset or permissions transferred. The retained compiled base
+hash is unchanged. There is no new native tutorial or acceptance-to-readable
+measurement. The next useful action is escalation of the private CLI thread,
+write-completion and connection/timeout timeline for transport diagnosis before
+another paid review, not a blind retry or another renderer rewrite.
+
+Focused transport/evaluation/native-navigation controls passed 47/47; the
+exhausted ordinary Resume control passed separately (57 unrelated tests filtered).
+The final supported WSL/Node 20.20.1 sequential gate passed **486 tests, zero
+failed/skipped**, in 100.591 s. The earlier focused runs had a timing-sensitive
+legacy capacity failure and an initially ineffective closed-pipe fixture; the
+fixture was corrected to wait for actual child stdin closure, without weakening
+ownership or cleanup assertions. Later controls and the final gate passed.
+The new diagnostic chronology is not a new semantic review, and these local
+successes do not turn the real challenge timeout into a completed product.
+
+Installed 0.19.15/native 1.2.0 inspection of the **actual timed-out finding**
+passed three blocked-status groups, with provider `none` and zero requests:
+exhausted finding continuation is unavailable; the real retained question and
+acquisition-versus-review distinction are visible; incomplete annotations stay
+withheld while original code remains available. The expanded surface explains
+ordinary report Resume without clicking it. Viewport was 1440x900. The first
+browser attempt failed the existing 15-second native handshake before the test
+browser delivered `triage:ready`; that failed observation is retained. A single
+unchanged local rerun passed. Neither the timeout nor its assertion was relaxed,
+and this is not actual Cursor playback or a new guide.
+
+Source/VSIX/installed content matched 62 files, normalizing only Cursor-generated
+package metadata; the public allowlist remains 222 files. Protected inventories
+for the old retained guide, old pilot and original report were unchanged, with
+2/2, 6/6 and 68/68 accounting. The two historical pilot manifest/ledger pairs
+were byte-identical. Only the working selected investigation and owned journal
+changed in the new evaluation workspace; its accepted semantic base, human
+findings, other investigations, report and paid provider-result files stayed
+unchanged. Private requests, answers, receipts and screenshots are not packaged.
+
+The latest inspected actual remote-host log still records 0.19.13 activation;
+it does not establish today's active window or activation of installed 0.19.15.
+No desktop control is available. After saving work: **Developer: Reload Window**,
+**Flowboard Triage: Diagnose Setup**, then **Output -> Flowboard Triage** to verify
+the active version/path and original native 1.2.0. Do not Resume an exhausted
+report to test installation. The 500 ms saved-open miss remains unrelated backlog.
+
 ## Authorized single-challenge continuation (0.19.14)
 
 The exact prepared challenge was dispatched once. It timed out without

@@ -221,6 +221,8 @@
       }
       const resume = button(running ? 'Pause report preparation' : 'Resume entire report', () => send('triage:reportControl', { action: running ? 'pause' : 'resume' }));
       resume.disabled = !!localAdmission();
+      if (!running && sharedAllowanceExhausted()) parent.append(element('small', 'triage-muted',
+        'Resume entire report explicitly adds ordinary report allowance and resumes unfinished siblings. It does not resolve missing evidence or override a restricted evaluation plan. Local reading and saved-response recovery need no new model request.'));
       controls.append(resume,
         button('Cancel', () => send('triage:reportControl', { action: 'cancel' })), button('Keep exploring', () => { guideIntent = 'explore'; renderPreparation(); }));
       parent.append(controls);

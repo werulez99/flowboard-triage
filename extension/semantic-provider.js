@@ -162,6 +162,8 @@ function runTransport(input, options, spec) {
     processStartedAt: null, firstActivityAt: null, firstProviderEventAt: null, firstReasoningContentAt: null, firstSubstantiveContentAt: null, finalStructuredContentAt: null,
     processExitedAt: null, hostAcceptedAt: null, inputHash: metrics.inputHash, sourcePacketHash: metrics.sourcePacketHash,
     inputBytes: metrics.inputBytes, inputSections: metrics.inputSections, stdinBytes: Buffer.byteLength(spec.stdin), schemaBytes: Buffer.byteLength(metrics.encodedSchema),
+    inputWrite: { preparedBytes: Buffer.byteLength(spec.stdin), startedAt: null, completedAt: null, completedBytes: null,
+      errorAt: null, errorCode: null, closedAt: null, remoteAcknowledged: false },
     requestBytes: Buffer.byteLength(spec.stdin) + (spec.textContract ? 0 : Buffer.byteLength(metrics.encodedSchema)) + (spec.provider === 'claude' ? Buffer.byteLength(metrics.system) : 0),
     stdinHash: diagnosticHash(spec.stdin), argumentsHash: diagnosticHash(JSON.stringify(spec.configuration.arguments)),
     argumentsBytes: Buffer.byteLength(JSON.stringify(spec.configuration.arguments)),
@@ -174,14 +176,52 @@ function runTransport(input, options, spec) {
     stdoutBytes: 0, stderrBytes: 0, outputBytes: 0, eventCount: 0, toolEvents: 0, finalReceived: false, usage: null,
     costUSD: null, exitCode: null, cancellationReason: null, failureKind: null, outcome: 'pending',
     teardown: null,
-    diagnostics: { events: [], droppedEvents: 0, reportedErrors: 0, lastReportedError: null, stderr: null, timeoutContext: null } };
+    diagnostics: { events: [], droppedEvents: 0, reportedErrors: 0, lastReportedError: null, stderr: null,
+      stderrEvents: [], stderrEventCount: 0, droppedStderrEvents: 0, timeoutContext: null, timeoutDiagnostic: null } };
   return new Promise((resolve, reject) => {
-    let child, lifecycle, stdout = '', stderr = '', buffer = '', final = null, usage = null, stopped = null, done = false,
+    let child, lifecycle, stdout = '', buffer = '', final = null, usage = null, stopped = null, done = false,
       closed = false, force, teardownDeadline, monitor, timer, providerError = '', stopStartedAt = null;
     const detached = process.platform !== 'win32';
     const graceMs = Math.max(10, Math.min(2000, options.terminationGraceMs ?? 2000));
     const settleMs = Math.max(20, Math.min(1000, options.terminationSettleMs ?? 1000));
     const outDecoder = new TextDecoder('utf-8', { fatal: true }), errDecoder = new TextDecoder('utf-8', { fatal: true });
+    const stderrHash = crypto.createHash('sha256');
+    let stderrPart = '', stderrPartBytes = 0, stderrTail = '', stderrFinished = false, stderrFirstAt = null, stderrLastAt = null;
+    const emitStderr = fragmented => {
+      if (!stderrPart) return;
+      const detail = safeProviderDiagnostic(stderrTail + stderrPart);
+      const event = { ...detail, at: stderrLastAt, firstObservedAt: stderrFirstAt, classifiedAt: new Date().toISOString(),
+        elapsedMs: Date.parse(stderrLastAt) - start, stream: 'stderr', fragmented,
+        messageBytes: stderrPartBytes, messageHash: diagnosticHash(stderrPart), terminal: false };
+      audit.diagnostics.stderrEvents.push(event); audit.diagnostics.stderrEventCount++;
+      if (audit.diagnostics.stderrEvents.length > 64) { audit.diagnostics.stderrEvents.splice(8, 1); audit.diagnostics.droppedStderrEvents++; }
+      // Keep latest meaningful diagnostic even if ordinary startup noise follows.
+      if (!audit.diagnostics.stderr || !['unclassified', 'disabled-tool-host'].includes(event.category) ||
+          ['unclassified', 'disabled-tool-host'].includes(audit.diagnostics.stderr.category)) audit.diagnostics.stderr = event;
+      stderrTail = fragmented ? (stderrTail + stderrPart).slice(-128) : '';
+      stderrPart = ''; stderrPartBytes = 0; stderrFirstAt = null; stderrLastAt = null;
+    };
+    const appendStderr = text => {
+      // Bound undecided line fragments by UTF-8 bytes, never split a code point.
+      // Overlap only classification; each event hashes/counts its own bytes.
+      const receivedAt = new Date().toISOString();
+      for (const char of text) {
+        if (char === '\n') { emitStderr(false); stderrTail = ''; continue; }
+        const size = Buffer.byteLength(char);
+        if (stderrPartBytes + size > 4096) emitStderr(true);
+        stderrFirstAt ||= receivedAt; stderrLastAt = receivedAt;
+        stderrPart += char; stderrPartBytes += size;
+      }
+    };
+    const finishStderr = () => {
+      if (!stderrFinished) { stderrFinished = true; appendStderr(errDecoder.decode()); }
+      emitStderr(false);
+    };
+    const observedDiagnostic = () => {
+      const all = [audit.diagnostics.lastReportedError, audit.diagnostics.stderr].filter(Boolean);
+      const relevant = all.filter(d => !['disabled-tool-host', 'unclassified'].includes(d.category));
+      return (relevant.length ? relevant : all).sort((a,b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    };
     const progress = (event, useful = false) => {
       const at = new Date().toISOString(); audit.lastEvent = event; audit.lastProgressAt = at;
       if (useful) audit.lastUsefulActivityAt = at;
@@ -197,7 +237,8 @@ function runTransport(input, options, spec) {
       } else audit.cleanupWarning = 'The temporary provider directory is retained while process cleanup is unconfirmed.';
       audit.finishedAt = new Date().toISOString(); audit.exitCode = code; audit.durationMs = Date.now() - start;
       audit.outputBytes = audit.stdoutBytes + audit.stderrBytes;
-      if (stderr) audit.diagnostics.stderr = safeProviderDiagnostic(stderr);
+      try { finishStderr(); } catch { audit.diagnostics.incompleteStderrUtf8 = true; }
+      if (audit.stderrBytes) audit.diagnostics.stderr = { ...audit.diagnostics.stderr, messageBytes: audit.stderrBytes, messageHash: stderrHash.digest('hex') };
       audit.timings = { queueWaitMs: audit.queueWaitMs, processStartMs: audit.processStartedAt ? Date.parse(audit.processStartedAt) - start : null,
         firstProviderEventMs: audit.firstProviderEventAt ? Date.parse(audit.firstProviderEventAt) - start : null,
         firstSubstantiveContentMs: audit.firstSubstantiveContentAt ? Date.parse(audit.firstSubstantiveContentAt) - start : null,
@@ -302,25 +343,45 @@ function runTransport(input, options, spec) {
     audit.pid = child.pid;
     child.once('spawn', () => { audit.processStartedAt = new Date().toISOString(); progress('started'); });
     timer = setTimeout(() => {
-      const reported = audit.diagnostics.lastReportedError;
-      audit.diagnostics.timeoutContext = reported ? 'provider-reported-error' : stderr ? 'stderr-diagnostic' : audit.firstSubstantiveContentAt ? 'incomplete-result' : 'silent-deadline';
-      const reason = reported ? ` after the provider reported ${diagnosticReason(reported)}` : '';
-      stop(failure(`${spec.provider === 'codex' ? 'Codex' : 'Claude'} source review timed out${reason}. Accepted earlier stages, if any, are saved for retry.`, 'timeout'));
+      emitStderr(false);
+      const reported = observedDiagnostic();
+      audit.diagnostics.timeoutDiagnostic = reported || null;
+      audit.diagnostics.timeoutContext = reported ? reported.stream === 'stderr' ? 'stderr-diagnostic' : 'provider-reported-error' : audit.firstSubstantiveContentAt ? 'incomplete-result' : 'silent-deadline';
+      const reason = reported ? ` Observed diagnostic context: the provider reported ${diagnosticReason(reported)}; this does not establish the timeout cause.` : '';
+      stop(failure(`${spec.provider === 'codex' ? 'Codex' : 'Claude'} source review timed out.${reason} Accepted earlier stages, if any, are saved.`, 'timeout'));
     }, timeoutMs);
     options.signal?.addEventListener('abort', cancel, { once: true }); if (options.signal?.aborted) cancel();
     const receive = (chunk, stderrStream) => {
       if (done || stopped) return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), key = stderrStream ? 'stderrBytes' : 'stdoutBytes';
       audit[key] += bytes.length; audit.outputBytes = audit.stdoutBytes + audit.stderrBytes;
+      if (stderrStream) stderrHash.update(bytes);
       audit.firstActivityAt ||= new Date().toISOString();
       if (audit.outputBytes > outputLimit) return stop(failure('Model output exceeded the review byte limit.', 'output-limit'));
       try {
         const text = (stderrStream ? errDecoder : outDecoder).decode(bytes, { stream: true });
-        if (stderrStream) stderr = (stderr + text).slice(0, 4000); else append(text);
+        if (stderrStream) appendStderr(text); else append(text);
       } catch { stop(failure('The provider returned invalid UTF-8 bytes; the response was not accepted.', 'transport')); }
     };
     child.stdout.on('data', chunk => receive(chunk, false)); child.stderr.on('data', chunk => receive(chunk, true));
-    child.stdin.on('error', () => {});
+    const inputFailure = error => {
+      if (done) return;
+      audit.inputWrite.errorAt ||= new Date().toISOString();
+      audit.inputWrite.errorCode ||= ['EPIPE', 'ECONNRESET', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_PREMATURE_CLOSE'].includes(error?.code) ? error.code : 'other';
+      audit.inputWrite.secondary = !!stopped || !!audit.inputWrite.completedAt || !!(final && usage);
+      if (!audit.inputWrite.secondary) stop(failure('The provider input pipe failed before write completion. No remote delivery acknowledgment is available; the owned process is being stopped.', 'input-write'));
+    };
+    child.stdin.on('error', inputFailure);
+    child.stdin.once('finish', () => {
+      if (done || audit.inputWrite.errorAt) return;
+      audit.inputWrite.completedAt = new Date().toISOString(); audit.inputWrite.completedBytes = audit.stdinBytes;
+      progress('input.write.completed'); // Child pipe only, not a remote receipt.
+    });
+    child.stdin.once('close', () => {
+      if (done) return;
+      audit.inputWrite.closedAt = new Date().toISOString();
+      if (!audit.inputWrite.completedAt) inputFailure({ code: 'ERR_STREAM_PREMATURE_CLOSE' });
+    });
     child.on('error', error => {
       const failed = failure(`The ${spec.provider} CLI could not start: ${error.message}`, 'spawn');
       if (!child.pid) complete(failed, null); else stop(failed);
@@ -338,19 +399,19 @@ function runTransport(input, options, spec) {
       };
       try {
         if (stopped) throw stopped;
-        try { append(outDecoder.decode()); stderr = (stderr + errDecoder.decode()).slice(0, 4000); }
+        try { append(outDecoder.decode()); finishStderr(); }
         catch { throw failure('The provider ended with incomplete UTF-8 bytes; the response was not accepted.', 'transport'); }
         if (spec.provider === 'codex') {
           parseEvent(buffer);
           if (stopped) throw stopped;
-          if (code !== 0 || providerError) throw failure(providerError || `Codex exited ${code}${stderr ? ` after reporting ${diagnosticReason(safeProviderDiagnostic(stderr))}` : ''}. Details are in the provider diagnostics.`, 'provider-exit');
+          if (code !== 0 || providerError) throw failure(providerError || `Codex exited ${code}${audit.stderrBytes ? ` after reporting ${diagnosticReason(observedDiagnostic())}` : ''}. Details are in the provider diagnostics.`, 'provider-exit');
           if (!final || !usage) throw failure('Codex exited without a completed structured result and usage record.', 'transport');
           audit.usage = usage;
           if (spec.textContract) { settle(null, final); return; }
           let value; try { value = JSON.parse(final); } catch { throw failure('Codex returned malformed structured JSON. The earlier draft is preserved.', 'parse'); }
           settle(null, value);
         } else {
-          if (code !== 0) throw failure(`Claude exited ${code}${stderr ? ` after reporting ${diagnosticReason(safeProviderDiagnostic(stderr))}` : ''}. Details are in the provider diagnostics.`, 'provider-exit');
+          if (code !== 0) throw failure(`Claude exited ${code}${audit.stderrBytes ? ` after reporting ${diagnosticReason(observedDiagnostic())}` : ''}. Details are in the provider diagnostics.`, 'provider-exit');
           let result; try { result = JSON.parse(stdout); } catch { throw failure('Claude returned malformed JSON. The earlier draft is preserved.', 'parse'); }
           audit.eventCount++; audit.firstProviderEventAt ||= new Date().toISOString();
           if (result.is_error) {
@@ -368,7 +429,9 @@ function runTransport(input, options, spec) {
     });
     try { if (child.pid) options.onProcessStart?.(lifecycle.record); }
     catch { stop(failure('The provider process ownership could not be saved. The process is being stopped before review input is sent.', 'ownership', 'PROVIDER_OWNERSHIP_UNAVAILABLE')); return; }
-    child.stdin.end(spec.stdin);
+    audit.inputWrite.startedAt = new Date().toISOString();
+    try { child.stdin.end(spec.stdin, error => { if (error) inputFailure(error); }); }
+    catch (error) { inputFailure(error); }
   });
 }
 function runClaude(input, options = {}) {

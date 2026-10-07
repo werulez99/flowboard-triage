@@ -5,7 +5,7 @@ const path = require('node:path'), crypto = require('node:crypto');
 const { localDirectory } = require('./provider-slots');
 const ownership = require('./provider-ownership');
 const THRESHOLD = 2, WINDOW_MS = 10 * 60 * 1000;
-const transportFailures = new Set(['timeout', 'spawn', 'transport', 'provider-exit']);
+const transportFailures = new Set(['timeout', 'spawn', 'transport', 'input-write', 'provider-exit']);
 function identity(provider, options = {}) {
   if (!['codex', 'claude'].includes(provider)) throw new Error('Unknown review provider.');
   // Raw paths, prompts, source, stdout, credentials and environment values are

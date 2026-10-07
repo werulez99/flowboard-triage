@@ -185,6 +185,56 @@ test('stderr is incrementally decoded on both adapters and byte-accounted withou
     });
   }
 });
+test('completed child-pipe write has a receipt, not a remote acknowledgment', async () => {
+  const result = await provider.runSchemaProbe({ spawn: (exe,args,settings) => spawn(process.execPath, [path.join(__dirname,'fixtures/provider-cli.js'),'probe'], settings) });
+  assert.ok(result.audit.inputWrite.startedAt); assert.ok(result.audit.inputWrite.completedAt);
+  assert.equal(result.audit.inputWrite.completedBytes,result.audit.stdinBytes);
+  assert.equal(result.audit.inputWrite.remoteAcknowledged,false); assert.equal(result.audit.inputWrite.errorAt,null);
+});
+test('a real live child closing stdin fails finitely and records shared transport health', {timeout:10000}, async t => {
+  const root=directory(t); let terminal=0;
+  await assert.rejects(provider.runCodex({...input,metadata:'x'.repeat(190000)}, {timeoutMs:5000,terminationGraceMs:30,terminationSettleMs:100,
+    spawn:(exe,args,settings)=>{
+      const child=spawn(process.execPath,['-e',"require('fs').closeSync(0);process.stderr.write('input closed\\n');setInterval(()=>{},1000)"],settings);
+      const end=child.stdin.end.bind(child.stdin),closed=new Promise(resolve=>child.stderr.once('data',resolve));
+      child.stdin.end=(...values)=>{closed.then(()=>end(...values));return child.stdin;};return child;
+    }
+  }).catch(async error=>{terminal++;await health.record('codex',error.audit,{directory:root});throw error;}), error=>{
+    assert.equal(error.audit.failureKind,'input-write'); assert.equal(error.audit.inputWrite.completedAt,null);
+    assert.ok(error.audit.inputWrite.startedAt&&error.audit.inputWrite.errorAt); assert.equal(error.audit.teardown.confirmed,true);
+    assert.ok(error.audit.durationMs<4000);return true;
+  });
+  assert.equal(terminal,1);assert.equal(health.status('codex',{directory:root}).failures[0].kind,'input-write');
+});
+test('a secondary input error after cancellation retains one cancellation and owned cleanup', {timeout:10000}, async () => {
+  const controller=new AbortController();let child,terminal=0;
+  await assert.rejects(provider.runCodex(input,{signal:controller.signal,timeoutMs:5000,terminationGraceMs:30,
+    spawn:(exe,args,settings)=>(child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],settings)),
+    onProgress:event=>{if(event.event==='started'){controller.abort();child.stdin.emit('error',Object.assign(Error('private pipe error'),{code:'EPIPE'}));}}
+  }).catch(error=>{terminal++;throw error;}),error=>{
+    assert.equal(error.audit.failureKind,'cancelled');assert.equal(error.audit.inputWrite.secondary,true);assert.equal(error.audit.teardown.confirmed,true);
+    assert.ok(!JSON.stringify(error.audit).includes('private pipe error'));return true;
+  });assert.equal(terminal,1);
+});
+test('stderr chronology retains late diagnostics beyond startup noise and bounded split UTF-8 fragments', async () => {
+  const notice=JSON.stringify({type:'item.completed',item:{type:'error',message:'Code Mode is unavailable because code-mode host is disabled.'}})+'\n';
+  const stderr=Buffer.from('startup\n'+('ordinary noise\n'.repeat(80))+'é🧪'.repeat(2500)+'\nauthentication failed PRIVATE credential\n');
+  await assert.rejects(provider.runCodex(input,{timeoutMs:60,spawn:fakeProcess({stdout:Buffer.from(notice),stderr,everyByte:true,hanging:true})}),error=>{
+    const d=error.audit.diagnostics;assert.equal(error.audit.failureKind,'timeout');assert.equal(d.timeoutContext,'stderr-diagnostic');
+    assert.equal(d.timeoutDiagnostic.category,'authentication');assert.equal(d.lastReportedError.category,'disabled-tool-host');
+    assert.equal(d.stderrEvents.length,64);assert.ok(d.droppedStderrEvents>0);assert.equal(d.stderrEvents[0].category,'unclassified');
+    assert.equal(d.stderrEvents.at(-1).category,'authentication');assert.ok(d.stderrEvents.every(e=>e.messageBytes<=4096&&e.at&&!e.terminal));
+    assert.ok(d.stderrEvents.some(e=>e.fragmented));assert.equal(d.stderr.messageHash,createHash('sha256').update(stderr).digest('hex'));
+    assert.equal(error.audit.stderrBytes,stderr.length);assert.ok(!JSON.stringify(error.audit).includes('PRIVATE'));assert.match(error.message,/does not establish the timeout cause/);return true;
+  });
+});
+test('late teardown pipe error and reconnect stderr do not reject an already completed valid response', async () => {
+  const result=await provider.runCodex(input,{spawn:(...args)=>{
+    const child=fakeProcess({stdout:Buffer.concat([wire(),Buffer.from('\n')]),stderr:Buffer.from('Reconnecting after connection loss\n')})(...args);
+    child.stderr.on('data',()=>child.stdin.emit('error',Object.assign(Error('closed during teardown'),{code:'EPIPE'})));return child;
+  }});
+  assert.equal(result.audit.outcome,'completed');assert.equal(result.audit.inputWrite.secondary,true);assert.equal(result.audit.diagnostics.stderr.retrying,true);
+});
 test('limits count actual stdout and stderr bytes, not decoded characters', async () => {
   for (const [mode, run] of [['codex', provider.runCodex], ['claude', provider.runClaude]]) {
     const bytes = wire({ text: 'é'.repeat(40) }, mode), limit = bytes.toString().length + 1;
@@ -225,7 +275,7 @@ test('a reported connection error followed by a stall survives the deadline as s
     spawn: fakeProcess({ stdout: Buffer.from(events.map(JSON.stringify).join('\n') + '\n'), stderr: Buffer.from(`network timeout ${privateText}`), hanging: true }) }), error => {
     assert.equal(error.audit.failureKind, 'timeout');
     const diagnostic = error.audit.diagnostics;
-    assert.equal(diagnostic.timeoutContext, 'provider-reported-error'); assert.equal(diagnostic.reportedErrors, 1);
+    assert.ok(['provider-reported-error','stderr-diagnostic'].includes(diagnostic.timeoutContext)); assert.equal(diagnostic.reportedErrors, 1);
     assert.equal(diagnostic.lastReportedError.category, 'connection'); assert.equal(diagnostic.lastReportedError.code, 'connection_error');
     assert.equal(diagnostic.lastReportedError.retrying, true);
     assert.deepEqual(diagnostic.events.map(event => event.type), events.map(event => event.type));
@@ -240,6 +290,16 @@ test('a reconnecting provider error does not reject a later completed result', a
   const result = await provider.runCodex(input, { spawn: fakeProcess({ stdout: Buffer.concat([Buffer.from(retry), wire(), Buffer.from('\n')]) }) });
   assert.equal(result.value.text, text); assert.equal(result.audit.outcome, 'completed');
   assert.equal(result.audit.diagnostics.reportedErrors, 1); assert.equal(result.audit.diagnostics.lastReportedError.retrying, true);
+});
+test('an unterminated stderr diagnostic retains arrival time rather than the later timeout flush', async () => {
+  await assert.rejects(provider.runCodex(input, { timeoutMs: 100,
+    spawn: fakeProcess({ stderr: Buffer.from('connection lost'), hanging: true }) }), error => {
+    const event = error.audit.diagnostics.stderrEvents[0];
+    assert.equal(event.category, 'connection');
+    assert.ok(Date.parse(event.classifiedAt) - Date.parse(event.at) >= 30);
+    assert.ok(Date.parse(event.at) >= Date.parse(event.firstObservedAt));
+    assert.equal(error.audit.failureKind, 'timeout'); return true;
+  });
 });
 test('disabled code-mode host notice is classified without rejecting a successful text-only response', async () => {
   const message = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.';

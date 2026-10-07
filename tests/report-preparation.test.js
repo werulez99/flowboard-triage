@@ -544,6 +544,24 @@ test('an explicit insufficient cap pauses before dispatch and explicit sufficien
   await f.runner.control('resume');
   assert.equal(f.calls.length, 6); assert.equal(f.runner.status().ready, 3);
 });
+test('exhausted ordinary report Resume explicitly adds allowance and resumes its paid challenge, not generation', { skip: !native }, async t => {
+  let fail = true;
+  const f = await fixture(t, 1, input => {
+    if (input.phase === 'challenge' && fail) throw Object.assign(Error('Controlled timeout'), { failureKind: 'timeout', audit: { outcome: 'failed', failureKind: 'timeout' } });
+    return response(input);
+  });
+  f.options.configuration = () => ({ provider: 'codex', requestLimit: 2, findingRequestLimit: 2, workers: 1 });
+  await f.runner.ensure();
+  assert.equal(f.runner.status().requests, 2); assert.equal(f.runner.status().ready, 0);
+  assert.equal(engine.read(f.root, 'I-1').checkpoint.stage, 'challenge');
+  await f.runner.continueFinding('I-1');
+  assert.equal(f.calls.length, 2, 'Finding continuation does not replenish the shared allowance.');
+  fail = false;
+  await f.runner.control('resume');
+  assert.deepEqual(f.calls.map(call => call[1]), ['generate', 'challenge', 'challenge']);
+  assert.equal(f.runner.status().requests, 3); assert.equal(f.runner.status().requestLimit, 4);
+  assert.equal(f.runner.status().ready, 1, 'Explicit ordinary report Resume is effective; it must not be blanket-disabled at zero remaining allowance.');
+});
 test('cancellation ignores a late provider response and preserves researcher files', { skip: !native }, async t => {
   let release; const wait = new Promise(resolve => release = resolve);
   const f = await fixture(t, 2, async input => { await wait; return response(input); });
