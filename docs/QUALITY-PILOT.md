@@ -1,5 +1,130 @@
 # Bounded fresh quality pilot
 
+## Full-context scoped reasoning, then complete challenge (0.19.16)
+
+The explicitly authorized scoped diagnostic **completed with useful reasoning**;
+the subsequent complete challenge **timed out without an answer**. No new
+ordinary review was accepted or published. This is fresh, measured partial
+reasoning and an observed full-review failure, not an inactive evaluation plan
+or a completed tutorial. Both nontransferable reservations are consumed.
+
+| Observed boundary | Scoped diagnostic A | Full challenge B |
+| --- | ---: | ---: |
+| Reserved / dispatched | 1 / 1 diagnostic | 1 / 1 production |
+| Completed structured answers | 1 partial proposal | 0 |
+| Adapter wall | 262,189 ms | 611,162 ms |
+| Capacity queue | 16 ms | 17 ms |
+| Completed child input | 230,799 bytes | 243,953 bytes |
+| Local pipe-write duration | 459 ms | 237 ms |
+| First provider event | 1,231 ms | 471 ms |
+| First substantive/final structured content | 261,349 ms | none |
+| Enforced patch schema | 1,580 bytes | 1,580 bytes |
+| Conservative packet bound | 232,457 bytes | 245,611 bytes |
+| stdout / stderr | 36,302 / 0 bytes | 335 / 0 bytes |
+| Owned process-group cleanup | confirmed | confirmed |
+
+A retained the exact original 189,931-byte semantic data object, all 34 source
+units, accepted argument and patch response schema. Only the explicit task
+instruction scoped the review to one central claim and its dependencies: 15 old
+notes, eight obligations, ten events and nine relationships. The whole finding
+has four claims, 24 notes, 32 obligations and 51 required causal checks. The
+private independent reference was used only for local assessment, never sent.
+
+The actual answer distinguished configurable allocation from payment, existing
+reserves from unallocated balance, and a failed send from permanent loss. It
+used the newly supplied guards, declarations, receiving and collection code;
+it preserved contrary evidence and unresolved entitlement/deployment premises.
+This source-based developer assessment is not a user study, an executed PoC or
+independent experimental confirmation. Other claim obligations remained outside
+A's scope. The completed answer was retained as exact strictly decoded assistant
+text, not claimed as a byte-exact raw stream.
+
+The unchanged outer patch schema passed. Applying that partial proposal to the
+entire retained model would produce 25 notes against the normal 24-note cap.
+It was **not ingested**. The frozen diagnostic scope explicitly allowed bounded
+new dependent notes; its 16 selected notes, exact quotes, allowed paths and 27
+checks passed separate scoped clone checks. That diagnostic-only assembly did
+not change the production schema, accepted base or publication policy. A cannot
+be installed as a whole review, even if its reasoning is useful.
+
+B received a deterministic 16,248-byte MODEL-PROPOSED, UNTRUSTED note containing
+all proposed field changes and premise qualifications. Repeated source quotes
+were replaced by their unchanged supplied source ranges; check attestations were
+not inherited. The note's request/response identity and source/report/premise/base
+fingerprints were pinned before measurement, hashing and admission. B retained
+all original claims, questions and source context, and had to independently
+review the entire argument. Neither the reference nor local assessment was sent.
+The note added input and A added time: the approach did not complete or establish
+a speedup for the full review.
+
+A used 68,365 input and 9,043 output tokens, including 1,034 reported reasoning
+output tokens; these are CLI-reported usage fields, not additional invocations.
+B returned no usage. Observed model and USD cost were unavailable in both. The
+same pinned CLI 0.160.1, adapter, isolated configuration, disabled tools, medium
+reasoning and strict patch schema were used. Both reported the familiar
+nonterminal disabled-tool-host notice; neither produced stderr. No evidence
+establishes the remote cause of B's timeout. A's success shows this full context
+and strict format can complete the scoped task in this run, not why B failed.
+
+B's configured timeout was 600,000 ms. Stop was requested at 611,136 ms and
+cleanup confirmed 24 ms later. The late callback/clock contribution was not
+instrumented; the entire 11,162-ms excess must not be labeled cleanup. No limit
+was deliberately extended. Total nonoverlapping adapter wall was 873,351 ms.
+A reservation to B finish took 1,228,069 ms, including local assessment and
+preparation between requests, not a fresh-import or batch benchmark. A's final
+read-only preflight took 26,471 ms; B's recorded local preparation/scheduling
+was 3,434 ms plus its separate slot wait.
+
+Before A, actual read-only admission found one previously completed dependency
+leaf removed by saved-resume discovery prioritization. Completed dependency
+receipts now protect those units unless explicitly superseded. Unbound discovery
+candidates can still be deferred; current source checks and packet limits remain.
+The other difference was a bookkeeping-only checkpoint-resume action. Exact
+prepared-input reuse now ignores that action like other acquisition history,
+while continuing to reject changed source bytes, premises, questions, experiments
+and accepted arguments. The original 34-unit packet then matched without editing
+its bytes or resetting the paid stage. Failed preflights reserved nothing.
+
+Answer capture now separates malformed-event parsing from storage failures,
+records safe failure codes and retains a bounded recoverable decoded answer.
+Write/close failures cannot throw from the stream listener or replace a valid
+transport result. Invalid UTF-8 cannot be mislabeled exact retention; a null
+non-message event is safely ignored. The null-event fix was locally reproduced
+after live dispatch; both actual streams contained ordinary valid events.
+Neither historical timeout had an answer that this fix could recover.
+
+The production base and all eight questions remain unchanged. A's proposed
+resolution is not a new semantic attestation; B established none. Production
+lifetime is seven, with four attempts for the selected finding. The new windows
+are diagnostic 1/1 and production 1/1. Historical parent 4/5, earlier continuation
+1/1, and the prior diagnostic 1/1 plus challenge 1/1 remain unchanged. Protected
+saved histories remain 2/2, 6/6 and 68/68. Only the selected working investigation
+and owned preparation journal changed; old paid artifacts and human records did
+not. No retry, generation, sibling or replacement request was dispatched.
+
+The concrete next action is focused CLI/provider diagnosis using the retained
+successful scoped and failed full-review thread/timing records before another
+paid whole-review attempt. It is not a claimed context-size, schema, model or
+disabled-tool root cause. The saved-reader 500-ms miss and representative
+200-finding quality/latency remain separate, unresolved work.
+
+Focused controls covered capture/write failure, malformed UTF-8/null events,
+scoped/default packet identity, stale note provenance, absent review coverage,
+exact frozen reuse and retained completion dependencies. The final supported
+WSL/Node 20.20.1 sequential gate passed **492 tests, zero failed/skipped**, in
+99.432 s. The null-event control first reproduced an uncaught listener error,
+then passed after its narrow fix. The existing controlled batch case remains
+local fixture evidence, not a new paid throughput measurement. No producer
+instruction, source schema, model configuration or adapter changed between A
+and B; the null-event capture fix was locally tested after their dispatch.
+
+No actual desktop control is available. Inspected remote-host logs record
+0.19.13 activation, which does not establish today's active window. Installation
+and an installed-native browser harness remain separate evidence. After saving
+work: **Developer: Reload Window**, **Flowboard Triage: Diagnose Setup**, then
+**Output -> Flowboard Triage** to check active version/path and native 1.2.0.
+Do not Resume an exhausted report to test installation.
+
 ## Transport diagnosis and bounded live follow-up (0.19.15)
 
 The separately authorized source-free structured probe succeeded, but the one

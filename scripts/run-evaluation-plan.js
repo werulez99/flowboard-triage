@@ -7,18 +7,37 @@ const {EvaluationPlanGuard,packetIdentity}=require('./evaluation-plan-guard');
 // Private answer retention at the existing spawn boundary. Never retain
 // reasoning/tool events or arbitrary stderr. A malformed final JSON answer is
 // still an immutable answer, even when the adapter cannot return parsed value.
-function retainAnswers(file, launch=require('node:child_process').spawn) {
-  return (...args)=>{
-    const descriptor=fs.openSync(file,'wx',0o600);
-    let child;try{child=launch(...args);}catch(error){fs.closeSync(descriptor);throw error;}
-    const decoder=new(require('node:string_decoder').StringDecoder)('utf8');let buffer='',bytes=0;
-    const line=value=>{try{const event=JSON.parse(value);if(event.type==='item.completed'&&event.item?.type==='agent_message'&&typeof event.item.text==='string')
-      fs.writeSync(descriptor,JSON.stringify({receivedAt:new Date().toISOString(),text:event.item.text})+'\n');}catch{/* Transport separately rejects malformed events. */}};
+function retainAnswers(file, launch=require('node:child_process').spawn, io=fs) {
+  const status={state:'pending',encoding:'strict-utf8',rawByteExact:false,messages:0,stored:0,errors:[]}, answers=[];
+  const failed=(kind,operation,error)=>{status.state='failed';status.errors.push({kind,operation,
+    code:['ENOSPC','EIO','EACCES','EPERM','EMFILE','EEXIST'].includes(error?.code)?error.code:'other',at:new Date().toISOString()});};
+  const capture=(...args)=>{
+    let descriptor;
+    try{descriptor=io.openSync(file,'wx',0o600);}catch(error){failed('storage','open',error);throw error;}
+    let child;try{child=launch(...args);}catch(error){try{io.closeSync(descriptor);}catch(storage){failed('storage','close',storage);}throw error;}
+    const decoder=new TextDecoder('utf-8',{fatal:true});let buffer='',bytes=0,decodeFailed=false;
+    const line=value=>{
+      let event;try{event=JSON.parse(value);}catch{return;} // Malformed event, not a storage error.
+      if(!event||event.type!=='item.completed'||event.item?.type!=='agent_message'||typeof event.item.text!=='string')return;
+      const answer={receivedAt:new Date().toISOString(),text:event.item.text};answers.push(answer);status.messages++;
+      if(status.errors.some(e=>e.kind==='storage'))return;
+      try{const encoded=Buffer.from(JSON.stringify(answer)+'\n');let offset=0;
+        while(offset<encoded.length){const written=io.writeSync(descriptor,encoded,offset,encoded.length-offset);if(!written)throw Object.assign(Error('No write progress'),{code:'EIO'});offset+=written;}
+        status.stored++;
+      }catch(error){failed('storage','write',error);}
+    };
     const append=text=>{buffer+=text;let i;while((i=buffer.indexOf('\n'))>=0){line(buffer.slice(0,i));buffer=buffer.slice(i+1);}};
-    child.stdout.on('data',chunk=>{bytes+=Buffer.byteLength(chunk);if(bytes<=provider.MAX_OUTPUT_BYTES)append(decoder.write(Buffer.from(chunk)));});
-    child.once('close',()=>{try{if(bytes<=provider.MAX_OUTPUT_BYTES){append(decoder.end());if(buffer)line(buffer);}}finally{fs.closeSync(descriptor);}});
+    const decode=(chunk,stream)=>{if(decodeFailed)return;try{append(decoder.decode(chunk,{stream}));}catch(error){decodeFailed=true;failed('decoding','utf8',error);}};
+    child.stdout.on('data',chunk=>{bytes+=Buffer.byteLength(chunk);if(bytes<=provider.MAX_OUTPUT_BYTES)decode(Buffer.from(chunk),true);
+      else if(!decodeFailed){decodeFailed=true;failed('output-limit','capture',{});}});
+    child.once('close',()=>{
+      if(!decodeFailed){decode(undefined,false);if(!decodeFailed&&buffer)line(buffer);}
+      try{io.closeSync(descriptor);}catch(error){failed('storage','close',error);}
+      if(status.state!=='failed')status.state='complete';
+    });
     return child;
   };
+  capture.status=status;capture.answers=answers;return capture;
 }
 async function verifyAdmission(manifest) {
   const verified=[];
@@ -110,9 +129,18 @@ async function main() {
       // Raw immutable packets/responses remain private beside the manifest.
       const prefix=path.join(path.dirname(file),`request-${ledger.used}`);
       fs.writeFileSync(prefix+'-input.json',JSON.stringify(input,null,2),{flag:'wx',mode:0o600});
-      try { const result=await provider.runProvider(input,{...options,timeoutMs:receipt.timeoutMs,spawn:retainAnswers(prefix+'-response.jsonl')});
-        fs.writeFileSync(prefix+'-result.json',JSON.stringify(result,null,2),{flag:'wx',mode:0o600});guard.result(receipt,input,result);return result;
-      } catch(error){guard.result(receipt,input,null,error);throw error;}
+      const capture=retainAnswers(prefix+'-response.jsonl');
+      try { const result=await provider.runProvider(input,{...options,timeoutMs:receipt.timeoutMs,spawn:capture});
+        result.audit.answerCapture=structuredClone(capture.status);
+        if(capture.status.state==='failed')result.answerCaptureRecovery=structuredClone(capture.answers);
+        try{fs.writeFileSync(prefix+'-result.json',JSON.stringify(result,null,2),{flag:'wx',mode:0o600});}
+        catch(error){result.audit.answerCapture.resultStorageFailure={code:['ENOSPC','EIO','EACCES','EPERM'].includes(error.code)?error.code:'other'};}
+        guard.result(receipt,input,result);return result;
+      } catch(error){
+        if(error.audit)error.audit.answerCapture=structuredClone(capture.status);
+        // A malformed answer remains recoverable even if the first capture file failed.
+        if(capture.status.state==='failed')try{fs.writeFileSync(prefix+'-capture-recovery.json',JSON.stringify({capture:capture.status,answers:capture.answers}),{flag:'wx',mode:0o600});}catch{/* The receipt still records capture failure; no success is claimed. */}
+        guard.result(receipt,input,null,error);throw error;}
     };invoke.isProviderTransport=true;
     coordinator=new(require('../extension/report-preparation').ReportPreparation)(root,executionOptions({manifest,guard,
       catalog:async signal=>{if(!catalog){const r=await require('../extension/runner-adapter').analyze(native,root,{mode:'source',background:true,signal});catalog=new(require('../extension/source').SourceCatalog)(root,r.runner,r.result);}return catalog;},invoke}));

@@ -50,6 +50,12 @@ class EvaluationPlanGuard {
   }
   preparedInput(input) {
     const c=this.manifest.cases.find(c=>c.findingId===input.finding?.id);
+    if(c?.provisionalNotePath){
+      this.phasePlan(c.findingId);
+      const note=JSON.parse(fs.readFileSync(c.provisionalNotePath));
+      if(engine.hash(note)!==c.provisionalNoteHash)deny('Provisional note changed from the approved input.');
+      input=require('../extension/provisional-work-note').attach(input,note);
+    }else if(input.provisionalWorkNotes)deny('No provisional work note is approved for this case.');
     if(!c?.firstPacketPath || this.ledger.receipts.some(r=>r.findingId===c.findingId))return input;
     this.phasePlan(c.findingId); // trusted exact approval, never report/model input
     const frozen=JSON.parse(fs.readFileSync(c.firstPacketPath));
@@ -60,7 +66,7 @@ class EvaluationPlanGuard {
       // ordering and host acquisition history may differ; every current source
       // byte/metadata field, premise, question and accepted base must match.
       const {actions,...rest}=expanded;
-      const nonAcquisitionActions=(actions||[]).filter(a=>!['source-preparation','code-completion','context-priority','inspect','symbol','callers','references','missing-context'].includes(a.kind));
+      const nonAcquisitionActions=(actions||[]).filter(a=>!['source-preparation','checkpoint-resume','code-completion','context-priority','inspect','symbol','callers','references','missing-context'].includes(a.kind));
       return {...rest,nonAcquisitionActions,sources:[...rest.sources].sort((a,b)=>a.id.localeCompare(b.id))};
     };
     if(engine.hash(equivalent(input))!==engine.hash(equivalent(frozen)))deny('Current material input differs from the frozen approved packet.');

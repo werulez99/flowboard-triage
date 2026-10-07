@@ -2,16 +2,17 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const engine=require('../extension/investigation-engine'),provider=require('../extension/semantic-provider');
 const native=process.env.FLOWBOARD_EXTENSION_PATH;
-async function fixture(t) {
+async function fixture(t, extraDefinitions = 0) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'saved-challenge-preparation-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.mkdirSync(path.join(root,'src'));
-  fs.writeFileSync(path.join(root,'src/Vault.sol'),'pragma solidity ^0.8.20;\ncontract Vault {\n function credit() external payable {}\n receive() external payable {}\n}\ncontract Other { receive() external payable {} }\n');
+  fs.writeFileSync(path.join(root,'src/Vault.sol'),'pragma solidity ^0.8.20;\ncontract Vault {\n function credit() external payable {}\n receive() external payable {}\n'+Array.from({length:extraDefinitions},(_,i)=>` function helper${i}() internal {}\n`).join('')+'}\ncontract Other { receive() external payable {} }\n');
   const indexed=await require('../extension/runner-adapter').analyze(native,root),catalog=new(require('../extension/source').SourceCatalog)(root,indexed.runner,indexed.result);
   const request={findingId:'I-1',finding:{title:'Vault.credit accounting',summary:'Check the local receiving rule.'},cards:[{file:'src/Vault.sol',line:3,function:'credit'}]},findingId=request.findingId;
   const draft=engine.create({findingId,request,catalog}),context=engine.makeContext(catalog,request),entry=context.units.find(u=>u.name==='Vault::credit');
   const q={id:'q1',claimId:'c1',text:'Supply receive or fallback code.',target:'Vault receiving behavior',why:'Receiving code and deployed identity are separate.',action:'missing-context'};
   const value={property:{text:'The reported expectation remains attributed.',basis:'report-assumption',evidence:[]},claims:[{id:'c1',allegation:'Review the receiving behavior.',actor:'Caller',entry:entry.id,implementation:'Vault',conditions:[],requiredFacts:['Receiving definition'],supportsIf:'Supported source',contradictsIf:'Opposing source',status:'unresolved',reason:'Read the local definition.',evidence:[],unknowns:['Receiving behavior'],nextQuestion:q.text}],evidence:[],questions:[q],transitions:[],conclusion:{status:'insufficient-evidence',text:'Receiving behavior needs review.',limitations:['Receiving behavior']}};
   Object.assign(draft,engine.accept(value,draft,context.units));draft.sources=context.units;draft.runs=[{phase:'generate',resultAccepted:true,requestId:'old-paid'}];
+  for(const fn of catalog.functions.filter(fn=>/^helper/.test(fn.name)))context.add(fn,'Synthetic discovery candidate');
   for(const u of draft.sources)u.readThrough=u.source.endLine;
   draft.actions.push({id:'old-negative',kind:q.action,outcome:'blocked',sourceIds:[],result:'Older resolver found no additional code.',acquisitionKey:engine.hash([q,entry.id,draft.snapshot.reportHash,draft.snapshot.sourceDigest,draft.snapshot.configuration])});
   return {root,catalog,request,draft,findingId,current:()=>true,publish:async()=>{},persist:false,provider:'codex'};
@@ -33,6 +34,15 @@ for(const stage of ['challenge','complete'])test(`ordinary ${stage} resume refre
   await engine.advance({...f,invoke:async()=>{throw Object.assign(Error('capture'),{code:'LOCAL_READING_LIMIT'});}});
   assert.equal(f.draft.checkpoint.followups,stage==='complete'?2:1,'No automatic allowance renewal.');
   assert.ok(f.draft.actions.filter(a=>a.questionId==='q1').length<=before+1);
+});
+test('saved resume retains completed dependency leaves beyond the discovery budget',{skip:!native},async t=>{
+  const f=await fixture(t,34),leaf=f.draft.sources.find(u=>u.name==='Vault::helper0');
+  f.draft.actions.push({id:'retained-completion',kind:'code-completion',sourceIds:[leaf.id],outcome:'source-returned'});
+  f.draft.checkpoint={stage:'challenge',followups:0};let packet;
+  await engine.advance({...f,invoke:async input=>{packet=input;throw Object.assign(Error('Offline capture'),{code:'LOCAL_READING_LIMIT'});}});
+  assert.ok(packet.sources.some(s=>s.id===leaf.id));
+  assert.equal(f.draft.runs.length,1);assert.equal(f.draft.runs[0].requestId,'old-paid');
+  assert.ok(packet.sources.length<36,'Unbound discovery candidates can still be deferred.');
 });
 test('serialized Unicode/draft growth is rejected before actual transport admission or dispatch',{skip:!native},async t=>{
   const f=await fixture(t);f.draft.checkpoint={stage:'challenge',followups:0};

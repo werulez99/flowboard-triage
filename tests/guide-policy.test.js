@@ -30,6 +30,14 @@ test('a wrong literal displayed comparison remains withheld even with fresh even
   draft.publication = result; draft.publication.digest = policy.digest(draft);
   assert.equal(policy.expose(draft).causal, undefined);
 });
+test('a provisional diagnostic note cannot supply missing whole-review checks or publication', () => {
+  const draft=checked(),prior=structuredClone(draft.causal.checks);
+  draft.causal.checks=[];
+  draft.provisionalWorkNotes=[{status:'MODEL-PROPOSED, UNTRUSTED',proposal:{checks:prior,conclusion:'Definitely ready (deliberately incorrect fixture note)'}}];
+  const result=policy.gate(draft);assert.equal(result.ready,false);
+  draft.publication=result;draft.publication.digest=policy.digest(draft);
+  assert.equal(policy.expose(draft).causal,undefined,'No note attestation crosses the existing exposure gate.');
+});
 test('only a complete checked snapshot crosses the publication boundary, including older results', () => {
   const ready = checked(); assert.equal(ready.publication.ready, true);
   assert.equal(policy.expose(ready).causal.order[0], 'e1');

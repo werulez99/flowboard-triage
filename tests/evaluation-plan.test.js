@@ -4,9 +4,28 @@ const {EvaluationPlanGuard,packetIdentity}=require('../scripts/evaluation-plan-g
 test('private final-answer retention preserves malformed JSON without collecting reasoning',async t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-answer-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const file=path.join(root,'answer.jsonl'),capture=require('../scripts/run-evaluation-plan').retainAnswers;
-  const events=[{type:'item.completed',item:{type:'reasoning',text:'DO_NOT_RETAIN'}},{type:'item.completed',item:{type:'agent_message',text:'{broken café'}},{type:'turn.completed',usage:{}}];
+  const events=[null,42,{type:'item.completed',item:{type:'reasoning',text:'DO_NOT_RETAIN'}},{type:'item.completed',item:{type:'agent_message',text:'{broken café'}},{type:'turn.completed',usage:{}}];
   const child=capture(file)(process.execPath,['-e',`process.stdout.write(${JSON.stringify(events.map(JSON.stringify).join('\n'))})`],{stdio:['pipe','pipe','pipe']});
   await new Promise(resolve=>child.once('close',resolve));const raw=fs.readFileSync(file,'utf8');assert.ok(!raw.includes('DO_NOT_RETAIN'));assert.equal(JSON.parse(raw).text,'{broken café');
+});
+test('answer capture reports disk failure without throwing from a listener or replacing a valid transport result',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-disk-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const provider=require('../extension/semantic-provider'),capture=require('../scripts/run-evaluation-plan').retainAnswers;
+  const events=[{type:'item.completed',item:{type:'agent_message',text:'{"ok":true}'}},{type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}];
+  const retained=capture(path.join(root,'answer.jsonl'),(_exe,_args,settings)=>require('node:child_process').spawn(process.execPath,
+    ['-e',`process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(events.map(JSON.stringify).join('\n'))}));`],settings),
+    {...fs,writeSync(){throw Object.assign(Error('PRIVATE disk path'),{code:'ENOSPC'});}});
+  const result=await provider.runCodex({phase:'generate',sources:[]},{spawn:retained,timeoutMs:5000});
+  assert.deepEqual(result.value,{ok:true});assert.equal(result.audit.outcome,'completed');assert.equal(result.audit.teardown.confirmed,true);
+  assert.equal(retained.status.state,'failed');assert.equal(retained.status.errors[0].code,'ENOSPC');assert.equal(retained.status.stored,0);
+  assert.equal(retained.answers[0].text,'{"ok":true}','Exact decoded answer remains recoverable, never rewritten.');
+  assert.ok(!JSON.stringify(retained.status).includes('PRIVATE'));assert.equal(retained.status.rawByteExact,false);
+});
+test('answer capture does not claim exact text after malformed UTF-8',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-utf8-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const capture=require('../scripts/run-evaluation-plan').retainAnswers(path.join(root,'answer.jsonl'));
+  const child=capture(process.execPath,['-e','process.stdout.write(Buffer.from([0xc3,0x28]))'],{stdio:['pipe','pipe','pipe']});
+  await new Promise(resolve=>child.once('close',resolve));assert.equal(capture.status.state,'failed');assert.equal(capture.status.errors[0].kind,'decoding');assert.equal(capture.answers.length,0);
 });
 test('prepared exact input survives only acquisition-history/source-order changes without relaxing packet hashes',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-prepared-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -17,6 +36,7 @@ test('prepared exact input survives only acquisition-history/source-order change
   const guard=new EvaluationPlanGuard({manifest,ledger,approval,root,save:()=>assert.fail('Preparation cannot reserve')});
   const reordered={...input,sources:[...input.sources].reverse(),actions:[{kind:'code-completion',result:'Already acquired'}]};
   assert.deepEqual(guard.preparedInput(reordered),input);assert.equal(ledger.used,0);
+  assert.deepEqual(guard.preparedInput({...reordered,actions:[...(reordered.actions||[]),{kind:'checkpoint-resume',sourceIds:['a'],result:'Saved stage resumed.'}]}),input);
   for(const delta of [{sources:[{id:'a',code:'changed'}]}, {finding:{id:'A',premise:'new'}},{earlierDraft:{changed:true}},{questions:['new']},{actions:[{kind:'experiment'}]}])assert.throws(()=>guard.preparedInput({...reordered,...delta}));
   fs.writeFileSync(firstPacketPath,JSON.stringify({...input,actions:[]}));assert.throws(()=>guard.preparedInput(reordered),/Frozen approved packet changed/);
 });
