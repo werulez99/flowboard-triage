@@ -1,5 +1,118 @@
 # Bounded fresh quality pilot
 
+## Lossless capacity revalidation and the existing full check (0.19.25)
+
+**The unchanged retained authoring response became a private 49-note candidate.
+The one existing full verification completed and kept it unchanged, but no new
+checked native tutorial was published.** The publication gate retains both
+material unknowns and concrete causal/source-binding problems. This is neither
+another authoring request nor an empty transport timeout.
+
+The shared analytical policy now allows **64 evidence notes and 128 explanation
+reviews**, enough for the union of original/current IDs including removals.
+Revision checks keep their separate bound. Source capacity remains 64, complete
+request capacity 524,288 UTF-8 bytes, and tutorial steps remain bounded at 18.
+The checked-explanation policy is unchanged; compatible guides do not require
+new requests. Capacity identity is recorded separately in candidate/revalidation
+provenance.
+
+Future typed authoring receives schema-derived aggregate limits in its actual
+measured instructions: collection path, immutable-reference count and final
+maximum, including nested limits. Replace/add/remove/whole-array semantics are
+explicit. Atomic assembly reports independently detectable overflows with
+current/final/maximum counts; no valid prefix or truncated note is accepted.
+Measuring the previous authoring data with this future instruction added 3,695
+bytes (317,935 to 321,630), with the same 17,139-byte enforced edit schema. The
+historical sent input/instructions/schema were not rewritten.
+
+The original archived enforced-schema bytes match the recorded schema hash and
+validate the exact retained typed answer. Ordinary owned, local-only recovery
+then admitted all 49 notes and both claim groups under the new host capacity.
+The original 49/48 rejection and complete checkpoint remain immutable history.
+No authoring request, reservation or charge was added. An evidence-writer check
+initially rejected the legitimate live receipt's appended local-admission fields
+after successful recovery; that assertion was diagnosed without repeating the
+recovery or changing original provider accounting. The original G/R receipts and
+R2 provider outcome/usage remain unchanged. All 281 protected historical files
+match. The final stored semantic projection equals the frozen checked candidate.
+
+| Complete frozen V component | UTF-8 bytes |
+| --- | ---: |
+| Report | 4,495 |
+| Source objects and descriptors (52 units) | 142,399 |
+| Exact candidate | 60,504 |
+| Metadata including original-to-candidate revisions | 88,899 |
+| JSON envelope | 439 |
+| Instructions | 31,346 |
+| Enforced check-only schema | 1,580 |
+| Conservative framing | 128 |
+| Total / host headroom | 329,790 / 194,498 |
+
+All 22 original source IDs and 213 originally supplied numbered lines survived.
+Exact current-packet coverage passed. V returned **49 explanation reviews, 37
+current causal checks, 34 distinct revision checks and one premise review**.
+No approval was inherited from the author. Local index/capture took 23.865 /
+13.716 seconds; these are not provider latency. The original replay's local
+monotonic duration was not retained and is not estimated.
+
+V used one reservation, one dispatch and one completed response, with confirmed
+normal owned-process cleanup. Adapter monotonic duration was **241.333 seconds**;
+queue wait 8 ms, local pipe write 39.906 ms, first provider event 648.430 ms, first
+substantive content 241.036 seconds. All 328,132 stdin bytes were written locally;
+with schema, observed transport preparation was 329,712 bytes, within the frozen
+bound. There is no remote delivery acknowledgment. No timeout stop was requested
+and no separate cancellation-cleanup duration applies. Wall timestamps span
+252.442 seconds, 11.109 seconds more than monotonic elapsed; the cause of that
+difference is not established.
+
+Returned usage: **105,122 input / 10,729 output tokens**, with a separately
+reported 410 reasoning-output field. CLI-default selection, medium reasoning,
+disabled tools, strict schema and isolation were unchanged. Observed model,
+authoritative active context capacity and cost remain unknown. The same
+nonterminal disabled-tool-host notice preceded a completed answer; it is not a
+proven failure cause. This does not identify the cause of earlier timeouts.
+
+Both claim groups remain narrowed/incomplete. The verified explanation separates
+conditional integer arithmetic from an independently established rounding rule,
+completed transaction scenario and practical consequence. Supplied comments and
+tests do not establish an upward-rounding/minimum-fee obligation. The reported
+completed dust scenario and repeated splitting remain unestablished; the sibling
+branch has different prerequisites. The full publication gate also rejects
+unsupported modifier/override call-path bindings, helper execution framing and
+inconsistent unit labels within one invocation. The relevant modifier/helper
+code is supplied: those failures must not be described as lost source bytes or
+fixed by copying model agreement. No paid text, conditions or checks were edited
+to bypass them.
+
+Recovery acquisition receipts now bind exact question content/scope/action and
+compatible context. Same-ID replacement questions retain separate origins and
+sources; attributable legacy keys still work, while ambiguous receipts remain
+explicitly unknown. The blocked native status distinguishes completed full
+verification from publication, keeps prior G/R/capacity rejections under labeled
+history, and retains manual code/report access without exposing tutorial
+annotations. Visual inspection caught the new requirement line clipped by the
+inherited compact status height; the verified-blocked view now has a bounded
+taller viewport and an actual visible-intersection check. Native inspection uses
+simulated editor I/O, not observed Cursor activation or tutorial playback.
+
+Final focused controls passed 27/27; the final supported sequential WSL/Node
+gate passed **547 tests, zero failed/skipped**, in 122.823 seconds. Earlier
+546- and 547-test gates passed before the observed status/history and clipping
+follow-ups. The post-clipping run exposed one existing version-child wall-time
+assertion failure (546 passed); the unchanged five-test diagnostic file and then
+the complete suite passed. No production deadline, cleanup or assertion was
+relaxed. Controls include structural 64/65
+capacity, 128 old/new explanation reviews including removal coverage, lossless
+promotion, exact retained typed revalidation/reopen, stale/scope negatives and
+compatible saved playback. Fixtures are not new protocol review evidence.
+
+This run added **one production V and zero authoring/diagnostic requests**. G, R
+and R2 remain consumed once each; the isolated selection now has four production
+receipts. The same V is now consumed. No retry, second V, historical refund or
+batch-performance claim follows from this result. Next evidence must address the
+named rule/scenario uncertainty and the separately retained binding failures;
+another rewrite merely to remove a forty-ninth note is unnecessary.
+
 ## Bounded host capacity and retained typed questions (0.19.24)
 
 **The real R2 completed, but no private candidate or new checked guide was

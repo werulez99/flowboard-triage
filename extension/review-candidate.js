@@ -73,7 +73,7 @@ function needsCompletion(draft) {
   // definition; an unavailable external fact still needs review, not an empty
   // candidate patch. Only actual acquisition receipts establish local work.
   return draft.questions.some(question => {
-    const action = [...draft.actions].reverse().find(item => item.questionId === question.id);
+    const action = require('./question-acquisition').receipt(draft,question);
     return action && ['source-returned', 'context-already-available', 'reading-limit'].includes(action.outcome) &&
       action.sourceIds.some(id => draft.sources.some(unit => unit.id === id));
   });

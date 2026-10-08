@@ -183,7 +183,7 @@ class ReportPreparation {
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, currentAttempt, rejectionHistory, retainedRejection, repairAvailable, localRecheckAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,currentAttempt,rejectionHistory,retainedRejection,repairAvailable,localRecheckAvailable,
+      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, currentAttempt, verificationCompletion, rejectionHistory, hasPrivateCandidate, retainedRejection, repairAvailable, localRecheckAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,currentAttempt,verificationCompletion,rejectionHistory,hasPrivateCandidate,retainedRejection,repairAvailable,localRecheckAvailable,
         publishable: !!this.artifact(id), digest: this.artifact(id), outcome, publishedAt })),
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
@@ -745,16 +745,27 @@ class ReportPreparation {
     job.validationProblems = validation.map(({ code, target, evidenceId, sourceId, line, endLine, oldClaimId, proposedClaimId, actualOwner,allowedOwners,message, action }) => ({ code, target, evidenceId, sourceId, line, endLine,
       ...(sourceId&&Number.isSafeInteger(line)?{file:draft.sources.find(s=>s.id===sourceId)?.source.file}:{}),oldClaimId, proposedClaimId,actualOwner,allowedOwners,message, action }));
     job.currentAttempt=draft.currentRejection?{requestId:draft.currentRejection.requestId,reviewPurpose:draft.currentRejection.reviewPurpose,phase:draft.currentRejection.phase,verificationStarted:!!draft.reviewCandidate?.verification}:null;
-    job.rejectionHistory=(draft.rejectedProposal?.authoringHistory||[]).filter(item=>item.responseHash!==draft.currentRejection?.responseHash).map(item=>({requestId:item.requestId,validationProblems:item.diagnostics.validationProblems}));
-    if(draft.rejectedProposal&&draft.lastRejected?.phase==='generate')job.rejectionHistory.unshift({requestId:draft.rejectedProposal.origin.requestId,validationProblems:draft.rejectedProposal.validationProblems});
+    const verified=(draft.candidateHistory||[]).findLast(item=>item.verification&&item.candidateHash===draft.candidateVerification?.candidateHash);
+    job.verificationCompletion=verified?{requestId:verified.verification.requestId,result:verified.verification.result,at:verified.verification.at,published:draft.publication?.ready===true}:null;
+    const proposals=[...(draft.rejectedProposalHistory||[]),...(draft.rejectedProposal?[draft.rejectedProposal]:[])];
+    job.rejectionHistory=proposals.flatMap(proposal=>[
+      {requestId:proposal.origin.requestId,label:'Original received proposal rejection',validationProblems:proposal.validationProblems||[]},
+      ...(proposal.authoringHistory||[]).filter(item=>!draft.currentRejection||item.responseHash!==draft.currentRejection.responseHash).map(item=>({requestId:item.requestId,label:'Earlier authoring response rejection',validationProblems:item.diagnostics.validationProblems}))]);
+    for(const replay of draft.localRevalidations||[])if(replay.previousRejection)job.rejectionHistory.push({requestId:replay.requestId,
+      label:'Earlier local rejection before capacity revalidation',validationProblems:replay.previousRejection.validationProblems});
     const authoring=require('./authoring-contract');
     const proposedQuestions=draft.currentRejection?.materialQuestions|| (draft.rejectedProposal?.followup?authoring.questions(draft.rejectedProposal.followup.response,require('./semantic-provider').schema,draft.rejectedProposal.proposal):[]);
     const questions=draft.reviewCandidate?.candidate.questions||authoring.mergeQuestions(draft.rejectedProposal?.proposal.questions||
       (draft.pendingResponse&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'?draft.lastRejected?.output?.questions:draft.questions),proposedQuestions);
-    job.missingInputs = questions.map(({ id, claimId, text, why, action }) => {
-      const receipt = [...(draft.actions || [])].reverse().find(item => item.questionId === id);
+    job.missingInputs = questions.map(question => {
+      const { id, claimId, text, why, action }=question;
+      const receipt = require('./question-acquisition').receipt(draft,question);
       const sources = (receipt?.sourceIds || []).map(sourceId => draft.sources.find(unit => unit.id === sourceId)).filter(Boolean);
-      return { id, claimId, text, why, action,
+      const sameQuestion=q=>require('./question-acquisition').identity(q)===require('./question-acquisition').identity(question),origins=[];
+      if((draft.rejectedProposal?.proposal.questions||[]).some(sameQuestion))origins.push({kind:'original-proposal',requestId:draft.rejectedProposal.origin.requestId});
+      if((draft.currentRejection?.materialQuestions||[]).some(sameQuestion))origins.push({kind:'unaccepted-response',requestId:draft.currentRejection.requestId,responseHash:draft.currentRejection.responseHash});
+      return { id, claimId, text, why, action, questionIdentity:require('./question-acquisition').identity(question),origins,
+        acquisitionAttribution:receipt?'exact-question-and-context':'No unambiguous acquisition receipt for this exact question and current context.',
         acquisition: receipt ? { outcome: receipt.outcome, result: receipt.result,
           sources: sources.map(unit => ({ id: unit.id, name: unit.name, file: unit.source.file, line: unit.source.line, endLine: unit.source.endLine,
             suppliedThrough: unit.readThrough ?? unit.source.line - 1 })) } : null };

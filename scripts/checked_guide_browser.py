@@ -512,6 +512,18 @@ try:
                 assert page.locator('.guide-preparation').get_by_role('button', name='Repair saved analysis', exact=True).count() == int(bool(selected_job.get('repairAvailable')) and args.provider != 'none')
                 assert len(state['providerCalls']) == 0, 'Retained rejection inspection is local, never a repair request.'
                 result['checks'].append('Received rejection has a factual recovery message, no replay disguised as repair and no unaccepted tutorial.')
+            if selected_job and selected_job.get('verificationCompletion'):
+                assert 'Full verification completed · publication blocked.' in status_text
+                assert page.locator('.guide-verification-status').is_visible()
+                if selected_job.get('missingInputs'):
+                    assert page.locator('.guide-current-requirement').evaluate('''node=>{
+                      const box=node.getBoundingClientRect(),pane=node.closest('.guide-preparation').getBoundingClientRect();
+                      return box.top>=Math.max(0,pane.top)&&box.bottom<=Math.min(innerHeight,pane.bottom)&&box.left>=pane.left&&box.right<=pane.right;
+                    }'''), 'The current material requirement must be visible inside its actual status viewport.'
+                assert 'Verification has not started' not in status_text
+                assert not page.locator('.guide-annotation:visible').count()
+                page.screenshot(path=str(out / 'verification-blocked.png'))
+                result['checks'].append('Completed full verification and withheld publication are distinct in the visible primary status, without unchecked tutorial annotations.')
             questions = (selected_job or {}).get('missingInputs', [])
             if questions:
                 page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
@@ -521,6 +533,19 @@ try:
                 assert 'paid responses are retained' in status_text
                 result['checks'].append('The real incomplete question and retained-work distinction are visible; acquired source is not shown as reviewed.')
                 page.screenshot(path=str(out / 'incomplete-details.png'))
+            if (selected_job or {}).get('verificationCompletion'):
+                if not questions:
+                    page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
+                assert page.get_by_text('Publication checks still blocking this tutorial', exact=True).count() == int(bool(selected_job.get('validationProblems')))
+                history = page.locator('details').filter(has=page.get_by_text('Earlier response history', exact=True))
+                assert history.count() == int(bool(selected_job.get('rejectionHistory')))
+                if history.count():
+                    history.locator('summary').click()
+                    for item in selected_job['rejectionHistory']:
+                        assert item['requestId'] in history.inner_text()
+                    history.locator('summary').click()
+                assert not request('/state')['providerCalls']
+                result['checks'].append('Original and authoring rejections remain separately labeled history after verification; none is substituted for the current publication blockers.')
             if (selected_job or {}).get('currentAttempt'):
                 if not questions:
                     page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()

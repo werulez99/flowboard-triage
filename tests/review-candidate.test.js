@@ -46,6 +46,55 @@ function verification(input) {
     checks:[...capacity.targets(input.earlierDraft.causal).map(t=>t.key),...(input.candidateRevisionTargets||[])].map(target=>({target,reason:'The uncaught false approval reverts this invocation and its intermediate writes; branch inputs remain bounded as reported.',evidence:input.earlierDraft.claims[0].evidence,documentation:[]}))};
   return value;
 }
+function capacityProposal(input,count) {
+  input=require('../extension/packet-context').expand(input);
+  const value={mode:format.CANDIDATE,updates:[{path:'/questions',valueJSON:'[]'}]};
+  const lines=[...input.sources].sort((a,b)=>Number(b.name==='RouteBook::_preview')-Number(a.name==='RouteBook::_preview')).flatMap(unit=>unit.code.split('\n')
+    .filter(line=>{const code=line.slice(line.indexOf(' | ')+3).trim();return code&&!/^[{}]$/.test(code)&&!code.startsWith('//');}).map(line=>({unit,line})));
+  const needed=count-input.earlierDraft.evidence.length;assert.ok(lines.length>=needed);
+  const ids=[...input.earlierDraft.evidence.map(e=>e.id)];
+  for(const [i,{unit,line}]of lines.slice(0,needed).entries()){
+    const [,n,quote]=line.match(/^(\d+) \| (.*)$/),id='capacity-note-'+i;ids.push(id);
+    value.updates.push({path:'/evidence/'+id,valueJSON:JSON.stringify({id,claimId:'c1',sourceId:unit.id,line:+n,endLine:+n,quote,stance:'context',explanation:'This distinct source operation belongs to the guarded route; it is not an independent transaction commit.'})});
+  }
+  value.updates.push({path:'/claims/c1/evidence',valueJSON:JSON.stringify(ids)});return value;
+}
+test('64-note candidate survives the ordinary checked route and 128 original/current note checks retain removals',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);let calls=0,packet;
+  await engine.advance({...f,invoke:async input=>{calls++;return{value:capacityProposal(input,64),audit:{phase:'challenge',outcome:'completed',requestId:'C64'}};}});
+  assert.equal(f.draft.reviewCandidate?.candidate.evidence.length,64,f.draft.error);f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,invoke:async input=>{calls++;packet=input;assert.equal(input.checkOnly,true);return{value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V64'}};}});
+  assert.equal(f.draft.phase,'ready',f.draft.error);assert.equal(f.draft.evidence.length,64);assert.equal(f.draft.explanationReviews.length,64);
+  f.draft=engine.read(f.root,f.findingId);assert.equal(require('../extension/webview/walkthrough-model').build(f.draft,f.issue.reportText).steps.length,15);
+  await engine.advance({...f,provider:'none',invoke:()=>assert.fail('Compatible playback is local')});assert.equal(calls,2);
+  const old=structuredClone(f.draft),ids=new Map(old.evidence.map(e=>[e.id,'revised-'+e.id]));
+  const rename=x=>typeof x==='string'?(ids.get(x)||x):Array.isArray(x)?x.map(rename):x&&typeof x==='object'?Object.fromEntries(Object.entries(x).map(([k,v])=>[k,rename(v)])):x;
+  const next=rename(old),reviews=[...old.evidence.map(e=>({evidenceId:e.id,result:'removed',reason:'The scoped observation is retained under its explicitly revised identity, with dependent references migrated.',checkedSourceIds:[e.sourceId]})),
+    ...next.evidence.map(e=>({evidenceId:e.id,result:'added',reason:e.note,checkedSourceIds:[e.sourceId]}))];
+  const output={...verification(packet),explanationReviews:reviews};assert.equal(format.valid(output,provider.responseSchema(packet)),true);
+  const checked=engine.checkExplanations(output,old,next,f.draft.sources,packet);assert.equal(checked.explanationReviews.length,128);
+  assert.throws(()=>engine.checkExplanations({...output,explanationReviews:reviews.slice(1)},old,next,f.draft.sources,packet),/did not check explanation/);
+});
+test('unchanged retained typed authoring revalidates under capacity without another request or loss of old rejection',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);let calls=0,raw;
+  const maximum=provider.schema.properties.evidence.maxItems;
+  try{provider.schema.properties.evidence.maxItems=48;
+    await engine.advance({...f,invoke:async input=>{calls++;
+      // Build a deliberate over-old-cap typed response, not a legacy helper
+      // rejection before the real engine can retain the completed response.
+      try{provider.schema.properties.evidence.maxItems=maximum;raw=fixtureAuthoring.encode(capacityProposal(input,49),input);}finally{provider.schema.properties.evidence.maxItems=48;}
+      return{value:raw,audit:{phase:'challenge',outcome:'completed',requestId:'C-retained',teardown:{confirmed:true}}};}});
+  }finally{provider.schema.properties.evidence.maxItems=maximum;}
+  assert.equal(f.draft.currentRejection.validationProblems[0].maximum,48);assert.ok(f.draft.pendingResponse);
+  const original=structuredClone(f.draft.currentRejection),pending=structuredClone(f.draft.pendingResponse);f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,localOnly:true,invoke:()=>assert.fail('Revalidation must reuse the retained answer')});
+  assert.equal(calls,1);assert.equal(f.draft.reviewCandidate?.candidate.evidence.length,49,f.draft.error);assert.equal(f.draft.currentRejection,undefined);
+  assert.deepEqual(f.draft.localRevalidations[0].previousRejection,original);assert.equal(f.draft.localRevalidations[0].archive.hash,pending.hash);
+  assert.equal(f.draft.localRevalidations[0].outcome,'host-admitted');assert.equal(f.draft.reviewCandidate.lineage[0].capacityPolicy.evidence,64);
+  const record=JSON.parse(fs.readFileSync(path.join(f.root,f.draft.localRevalidations[0].archive.archive)));assert.deepEqual(record.result.value,raw);
+  f.draft=engine.read(f.root,f.findingId);await engine.advance({...f,localOnly:true,invoke:()=>assert.fail('No automatic V')});
+  assert.equal(f.draft.reviewCandidate.candidate.evidence.length,49);assert.equal(f.draft.localRevalidations.length,1);assert.equal(policy.gate(f.draft).ready,false);
+});
 for(const variant of ['refutation','missing-rule','receipt-failure'])test(`received unaccepted proposal repairs privately and fully verifies (${variant})`,{skip:!native},async t=>{
   const missingRule=variant==='missing-rule',receiptFailure=variant==='receipt-failure';let notifications=0;
   const f=await fixture(t,'mixed');f.draft=engine.create(f);let original,calls=0;

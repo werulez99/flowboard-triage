@@ -238,17 +238,18 @@
         const needed = element('details'); needed.append(element('summary', '', 'Evidence needed before this finding can finish'));
         for (const item of selectedJob.missingInputs) {
           needed.append(element('p', '', `${item.claimId} / ${item.id}: ${item.text}`), element('small', 'triage-muted', item.why));
+          for(const origin of item.origins||[])needed.append(element('small','triage-muted',`${origin.kind} · ${origin.requestId||'saved question'} · unverified evidence request`));
           if (item.acquisition) {
             needed.append(element('p', 'triage-muted', `Local acquisition: ${item.acquisition.outcome}. ${item.acquisition.result}`));
             for (const source of item.acquisition.sources || []) needed.append(element('small', 'triage-muted', `${source.file}:${source.line}-${source.endLine} · ${source.name} · ${source.suppliedThrough < source.endLine ? 'not fully supplied to a completed response' : 'previously supplied; the unresolved conclusion still needs review'}`));
-          }
+          } else if(item.acquisitionAttribution)needed.append(element('p','triage-muted',item.acquisitionAttribution));
         }
         needed.append(element('p', 'triage-muted', selectedJob.reason?.includes('packet') ? 'Complete and measure the full review packet before any new request; do not remove required evidence to fit.' :
           'Supply missing local code or the named external observation first. New code then needs substantive review within an explicitly applicable allowance. Continuing unchanged cannot establish an unavailable fact.'));
         parent.append(needed);
       }
       if (selectedJob?.validationProblems?.length) {
-        const invalid = element('details'); invalid.append(element('summary', '', 'Current received response: correction details'));
+        const invalid = element('details'); invalid.append(element('summary', '', selectedJob.verificationCompletion?'Publication checks still blocking this tutorial':'Current received response: correction details'));
         if(selectedJob.currentAttempt)invalid.append(element('small','triage-muted',`${selectedJob.currentAttempt.reviewPurpose} · ${selectedJob.currentAttempt.requestId || 'retained response'} · ${selectedJob.currentAttempt.verificationStarted?'Verification attempted':'Verification not started'}`));
         for (const item of selectedJob.validationProblems) {
           invalid.append(element('p', '', `${item.code}${item.target ? ` (${item.target})` : ''}: ${item.message}`), ...(item.sourceId?[element('small','triage-muted',`${item.file||item.sourceId}:${item.line}-${item.endLine}`)]:[]), ...(item.action ? [element('small', 'triage-muted', item.action)] : []));
@@ -257,7 +258,7 @@
         parent.append(invalid);
       }
       if(selectedJob?.rejectionHistory?.length){const history=element('details');history.append(element('summary','','Earlier response history'));
-        for(const item of selectedJob.rejectionHistory)history.append(element('p','triage-muted',item.requestId||'Original received response'),...item.validationProblems.map(p=>element('small','triage-muted',`${p.target||''}: ${p.message}`)));parent.append(history);}
+        for(const item of selectedJob.rejectionHistory)history.append(element('p','triage-muted',`${item.label?item.label+' · ':''}${item.requestId||'Original received response'}`),...item.validationProblems.map(p=>element('small','triage-muted',`${p.target||''}: ${p.message}`)));parent.append(history);}
       const controls = element('div', 'guide-preparation-actions');
       if (canContinueFinding()) {
         parent.append(element('small', 'triage-muted', 'Continue uses remaining shared allowance and may renew only this finding’s limit. Paused siblings stay paused. It never adds report allowance.'));
@@ -309,6 +310,7 @@
       const progress = reportPreparation, state = preparationState || investigationDraft?.preparation;
       const job = preparationJob(active);
       preparationSurface.classList.toggle('retained-rejection',!!job?.retainedRejection);
+      preparationSurface.classList.toggle('verification-completed',!!job?.verificationCompletion&&!job.verificationCompletion.published);
       const title = preparing ? 'Opening finding' : cardBlocked ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
       const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
@@ -321,6 +323,10 @@
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code', 'preparing-local-context':'Checking local preparation (no model request)' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
+      if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.published?
+        'Full verification completed · checked tutorial available.':'Full verification completed · publication blocked. The exact candidate was kept, but material or source-binding checks still prevent a tutorial.'));
+      if(job?.verificationCompletion&&!job.verificationCompletion.published&&job.missingInputs?.length)
+        preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
       const stopped = progress?.stopped?.find(job => job.id === active);
       const reason = cardBlocked ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if(job?.retainedRejection){

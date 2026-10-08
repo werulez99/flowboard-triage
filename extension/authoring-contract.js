@@ -77,6 +77,23 @@ function schema(input, full) {
       explanationReviews: full.properties.explanationReviews, checks: full.properties.causal.properties.checks } : {}) }));
 }
 function problem(code, target, message, extra = {}) { return { code, target, message, ...extra }; }
+function collectionBounds(value, shape, path = '', entries = [], template = false) {
+  if (shape.type === 'array') {
+    if (Number.isInteger(shape.maxItems)) entries.push({ path, current: Array.isArray(value) ? value.length : template ? null : 0, maximum: shape.maxItems });
+    if (shape.items?.type === 'object') {
+      for (const [i,item] of (Array.isArray(value) ? value : []).entries())
+        collectionBounds(item,shape.items,`${path}/${item.id || i}`,entries);
+      // New objects obey the same nested limits, not a missing-reference exemption.
+      if (template || shape.items.properties?.id) collectionBounds(null,shape.items,`${path}/{new}`,entries,true);
+    }
+  } else if (shape.type === 'object') for (const [key,child] of Object.entries(shape.properties))
+    if (!readOnly.has(key)) collectionBounds(value?.[key],child,`${path}/${key}`,entries,template);
+  return entries;
+}
+function aggregateInstruction(input, full) {
+  const reference=require('./packet-context').expand(input).earlierDraft;
+  return 'AGGREGATE CAPACITY (path, current count, final maximum), derived from this immutable reference and canonical schema. Replace preserves count; add increases it; remove decreases it; whole-array set uses its final length. Nested limits also apply to new objects ({new}, current=null). These are ceilings, not target counts. Preserve material scope and justified removals; valid individual edits never authorize a final overflow. Do not repeat this bookkeeping in tutorial prose.\n'+JSON.stringify(collectionBounds(reference,full));
+}
 function failure(problems) { return Object.assign(new Error(problems.map(p => `${p.target}: ${p.message}`).join('\n')), { code: 'AUTHORING_REJECTED', validationProblems: problems }); }
 function evidenceProblems(notes, input, units) {
   const supplied = require('./packet-context').expand(input).sources, problems = [];
@@ -223,15 +240,10 @@ function compile(value, input, full, units) {
   }
   output.inputReviews=value.inputReviews||[];output.explanationReviews=value.explanationReviews||[];output.causal.checks=value.checks||[];
   if(!format.valid(output,full)){
-    const bounds=[];
-    // Valid individual edits can still exceed an assembled collection bound.
-    // Diagnose the actual contract failure; never truncate or apply a prefix.
-    const inspect=(value,shape,path)=>{
-      if(shape.type==='array'&&Array.isArray(value)&&Number.isInteger(shape.maxItems)&&value.length>shape.maxItems)
-        bounds.push(problem('EDIT_CAPACITY',path,`Assembled ${path} has ${value.length} items; the canonical maximum is ${shape.maxItems}. No edits were admitted.`,{actual:value.length,maximum:shape.maxItems}));
-      if(shape.type==='object'&&value&&typeof value==='object')for(const[key,child]of Object.entries(shape.properties))if(Object.hasOwn(value,key))inspect(value[key],child,`${path}/${key}`);
-    };
-    inspect(output,full,'');
+    const previous=new Map(collectionBounds(plain.earlierDraft,full).map(item=>[item.path,item.current]));
+    const bounds=collectionBounds(output,full).filter(item=>item.current>item.maximum).map(item=>problem('EDIT_CAPACITY',item.path,
+      `Assembled ${item.path} has ${item.current} items; the canonical maximum is ${item.maximum}. No edits were admitted.`,
+      {current:previous.get(item.path)??0,final:item.current,actual:item.current,maximum:item.maximum}));
     throw failure(bounds.length?bounds:[problem('EDIT_ASSEMBLY','/','The assembled typed response is an incomplete explanation or violates the complete canonical field/list schema. No edits were admitted.')]);
   }
   return { output, mapping: { version: VERSION, responseHash: hash(value), canonicalHash: hash(output), selections: mappings } };
@@ -239,4 +251,4 @@ function compile(value, input, full, units) {
 const instruction = `AUTHORING SYNTAX source-edits-v2. The enforced response schema is the authoritative catalog of legal operations, exact targets and typed values; no JSON-in-a-string or arbitrary slash paths. set replaces the named field/ID-less array as a WHOLE (including relationships). replace replaces one existing stable-ID object with its COMPLETE typed value, preserving its ID; this includes the complete changes array when replacing an event. add supplies a COMPLETE new object at a collection target with a fresh ID. remove names one enumerated existing item. Preserve unaffected fields exactly. Never invent relationship IDs or use array indexes. Duplicate/overlapping edits are rejected atomically. Checks and derived fields are not editable.
 New/replaced evidence supplies selection={sourceId,sourceHash,line,endLine}, using original line numbers and the EXACT supplied source version. This replaces model-authored quote/line fields for those notes. The WHOLE interval must be supplied, including sparse-view coverage. The host copies that literal code, without searching, guessing or normalizing a quote. This mechanical selection proves no interpretation: provide correct claim ownership, stance, explanation, conditions and counterevidence; full review must independently judge them. Unchanged historical evidence retains its exact quote. Every existing evidence ID-to-claim association is immutable, including shared context; never reassign it. Use removal plus a fresh claim-specific ID and all dependent updates. Do not remove or rename a material claim. Full structural/source/scope checks follow atomic assembly; no partial edit can be published.`;
 const task = input => input.candidateOnly ? 'Return candidate-edit-v2 WITHOUT review arrays or approvals. Complete the private explanation; a separate full check is required. No check attestation in any surrounding instruction applies to this authoring response. If assembledEarlier is absent, earlierDraft with its source-binding selectors is the complete provided unaccepted reference; do not invent a missing derived object.' : 'Return review-edit-v2 WITH fresh inputReviews, explanationReviews for every old/current/changed/removed note, and checks for every causal target. Exact source selection confers no approval. Keep all material scope and counterevidence.';
-module.exports = { VERSION, CANDIDATE, REPAIR, schema, catalog, compile, selected, failure, problem, evidenceProblems, legacyProblems, questions, questionHints, mergeQuestions, guidance, instruction, task };
+module.exports = { VERSION, CANDIDATE, REPAIR, schema, catalog, compile, selected, failure, problem, collectionBounds, aggregateInstruction, evidenceProblems, legacyProblems, questions, questionHints, mergeQuestions, guidance, instruction, task };

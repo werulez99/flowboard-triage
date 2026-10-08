@@ -8,7 +8,7 @@
 // for all of its challenge checks and survive persistence without truncation.
 const kinds = Object.freeze(['applicability', 'entry', 'conditions', 'behavior', 'settlement', 'rule', 'impact', 'counterevidence']);
 const limits = Object.freeze({ claims: 8, obligations: 8 * kinds.length, events: 18, relationships: 30,
-  checks: 8 * kinds.length + 18 + 30, evidence: 48, explanationReviews: 96, revisionChecks: 160, transitions: 12,
+  checks: 8 * kinds.length + 18 + 30, evidence: 64, explanationReviews: 128, revisionChecks: 160, transitions: 12,
   questions: 8, sources: 64, steps: 18, sourceCharacters: 1024 * 1024, storageBytes: 48 * 1024 * 1024,
   // Host admission, not a model token/context promise or navigation limit.
   analyticalRequestBytes: 512 * 1024 });
@@ -28,5 +28,7 @@ function normalizeChecks(model) {
 function assertLength(value, maximum, field) {
   if (!Array.isArray(value) || value.length > maximum) throw new Error(`${field} exceeds the supported review capacity (${maximum}); no items were discarded.`);
 }
-return { POLICY: 'checked-explanation-v9', kinds, limits, target, targets, normalizeChecks, assertLength };
+// A host representational policy, independent of semantic approval/currentness.
+const analyticalPolicy = Object.freeze({ version: 'analytical-capacity-v1', ...limits });
+return { POLICY: 'checked-explanation-v9', analyticalPolicy, kinds, limits, target, targets, normalizeChecks, assertLength };
 });

@@ -161,13 +161,13 @@ function expose(draft, report = null) {
   if (!draft) return null;
   const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
-    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected'])delete copy[key];
+    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations'])delete copy[key];
     return { ...copy, nativeSources: require('./event-source').projections(draft) };
   }
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory'])delete copy[key];
+  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations'])delete copy[key];
   for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',

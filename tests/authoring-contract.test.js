@@ -104,3 +104,19 @@ test('valid typed additions diagnose the assembled evidence capacity without adm
   assert.throws(()=>contract.compile(value,input,provider.schema,units),e=>e.validationProblems.some(p=>p.code==='EDIT_CAPACITY'&&p.target==='/evidence'&&p.actual===limit+1&&p.maximum===limit));
   assert.deepEqual(input,before);
 });
+test('aggregate collection capacity reaches measured candidate and repair instructions from the exact reference',()=>{
+  for(const candidateOnly of [true,false]){
+    const {input,units}=fixture(candidateOnly),policy=require('../extension/review-capacity');
+    assert.equal(policy.limits.evidence,64);assert.equal(policy.limits.explanationReviews,128);assert.equal(policy.POLICY,'checked-explanation-v9');
+    const bounds=contract.collectionBounds(input.earlierDraft,provider.schema),text=contract.aggregateInstruction(input,provider.schema),measured=provider.measureRequest(input);
+    assert.deepEqual(bounds.find(b=>b.path==='/evidence'),{path:'/evidence',current:1,maximum:64});
+    assert.ok(bounds.some(b=>b.path==='/causal/events/{new}/changes'));
+    assert.ok(measured.system.includes(text));assert.match(text,/Replace preserves count/);
+    input.earlierDraft.evidence=Array.from({length:64},(_,i)=>({...input.earlierDraft.evidence[0],id:i?'note-'+i:'note-local'}));
+    assert.equal(contract.compile(response(input,[]),input,provider.schema,units).output.evidence.length,64);
+    const extra={op:'add',target:'/evidence',value:{id:'over-capacity',claimId:'claim-local',stance:'context',explanation:'Unverified additional observation.',selection:{sourceId:'source-local',sourceHash:'a'.repeat(64),line:3,endLine:3}}};
+    assert.throws(()=>contract.compile(response(input,[extra]),input,provider.schema,units),e=>e.validationProblems.some(p=>p.current===64&&p.final===65&&p.maximum===64));
+    {const nested=structuredClone(input.earlierDraft);nested.claims[0].conditions=Array(13).fill('condition');
+      assert.ok(contract.collectionBounds(nested,provider.schema).some(b=>b.path==='/claims/claim-local/conditions'&&b.current===13&&b.maximum===12));}
+  }
+});

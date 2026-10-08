@@ -416,7 +416,8 @@ function makeContext(catalog, request, issue) {
     // helpers. Depth-first library expansion used to consume all forty slots
     // on bit getters before reaching settlement or the other claimed route.
     const latest = new Map();
-    for (const action of [...(draft.actions || [])].reverse()) if (action.questionId && !latest.has(action.questionId)) latest.set(action.questionId, action);
+    for (const action of [...(draft.actions || [])].reverse()) { const key=action.questionIdentity||action.acquisitionKey||action.questionId;
+      if (action.questionId && !latest.has(key)) latest.set(key, action); }
     const executableNotes = new Set((draft.causal?.events || []).filter(event => event.effect !== 'context').map(event => event.evidenceId));
     // Analytical counterevidence can quote a different implementation precisely
     // to reject its applicability. Retain that full quotation, but do not crawl
@@ -1055,7 +1056,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         const acquisitionKey=hash(['named-definition-v1',ACQUISITION_VERSION,draft.snapshot,question]);
         if(draft.actions.some(action=>action.kind==='question-definition'&&action.acquisitionKey===acquisitionKey&&action.sourceIds.every(id=>context.units.some(unit=>unit.id===id))))continue;
         const direct=context.act(question,result.claims.find(c=>c.id===question.claimId),{definitionOnly:true});
-        draft.actions.push({...direct,kind:'question-definition',acquisitionKey});
+        draft.actions.push({...direct,kind:'question-definition',acquisitionKey,...require('./question-acquisition').stamp(question,draft)});
       }
       for (const question of result.questions) {
         ensure();
@@ -1063,9 +1064,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         const key = hash([ACQUISITION_VERSION, question, claim?.entry, draft.snapshot.reportHash, draft.snapshot.sourceDigest, draft.snapshot.configuration]);
         const previous = [...draft.actions].reverse().find(action => action.acquisitionKey === key);
         if (previous && ['no-additional-context', 'context-already-available', 'blocked'].includes(previous.outcome) && previous.sourceIds.every(id => context.units.some(unit => unit.id === id))) continue;
-        const action = { ...context.act(question, claim, {definitionOnly:!!draft.localPreparation?.requirements}), acquisitionKey: key, acquisitionVersion: ACQUISITION_VERSION };
+        const action = { ...context.act(question, claim, {definitionOnly:!!draft.localPreparation?.requirements}), acquisitionKey: key, acquisitionVersion: ACQUISITION_VERSION, ...require('./question-acquisition').stamp(question,draft) };
         if (['source-returned','context-already-available'].includes(action.outcome)) {
-          const old = [...draft.actions].reverse().find(item=>item.questionId===question.id && item.acquisitionVersion!==ACQUISITION_VERSION);
+          const old = require('./question-acquisition').receipt({...draft,actions:draft.actions.filter(item=>item.acquisitionVersion!==ACQUISITION_VERSION)},question);
           for(const id of old?.sourceIds || [])if(!action.sourceIds.includes(id))supersededCandidates.add(id);
         }
         draft.actions.push(action);
@@ -1128,6 +1129,17 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           // The coordinator validates the original reservation under its lock.
           if(onResult)try{await onResult({...cached.result.audit,retainedResponse:draft.pendingResponse,responseStorage:{state:'retained'}},cached.reservation||recoveryReservation);}
           catch(cause){throw Object.assign(new Error('The saved response is retained, but its original terminal receipt is still unwritable. Resolve storage before unpaid local replay; no request was dispatched.'),{code:'RECEIPT_STORAGE_FAILED',cause,audit:cached.result.audit});}
+          if(cached.input.reviewPurpose&&draft.currentRejection){
+            const archive=checkpoint.retain(root,findingId,draft.pendingResponse,{phase,snapshot:draft.snapshot,corrections:draft.corrections,previous:previousModel});
+            const capacityPolicy=require('./review-capacity').analyticalPolicy;
+            const key=hash([archive.hash,capacityPolicy,hash(reviewSchema)]);
+            draft.localRevalidations ||= [];
+            if(!draft.localRevalidations.some(item=>item.key===key))draft.localRevalidations.push({key,archive,capacityPolicy,
+              inputHash:hash(cached.input),responseHash:hash(cached.result.value),requestId:cached.result.audit.requestId,
+              originalSchemaHash:cached.result.audit.schemaHash||null,canonicalSchemaHash:hash(reviewSchema),
+              previousRejection:structuredClone(draft.currentRejection),outcome:'pending',at:now()});
+            await save();
+          }
           return { ...cached.result, audit: { ...cached.result.audit, reusedResponse: true } };
         }
         // Recovery is unpaid local validation, not authority to obtain a new
@@ -1298,7 +1310,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (data.reviewPurpose) {
           const hints = require('./authoring-contract').questionHints(response.value,reviewSchema,data.earlierDraft);
           const diagnostics = { phase, reviewPurpose: data.reviewPurpose, requestId: response.audit?.requestId || null,
-            inputHash: outboundHash, responseHash: hash(response.value), at: now(),
+            inputHash: outboundHash, responseHash: hash(response.value), at: now(), capacityPolicy:require('./review-capacity').analyticalPolicy,
             cleanupConfirmed: response.audit?.teardown?.confirmed === true,
             materialQuestions: hints.questions,
             validationProblems: [...(error.validationProblems || [{code:error.code || 'REVIEW_STRUCTURE',target:'/',message:error.message}]),...hints.validationProblems],
@@ -1306,6 +1318,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           if (draft.currentRejection && draft.currentRejection.responseHash !== diagnostics.responseHash)
             draft.rejectionHistory = [...(draft.rejectionHistory || []),draft.currentRejection];
           draft.currentRejection = diagnostics; error.validationProblems = diagnostics.validationProblems;
+          if(response.audit.reusedResponse){const replay=draft.localRevalidations?.at(-1);if(replay?.responseHash===diagnostics.responseHash){replay.outcome='rejected';replay.validationProblems=diagnostics.validationProblems;}}
         }
         if(['REVIEW_CONTENT_BOUND','REVIEW_CONTENT_MISMATCH','REVIEW_REFERENCE_SCOPE'].includes(error.code)) {
           // Preserve an unrepresentable answer or invalid claim reference;
@@ -1355,6 +1368,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         }
       }
       recordReading(); draft.runs.at(-1).resultAccepted = true;
+      if(response.audit.reusedResponse){const replay=draft.localRevalidations?.at(-1);if(replay?.responseHash===hash(response.value)){replay.outcome='host-admitted';replay.hostAdmittedAt=now();}}
+      if(data.candidateOnly){delete draft.currentRejection;delete draft.validationProblems;}
       delete draft.pendingResponse;
       draft.runs.at(-1).hostAcceptedAt = now();
       await onAccepted?.(draft.runs.at(-1)); return accepted;
@@ -1412,7 +1427,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       const repairing = draft.reviewCandidate?.state === 'repair-requested';
       const state = candidates.save(draft, next.candidateWire, reviewSchema, { kind: draft.rejectedProposal?(draft.rejectedProposal.followup?'rejected-proposal-followup':'rejected-proposal-repair'):repairing ? 'candidate-repair' : 'candidate-completion',
         requestId: draft.runs.at(-1)?.requestId, responseHash: next.authoringMapping?.responseHash || draft.runs.at(-1)?.responseHash || null,
-        ...(next.authoringMapping ? { authoringMapping: next.authoringMapping } : {}), at: now() });
+        ...(next.authoringMapping ? { authoringMapping: next.authoringMapping } : {}), capacityPolicy:require('./review-capacity').analyticalPolicy, at: now() });
       if (repairing) state.repairCount++;
       // Source acquisition concerns the new candidate, not acceptance of its
       // interpretation. Keep old source references for revision checking too.
