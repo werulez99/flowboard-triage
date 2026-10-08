@@ -1,5 +1,122 @@
 # Bounded fresh quality pilot
 
+## Bounded host capacity and retained typed questions (0.19.24)
+
+**The real R2 completed, but no private candidate or new checked guide was
+admitted. V remains unused.** Its typed edits would assemble 49 evidence notes
+against the unchanged canonical maximum of 48. No note was dropped, no partial
+patch applied, and no second authoring request or invalid verification was sent.
+The complete response and its independently readable questions are retained.
+
+The shared analytical request policy is now **524,288 UTF-8 bytes**, explicitly
+authorized for this iteration. Preparation, saved-stage inspection, adapter
+admission and audit receipts use that same host bound. This is not a model token
+limit. The 64-source, canonical evidence, response/checkpoint-storage and separate
+navigation-message bounds remain unchanged. Existing packet hashes and checked
+guides are not invalidated by this capacity policy.
+
+| Complete frozen R2 component | UTF-8 bytes |
+| --- | ---: |
+| Report | 4,495 |
+| Source objects, code and descriptors (52 units) | 142,400 |
+| Original unaccepted proposal | 41,827 |
+| Metadata, including shared values and untrusted R guidance | 79,773 |
+| JSON envelope | 478 |
+| Instructions | 31,695 |
+| Actual enforced typed schema | 17,139 |
+| Conservative framing | 128 |
+| Total / host headroom | 317,935 / 206,353 |
+
+Compared with the preceding 317,932-byte capture, the three added bytes are
+acquisition bookkeeping, not changed source or argument. Expanded source objects,
+original proposal, instructions and schema match. All 22 original source IDs and
+their 213 numbered lines were mechanically checked unchanged; current packet
+coverage passes for the 52-unit material set. Local indexing took 85.853 s and
+preparation/capture 90.054 s; these are not provider latency.
+
+Typed `candidate-edit-v2`/`review-edit-v2` question add/replace operations now yield
+untrusted acquisition hints after complete shape, stable-ID, immutable-reference
+claim-scope and conflict checks. An unrelated stale evidence selection does not
+erase a valid question. Invalid or conflicting question edits confer no hint;
+removals and replacements cannot erase original uncertainty from recovery. The
+actual current response, its request/input/response identities and original
+questions stay distinct. Legacy question recovery remains supported. The actual
+R2 retained four independently readable questions; this is not their approval.
+
+Read-only admission also exposed a wire/expanded comparison defect: repeated
+rejection diagnostics had been shared by source-context-v2, while the guard
+compared them with an expanded retained record. It now compares those fields in
+the same expanded representation; the exact outbound packet identity remains
+mandatory. Changed guidance is still rejected. Two subsequent read-only source
+index attempts reached the existing 180-second host bound without reservation;
+the ordinary execution subsequently passed its own indexing/currentness/guard
+checks. No index deadline or ownership rule was bypassed.
+
+R2 used one reservation, one dispatch and one completed provider response:
+**253.709 s monotonic adapter elapsed**, with 50 ms queue wait. Writing all
+300,718 stdin bytes to the local child pipe took 433.431 ms; first provider event
+was at 4.644 s, first substantive content at 253.120 s and final content at
+253.124 s. Stdin plus the 17,139-byte schema was 317,857 bytes, below the
+317,935-byte conservative bound. A pipe-write completion is not a remote delivery
+acknowledgment. Normal process exit and owned cleanup were confirmed; there was
+no timeout stop request or separately reported cancellation-cleanup duration.
+The wall timestamp interval was 275.401 s, 21.692 s greater than the monotonic
+interval; the source of that difference is not established.
+
+Returned usage was **101,003 input / 11,338 output tokens**, with a separately
+reported 1,325 reasoning-output field. Requested model remains CLI-default;
+observed model, authoritative active context capacity and cost were not returned.
+The installed CLI's bundled model catalog does not identify the default chosen
+for this isolated request. No paid probe, model switch or guessed byte-to-token
+conversion was used. Historical R usage is not a proportional estimate for R2.
+
+Local diagnosis found that all new explicit source selections passed, but the
+assembled evidence count failed before full source/semantic admission. The
+authoring schema constrains individual edits, not the resulting aggregate count;
+the complete 48-note bound was not explicitly enumerated in the supplied authoring
+instructions. This is not evidence that the model ignored that exact instruction.
+A narrow deterministic diagnostic now reports `/evidence`, actual 49, maximum 48,
+instead of a generic assembly error. It changes neither the response nor the gate.
+There are no exact duplicate notes that can be automatically removed. The proposed
+rule and consequence questions remain unverified; source availability and legal
+quotes do not decide them. A future authorized revision must preserve their full
+scope within the canonical contract before the same unused V is eligible.
+
+New live totals are one production request and zero diagnostic requests. Earlier
+G and R each remain one completed, unaccepted response; this selected isolated
+workspace now retains three production receipts. No historical allowance was
+reset or transferred. There is no V packet for an admissible candidate and no
+real tutorial playback to report. Fixture tests and blocked native status are
+not semantic completion or batch-throughput evidence.
+
+The final supported sequential WSL/Node 20.20.1 gate passed **542 tests, zero
+failed/skipped**, in 146.334 s. Earlier runs exposed two stale over-limit fixtures,
+a short legacy-owner test deadline, and an opening test that reused the expired
+preparation wait. Fixtures now use the shared bound; ownership assertions remain,
+and native opening has its own unchanged five-second boundary. A later final-code
+run had 540 passes and two timing failures (the 204-job fixture's explicit batch
+deadline and the local version-child wall-clock assertion). Both passed unchanged
+in isolation, then the complete suite passed. No production deadline, source gate
+or review coverage was weakened. One already-failed, heavily delayed gate was
+terminated before live execution; it is not reported as a completed passing run.
+
+Ordinary provider-none replay of the exact R2 took 53.787 s including indexing,
+made zero provider calls and preserved all three receipts. It refreshed only the
+precise current rejection. All 222 protected historical evidence files, the
+original report journal, earlier receipts, sibling state and original unaccepted
+proposal were checked unchanged.
+
+Installed 0.19.24 was exercised in original native Flowboard 1.2.0 with provider
+`none`: five blocked-state groups passed. The inspected screens show the current
+R2 49/48 diagnostic, verification not started, separate earlier attempt history,
+retained material questions, manual code/report access, and no ineffective repair
+button or unchecked tutorial annotations. The first harness startup hit its
+handshake bound; one unchanged rerun passed. No product timer changed and neither
+run made a provider request. This is simulated editor IO, not observed Cursor
+activation or completed guide playback. After saving editor work, activation uses
+Developer: Reload Window; Flowboard Triage: Diagnose Setup; Output -> Flowboard
+Triage. No busy editor window was reloaded automatically.
+
 ## Typed authoring and attributed rejection recovery (0.19.23)
 
 **No new checked real guide and zero new provider reservations/dispatches.**

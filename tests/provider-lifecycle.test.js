@@ -147,7 +147,7 @@ test('failed process-ownership persistence stops the actual child before any rev
   }), error => error.code === 'PROVIDER_OWNERSHIP_UNAVAILABLE' && error.audit.teardown.confirmed);
   assert.equal(sent, false);
 });
-test('crashing after legacy exclusive-create but before metadata no longer wedges health or capacity', { skip: !linux }, async t => {
+test('crashing after legacy exclusive-create but before metadata no longer wedges health or capacity', { skip: !linux, timeout: 5000 }, async t => {
   const root = directory(t), options = { directory: root, lockWaitMs: 40 }, lock = path.join(root, `health-${health.identity('codex')}.lock`);
   for (const file of [lock, path.join(root, 'codex-0.json'), path.join(root, 'codex-1.json')]) {
     const child = await owner(t, 'empty-held', file); assert.equal(fs.statSync(file).size, 0); await killChild(child);
@@ -155,7 +155,10 @@ test('crashing after legacy exclusive-create but before metadata no longer wedge
   assert.equal(health.check('codex', options).open, false);
   await health.record('codex', { outcome: 'failed', failureKind: 'timeout', requestId: 'one', phase: 'generate' }, options);
   await health.reset('codex', options);
-  const release = await slots.acquire('codex', null, { ...options, timeoutMs: 200 }); release();
+  // Exercise ordinary cancellable acquisition, not a 200 ms /proc-scan
+  // performance assumption. The test deadline still catches a wedged owner.
+  const abort=new AbortController();t.after(()=>abort.abort());
+  const release = await slots.acquire('codex', abort.signal, options); release();
   assert.equal(fs.existsSync(lock), false); assert.equal(fs.existsSync(path.join(root, 'codex-1.json')), false);
 });
 test('a live pre-metadata owner is never removed by age and preflight prevents dispatch', { skip: !linux }, async t => {

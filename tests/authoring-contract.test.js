@@ -11,6 +11,26 @@ function fixture(candidateOnly=true){
   return{units,input:{phase:'challenge',authoringFormat:contract.VERSION,candidateOnly,...(!candidateOnly?{repairOnly:true}:{}),earlierDraft,sources:[{id:'source-local',file:'Local.sol',sourceHash,line:1,endLine:5,code:code.split('\n').map((l,i)=>`${i+1} | ${l}`).join('\n')}]}};
 }
 const response=(input,edits)=>({mode:input.candidateOnly?contract.CANDIDATE:contract.REPAIR,edits,...(!input.candidateOnly?{inputReviews:[],explanationReviews:[],checks:[]}:{})});
+test('rejected typed edits retain independently valid scoped questions without applying edits or erasing originals',()=>{
+  const {input,units}=fixture(),q={id:'local-question',claimId:'claim-local',text:'Which guard controls the callback?',action:'symbol',target:'Receiver::callback',why:'The return depends on this guard.'};
+  input.earlierDraft.questions=[{...q,id:'original-question',target:'Original::settle'}];
+  const edit={op:'add',target:'/questions',value:q},bad={op:'add',target:'/evidence',value:{id:'new-note',claimId:'claim-local',stance:'context',explanation:'Untrusted.',selection:{sourceId:'source-local',sourceHash:'b'.repeat(64),line:3,endLine:3}}};
+  const value=response(input,[edit,bad]),original=structuredClone(input);
+  assert.equal(format.valid(value,provider.responseSchema(input)),true);
+  assert.throws(()=>contract.compile(value,input,provider.schema,units),e=>e.validationProblems.some(p=>p.code==='SOURCE_SELECTION_VERSION'));
+  assert.deepEqual(contract.questions(value,provider.schema,input.earlierDraft),[q]);
+  const replacement={op:'replace',target:'/questions/original-question',value:{...q,id:'original-question'}};
+  assert.deepEqual(contract.questions(response(input,[replacement]),provider.schema,input.earlierDraft),[replacement.value]);
+  assert.equal(contract.mergeQuestions(input.earlierDraft.questions,[replacement.value]).length,2,'Unaccepted replacement cannot erase the original acquisition question.');
+  for(const edits of [[edit,edit],[edit,{op:'remove',target:'/questions/local-question'}],[{...edit,value:{...q,claimId:'other-claim'}}],
+    [{...replacement,target:'/questions/missing'}],[{...edit,value:{...q,id:'original-question'}}],[{...edit,value:{...q,why:undefined}}]]){
+    const hints=contract.questionHints(response(input,edits),provider.schema,input.earlierDraft);
+    assert.deepEqual(hints.questions,[]);assert.ok(hints.validationProblems.length);
+  }
+  assert.deepEqual(contract.questions(response(input,[{op:'remove',target:'/questions/original-question'}]),provider.schema,input.earlierDraft),[]);
+  assert.deepEqual(contract.questions({mode:'candidate-patch-v1',updates:[{path:'/questions',valueJSON:JSON.stringify([q])}]},provider.schema,input.earlierDraft),[q]);
+  assert.deepEqual(input,original);
+});
 test('production candidate and repair schema constrain targets and typed values using one syntax contract',()=>{
   for(const candidateOnly of [true,false]){
     const{input,units}=fixture(candidateOnly),schema=provider.responseSchema(input),m=provider.measureRequest(input);
@@ -73,5 +93,14 @@ test('a legacy reference without a causal model is readable but an empty typed r
   const value=response(input,[]),before=structuredClone(input);
   assert.equal(format.valid(value,provider.responseSchema(input)),true,'Empty edits are syntactically valid, not a semantic approval.');
   assert.throws(()=>contract.compile(value,input,provider.schema,units),e=>e.validationProblems[0].code==='EDIT_ASSEMBLY'&&/incomplete explanation/.test(e.message));
+  assert.deepEqual(input,before);
+});
+test('valid typed additions diagnose the assembled evidence capacity without admitting a prefix',()=>{
+  const {input,units}=fixture(),limit=provider.schema.properties.evidence.maxItems;
+  input.earlierDraft.evidence=Array.from({length:limit},(_,i)=>({...input.earlierDraft.evidence[0],id:i?'other-'+i:'note-local'}));
+  const value=response(input,[{op:'add',target:'/evidence',value:{id:'one-more',claimId:'claim-local',stance:'context',explanation:'Still unverified.',selection:{sourceId:'source-local',sourceHash:'a'.repeat(64),line:3,endLine:3}}}]);
+  const before=structuredClone(input);
+  assert.equal(format.valid(value,provider.responseSchema(input)),true,'Syntax validity alone does not establish assembled capacity.');
+  assert.throws(()=>contract.compile(value,input,provider.schema,units),e=>e.validationProblems.some(p=>p.code==='EDIT_CAPACITY'&&p.target==='/evidence'&&p.actual===limit+1&&p.maximum===limit));
   assert.deepEqual(input,before);
 });

@@ -80,12 +80,12 @@ test('explicit material regions precede optional discovery and preserve exact co
 });
 test('serialized Unicode/draft growth is rejected before actual transport admission or dispatch',{skip:!native},async t=>{
   const f=await fixture(t);f.draft.checkpoint={stage:'challenge',followups:0};
-  f.draft.claims[0].reason='\u6587'.repeat(100000);
+  f.draft.claims[0].reason='\u6587'.repeat(Math.ceil(provider.MAX_REQUEST_BYTES/3));
   let admitted=0,dispatched=0;
   const invoke=async()=>{dispatched++;throw Error('Must not dispatch');};invoke.isProviderTransport=true;
   await engine.advance({...f,invoke,beforeRequest:()=>{admitted++;}});
   assert.equal(admitted,0);assert.equal(dispatched,0);
-  assert.match(f.draft.error,/262144|packet|bytes/i);assert.equal(f.draft.phase,'blocked');
+  assert.match(f.draft.error,new RegExp(`${provider.MAX_REQUEST_BYTES}|packet|bytes`,'i'));assert.equal(f.draft.phase,'blocked');
   assert.equal(f.draft.runs.length,1);assert.equal(f.draft.runs[0].requestId,'old-paid');
 });
 test('simultaneous mandatory views union independently of order; full coverage dominates sparse and missing actual bytes block',{skip:!native},async t=>{

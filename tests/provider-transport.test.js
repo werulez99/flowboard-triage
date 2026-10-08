@@ -46,6 +46,22 @@ function fakeProcess({ stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), code 
   };
 }
 function directory(t) { const result = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-provider-test-')); t.after(() => fs.rmSync(result, { recursive: true, force: true })); return result; }
+test('shared analytical host policy admits full Unicode requests above the former limit with exact adapter receipts',async()=>{
+  const large={...input,metadata:'\u03bb'.repeat(150000)},metrics=provider.requestMetrics(large);
+  assert.equal(metrics.limit,require('../extension/review-capacity').limits.analyticalRequestBytes);
+  assert.equal(metrics.limit,524288);assert.ok(metrics.requestBytes>262144&&metrics.requestBytes<metrics.limit);
+  assert.deepEqual(JSON.parse(metrics.payload),large);
+  assert.equal(metrics.requestBytes,Object.values(metrics.inputSections).reduce((a,b)=>a+b,0)+128);
+  for(const run of [provider.runCodex,provider.runClaude]){
+    const r=await run(large,{spawn:fakeProcess({stdout:wire({text},run===provider.runCodex?'codex':'claude')})});
+    assert.equal(r.audit.packetBoundBytes,metrics.requestBytes);assert.equal(r.audit.hostRequestLimitBytes,metrics.limit);
+    assert.equal(r.audit.inputWrite.completedBytes,r.audit.stdinBytes);assert.ok(r.audit.requestBytes<=metrics.requestBytes);
+    assert.equal(r.audit.schemaBytes,metrics.inputSections.schema);assert.equal(r.audit.inputHash,metrics.inputHash);
+  }
+  let spawned=0;assert.throws(()=>provider.runCodex({...large,metadata:'x'.repeat(metrics.limit),analyticalRequestBytes:Infinity},{spawn:()=>spawned++}),{code:'LOCAL_PACKET_LIMIT'});
+  assert.equal(spawned,0,'Model input cannot override host policy.');
+  assert.equal(require('../extension/protocol').MAX_BYTES,256*1024,'Navigation interface has a separate bound.');
+});
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 test('the whole request includes metadata, instructions and schema and is bounded before spawning', async () => {
   const measured = provider.requestMetrics(input);

@@ -196,11 +196,15 @@ test('real host echoes manual navigation IDs and gives failed guide opening a fi
 test('the checked native-route fixture uses real distinct call occurrences, complete late code, returns and rollback', {skip:!native}, async t => {
   const host=await require('../scripts/workflow-host').start({routeFixture:true,deferMapping:true});t.after(()=>host.close());
   const call=async(route,value)=>(await fetch(host.origin+route,{headers:{'X-Workflow-Token':host.secret,'Content-Type':'application/json'},...(value?{method:'POST',body:JSON.stringify(value)}:{})})).json();
-  const until=Date.now()+5000;let state;
+  let until=Date.now()+5000,state;
   while(Date.now()<until){state=await call('/state');if(state.reportPreparation.jobs[0].publishable)break;await new Promise(resolve=>setTimeout(resolve,10));}
   assert.ok(state.reportPreparation.jobs[0].publishable,JSON.stringify(state.reportPreparation));
   await call('/message',{type:'triage:ready'});await call('/message',{type:'triage:select',issueId:'I-1'});
+  // Opening is a separate asynchronous boundary, not the unused remainder
+  // of the preparation wait. Preserve the same finite per-boundary timeout.
+  until=Date.now()+5000;
   while(Date.now()<until){state=await call('/state');if(state.lastLoad?.issueId==='I-1')break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(state.lastLoad?.issueId,'I-1','The actual checked native guide must open before inspecting its content.');
   const draft=state.lastLoad.investigationDraft,gate=require('../extension/guide-policy').gate;
   assert.equal(gate(draft).ready,true);assert.equal(state.providerCalls.length,2,'Only the fixed generation and fixed challenge are used.');
   const events=new Map(draft.causal.events.map(event=>[event.id,event]));

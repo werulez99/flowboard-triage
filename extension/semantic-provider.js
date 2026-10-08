@@ -94,7 +94,7 @@ const responseInstruction = input => input.checkOnly ? challengeFormat.checkInst
   input.candidateOnly ? 'Return candidate-patch-v1 using stable-ID slash paths and JSON-encoded valueJSON, as in review-patch-v1, but no review arrays. The assembled candidate must match this exact field schema:\n' + targetSchema(input) : input.phase === 'challenge' ? challengeFormat.instruction : '';
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
-const MAX_REQUEST_BYTES = 256 * 1024;
+const MAX_REQUEST_BYTES = limits.analyticalRequestBytes;
 function measureRequest(input) {
   if (input.authoringFormat && (input.authoringFormat !== require('./authoring-contract').VERSION || !(input.candidateOnly || input.repairOnly) || input.checkOnly))
     throw Object.assign(new Error('Unsupported or conflicting authoring contract. No legacy schema fallback or request is permitted.'), { code: 'AUTHORING_CONTRACT' });
@@ -182,7 +182,7 @@ function runTransport(input, options, spec) {
     ...(spec.textContract ? { diagnostic: 'full-response-contract-text', schemaDelivery: 'explicit-text-only',
       baseInstructionHash: metrics.baseInstructionHash, baseInstructionBytes: metrics.baseInstructionBytes,
       addedContractHash: metrics.addedContractHash, addedContractBytes: metrics.addedContractBytes } : {}),
-    packetBoundBytes: metrics.requestBytes || null,
+    packetBoundBytes: metrics.requestBytes || null, hostRequestLimitBytes: MAX_REQUEST_BYTES,
     instructionHash: metrics.instructionHash || crypto.createHash('sha256').update(metrics.system).digest('hex'), schemaHash: metrics.schemaHash || crypto.createHash('sha256').update(metrics.encodedSchema).digest('hex'),
     effectiveConfiguration: spec.configuration, deadline: { kind: 'request-wall-clock', milliseconds: timeoutMs },
     stdoutBytes: 0, stderrBytes: 0, outputBytes: 0, eventCount: 0, toolEvents: 0, finalReceived: false, usage: null,

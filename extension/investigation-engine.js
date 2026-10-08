@@ -1096,7 +1096,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if(!draft.pendingResponse)require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
       if(preparationOnly&&!draft.pendingResponse){
         const metrics=require('./semantic-provider').requestMetrics(data);
-        draft.localPreparation={...draft.localPreparation,preflight:{inputHash:metrics.inputHash,requestBytes:metrics.requestBytes,dispatchable:true,at:now()}};
+        draft.localPreparation={...draft.localPreparation,preflight:{inputHash:metrics.inputHash,requestBytes:metrics.requestBytes,limit:metrics.limit,dispatchable:true,at:now()}};
         draft.phase='local-preparation-ready';draft.sources=context.units;
         await save();throw Object.assign(new Error('Local preparation fits. Saved analysis still needs an explicitly requested model repair and full verification.'),{code:'LOCAL_PREPARATION_READY'});
       }
@@ -1296,11 +1296,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       try { accepted = validate(response.value); }
       catch (error) {
         if (data.reviewPurpose) {
+          const hints = require('./authoring-contract').questionHints(response.value,reviewSchema,data.earlierDraft);
           const diagnostics = { phase, reviewPurpose: data.reviewPurpose, requestId: response.audit?.requestId || null,
             inputHash: outboundHash, responseHash: hash(response.value), at: now(),
             cleanupConfirmed: response.audit?.teardown?.confirmed === true,
-            materialQuestions: require('./authoring-contract').questions(response.value,reviewSchema),
-            validationProblems: error.validationProblems || [{code:error.code || 'REVIEW_STRUCTURE',target:'/',message:error.message}],
+            materialQuestions: hints.questions,
+            validationProblems: [...(error.validationProblems || [{code:error.code || 'REVIEW_STRUCTURE',target:'/',message:error.message}]),...hints.validationProblems],
             checksRun: 'Independent addressing/value/source checks where readable; no partial candidate was admitted.' };
           if (draft.currentRejection && draft.currentRejection.responseHash !== diagnostics.responseHash)
             draft.rejectionHistory = [...(draft.rejectionHistory || []),draft.currentRejection];
@@ -1378,8 +1379,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     if (resumeChallenge && !draft.pendingResponse && !localOnly) {
       const preparationSubject = draft.reviewCandidate ? { ...draft, ...accept(candidates.assertCurrent(draft, reviewSchema).candidate, draft, context.units, { candidateOnly: true }) } : draft.rejectedProposal ? {...draft,...require('./rejected-proposal').material(draft,context.units,reviewSchema)} : draft;
       if(draft.rejectedProposal?.followup&&!draft.reviewCandidate){
-        const hints=require('./authoring-contract').questions(draft.rejectedProposal.followup.response,reviewSchema);
-        preparationSubject.questions=[...new Map([...preparationSubject.questions,...hints].map(q=>[q.id,q])).values()];
+        const authoring=require('./authoring-contract'),hints=authoring.questions(draft.rejectedProposal.followup.response,reviewSchema,draft.rejectedProposal.proposal);
+        preparationSubject.questions=authoring.mergeQuestions(preparationSubject.questions,hints);
       }
       const acquired = readQuestions(preparationSubject);
       const deferred = context.prioritize(preparationSubject, [...(draft.reviewCandidate || draft.rejectedProposal ? draft.sources.map(unit => unit.id) : []), ...draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds)], [...supersededCandidates]);

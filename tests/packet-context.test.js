@@ -48,7 +48,7 @@ test('durable v2 replay preserves sparse full-definition views and literal templ
   assert.throws(()=>provider.requestMetrics(tooMany),e=>e.code==='LOCAL_SOURCE_LIMIT'&&e.metrics.sourceCount===count);
 });
 test('oversized diagnostics retain exact complete metrics while production still rejects',()=>{
-  const input={phase:'challenge',repairOnly:true,sources:[{id:'s',code:'原文'.repeat(50000)}],earlierDraft:{claims:[]}};
+  const input={phase:'challenge',repairOnly:true,sources:[{id:'s',code:'原文'.repeat(Math.ceil(provider.MAX_REQUEST_BYTES/6))}],earlierDraft:{claims:[]}};
   const metrics=provider.measureRequest(input);assert.equal(metrics.dispatchable,false);
   assert.equal(metrics.inputBytes,Buffer.byteLength(JSON.stringify(input)));
   const fields=Object.values(metrics.inputFields).reduce((n,v)=>n+v,0);

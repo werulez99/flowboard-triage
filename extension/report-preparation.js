@@ -747,9 +747,10 @@ class ReportPreparation {
     job.currentAttempt=draft.currentRejection?{requestId:draft.currentRejection.requestId,reviewPurpose:draft.currentRejection.reviewPurpose,phase:draft.currentRejection.phase,verificationStarted:!!draft.reviewCandidate?.verification}:null;
     job.rejectionHistory=(draft.rejectedProposal?.authoringHistory||[]).filter(item=>item.responseHash!==draft.currentRejection?.responseHash).map(item=>({requestId:item.requestId,validationProblems:item.diagnostics.validationProblems}));
     if(draft.rejectedProposal&&draft.lastRejected?.phase==='generate')job.rejectionHistory.unshift({requestId:draft.rejectedProposal.origin.requestId,validationProblems:draft.rejectedProposal.validationProblems});
-    const proposedQuestions=draft.rejectedProposal?.followup?require('./authoring-contract').questions(draft.rejectedProposal.followup.response,require('./semantic-provider').schema):draft.currentRejection?.materialQuestions;
-    const questions=draft.reviewCandidate?.candidate.questions||(proposedQuestions?.length?proposedQuestions:null)||draft.rejectedProposal?.proposal.questions||
-      (draft.pendingResponse&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'?draft.lastRejected?.output?.questions:draft.questions)||[];
+    const authoring=require('./authoring-contract');
+    const proposedQuestions=draft.currentRejection?.materialQuestions|| (draft.rejectedProposal?.followup?authoring.questions(draft.rejectedProposal.followup.response,require('./semantic-provider').schema,draft.rejectedProposal.proposal):[]);
+    const questions=draft.reviewCandidate?.candidate.questions||authoring.mergeQuestions(draft.rejectedProposal?.proposal.questions||
+      (draft.pendingResponse&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'?draft.lastRejected?.output?.questions:draft.questions),proposedQuestions);
     job.missingInputs = questions.map(({ id, claimId, text, why, action }) => {
       const receipt = [...(draft.actions || [])].reverse().find(item => item.questionId === id);
       const sources = (receipt?.sourceIds || []).map(sourceId => draft.sources.find(unit => unit.id === sourceId)).filter(Boolean);

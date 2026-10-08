@@ -62,7 +62,7 @@ class EvaluationPlanGuard {
         if(c.reviewPurpose==='rejected-proposal-followup' && (!c.followupAuthorization ||
           c.followupAuthorization.id!==base.rejectedProposal.followup?.id || c.followupAuthorization.responseHash!==base.rejectedProposal.followup?.fromResponseHash ||
           engine.hash(actual.authoringFollowup)!==engine.hash(input.authoringFollowup) || engine.hash(actual.untrustedAuthoring)!==engine.hash(input.untrustedAuthoring) ||
-          engine.hash(actual.candidateProblems)!==engine.hash(input.candidateProblems)))deny('Explicit authoring follow-up or its rejected guidance changed.');
+          engine.hash(actual.candidateProblems)!==engine.hash(require('../extension/packet-context').expand(input).candidateProblems)))deny('Explicit authoring follow-up or its rejected guidance changed.');
       } else if (engine.hash(input.earlierDraft)!==engine.hash(expected.earlierDraft) || engine.hash(input.assembledEarlier||null)!==engine.hash(expected.assembledEarlier))
         deny('Challenge must review the exact compiled accepted generation.');
       if (!receipts.length && engine.hash(expected)!==c.retainedBaseHash) deny('Retained challenge-only base changed.');
