@@ -55,6 +55,15 @@ test('malformed, missing and null review checks cannot inherit a successful olde
     const value = delta(draft); change(value); assert.throws(() => format.expand(value, previous, schema), /incomplete review update/);
   }
 });
+test('a removed old note needs its actual source span in the current verification packet',()=>{
+  const draft=example(),next=structuredClone(draft);next.evidence=[];next.claims[0].evidence=[];
+  const output={explanationReviews:[{evidenceId:'guard',result:'removed',reason:'Controlled removal review.',checkedSourceIds:['function']}]};
+  const packet={sources:engine.modelSources(draft.sources,Infinity,true)};
+  assert.doesNotThrow(()=>engine.checkExplanations(output,draft,next,draft.sources,packet));
+  packet.sources[0].providedRanges=[{line:1,endLine:1},{line:3,endLine:3}];packet.sources[0].complete=false;
+  packet.sources[0].code=packet.sources[0].code.split('\n').filter(line=>!line.startsWith('2 | ')).join('\n');
+  assert.throws(()=>engine.checkExplanations(output,draft,next,draft.sources,packet),/evidence guard.*not supplied/);
+});
 test('a review update cannot silently drop a path, relabel an altered note as kept, or confirm an unsupported rule', () => {
   const draft = example(), previous = format.earlier(draft, schema);
   let update = delta(draft); update.changes.claims = [];

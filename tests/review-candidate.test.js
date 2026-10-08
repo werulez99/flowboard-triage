@@ -3,10 +3,11 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const engine=require('../extension/investigation-engine'),provider=require('../extension/semantic-provider'),candidate=require('../extension/review-candidate');
 const format=require('../extension/challenge-format'),policy=require('../extension/guide-policy'),capacity=require('../extension/review-capacity');
 const native=process.env.FLOWBOARD_EXTENSION_PATH;
-async function fixture(t,kind='route',index=0) {
+async function fixture(t,kind='route',index=0,extra=0) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'candidate-route-'));
   const folder=kind==='time'?'teaching-preparation/time':`${kind}-preparation`;
   fs.cpSync(path.join(__dirname,`../scripts/fixtures/${folder}/project`),root,{recursive:true});
+  if(extra)fs.writeFileSync(path.join(root,'Required.sol'),'pragma solidity ^0.8.20;\ncontract Required {\n'+Array.from({length:extra},(_,i)=>` function definition${i}() internal pure returns(uint) { return ${i}; }\n`).join('')+'}\n');
   await require('../extension/report').importReport(path.join(__dirname,`../scripts/fixtures/${folder}/report.md`),root,native,{deferMapping:true});
   const indexed=await require('../extension/runner-adapter').analyze(native,root,{mode:'source'}),catalog=new(require('../extension/source').SourceCatalog)(root,indexed.runner,indexed.result);
   const report=require('../extension/store').readReport(root),issue=report.issues[index],entry=require('../extension/report').parseReport(report.originalReport,{manifest:true}).issues[index];
@@ -137,6 +138,35 @@ test('ordinary imported candidate persists 32 notes and references, then checks 
   const changedReceipt=structuredClone(saved);changedReceipt.candidateVerification.checks.pop();assert.equal(policy.gate(changedReceipt).ready,false);
   assert.equal(policy.expose(saved).candidateHistory,undefined);
   const model=require('../extension/webview/walkthrough-model').build(saved,f.issue.reportText);assert.equal(model.steps.length,15);assert.equal(model.draft.evidence.length,32);
+});
+test('analytical context above forty survives candidate checkpoint, reopen, unpaid replay and full verification',{skip:!native},async t=>{
+  const f=await fixture(t,'route',0,45);await generation(f);
+  const originalUnits=structuredClone(f.draft.sources),originalIds=originalUnits.map(u=>u.id),doc=f.catalog.document('Required.sol');
+  f.draft.localPreparation={contextHash:candidate.identity(f.draft),requirements:[...f.draft.sources.map(u=>({...u.source,reason:'Retain this original fixture source for the full check.'})),...f.catalog.functions.filter(fn=>fn.name.startsWith('definition')).map(fn=>({file:'Required.sol',sourceHash:engine.hash(doc.text),line:fn.startLine,endLine:fn.endLine,reason:'Controlled required definition, independently versioned and retained.'}))]};
+  let interrupted=false,calls=0;
+  await engine.advance({...f,current:()=>!interrupted,publish:async d=>{if(d.pendingResponse)interrupted=true;},invoke:async input=>{
+    calls++;assert.ok(input.sources.length>45);assert.ok(input.sources.length<=capacity.limits.sources);
+    assert.ok(originalIds.every(id=>input.sources.some(s=>s.id===id)),JSON.stringify(originalUnits.filter(s=>!input.sources.some(v=>v.id===s.id)).map(s=>({id:s.id,name:s.name,source:s.source}))));assert.equal(provider.requestMetrics(input).dispatchable,true);
+    return{value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'large-context-C'}};
+  }});
+  f.draft=engine.read(f.root,f.findingId);assert.ok(f.draft.pendingResponse,f.draft.error);const ids=f.draft.sources.map(u=>u.id);
+  await engine.advance({...f,localOnly:true,invoke:()=>assert.fail('Checkpoint recovery is unpaid')});
+  assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);assert.equal(calls,1);
+  f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,invoke:async input=>{calls++;assert.equal(input.checkOnly,true);assert.ok(ids.every(id=>input.sources.some(s=>s.id===id)));
+    assert.equal(provider.requestMetrics(input).dispatchable,true);return{value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'large-context-V'}};}});
+  assert.equal(f.draft.phase,'ready',f.draft.error);assert.equal(calls,2);assert.equal(engine.read(f.root,f.findingId).publication.ready,true);
+});
+test('exact candidate verification rejects an omitted old note range before reserving',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'C'}})});
+  let reservations=0,calls=0;
+  await engine.advance({...f,prepareRequest:input=>{
+    const plain=require('../extension/packet-context').expand(input),note=plain.earlierDraft.evidence[0],source=plain.sources.find(s=>s.id===note.sourceId);
+    // Retain the ID and valid exact header bytes, but omit its old evidence.
+    const line=source.line;assert.ok(note.line>line);source.providedRanges=[{line,endLine:line}];source.complete=false;source.code=source.code.split('\n')[0];return require('../extension/packet-context').compact(plain);
+  },beforeRequest:()=>{reservations++;},invoke:()=>{calls++;assert.fail('Incomplete source view cannot dispatch');}});
+  assert.equal(reservations,0);assert.equal(calls,0);assert.equal(f.draft.failureCode,'LOCAL_READING_LIMIT');assert.match(f.draft.error,/evidence.*not supplied/);
 });
 test('completed check disagreement alone unlocks repair; absent coverage and timeout do not',{skip:!native},async t=>{
   const f=await fixture(t);await generation(f);

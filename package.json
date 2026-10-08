@@ -1,6 +1,6 @@
 {
   "name": "flowboard-triage-bundle",
-  "version": "0.19.21",
+  "version": "0.19.22",
   "private": true,
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "description": "Portable, human-directed Solidity finding triage with Flowboard",

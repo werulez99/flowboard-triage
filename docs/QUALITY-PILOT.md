@@ -1,5 +1,96 @@
 # Bounded fresh quality pilot
 
+## Material capacity and exact supplied views (0.19.22)
+
+Analytical acquisition, restore, retained merging, request admission and response
+checkpoints now share a finite **64-source** ceiling. This provides general room
+beyond forty without expanding optional discovery's existing 28/32/40 bounds.
+The independent 262,144-byte transport, canonical source and private storage
+bounds still reject locally; no required IDs are silently discarded. Old v1/v2
+packets and compatible checked guides retain their identities.
+
+Simultaneous mandatory selections are unioned per canonical source identity.
+Full required coverage dominates sparse selections; a newly revalidated plan
+does not accumulate obsolete optional ranges. Original paid units and required
+old/current evidence remain protected. Before local success and reservation,
+the expanded outbound packet is compared with canonical versions and exact
+numbered bytes. Adjacent views can jointly cover an interval; omitted gaps
+cannot. Full verification and replay require actual old/changed/removed note
+spans and binding dependencies, not merely matching source IDs or read cursors.
+
+Focused production-path controls cover reversed overlapping requirements,
+full-plus-sparse selections, missing old evidence in V, and more than 45 sources
+through save/reopen, response checkpoint recovery and complete candidate
+verification. These are deterministic callbacks, not real semantic validation.
+Final supported WSL/Node 20.20.1 canonical gate before the frozen live operation:
+**531 passed, zero failed/skipped** (107.420 s).
+
+The retained real preparation now admits **43 sources / 260,597 bytes**, with
+1,547 bytes of headroom. All 22 original source IDs, versions and numbered code
+bytes, both claim groups and 23 original notes are preserved. The three recorded
+guard/return-decoder/accounting definitions are supplied at their exact dependency
+versions. This mechanical coverage is not a claim that all possible runtime
+paths or the expected upward/minimum-fee rule are established.
+
+| Complete R component | UTF-8 bytes |
+| --- | ---: |
+| Report | 4,495 |
+| Source objects (code and descriptors) | 125,881 |
+| Original proposal | 41,827 |
+| Other metadata, including shared source values | 47,262 |
+| JSON envelope | 416 |
+| Instructions | 40,260 |
+| Enforced schema | 328 |
+| Conservative framing | 128 |
+| Total | 260,597 |
+
+This actual coordinator packet differs from the earlier 260,142-byte diagnostic
+projection by 455 bytes of acquisition metadata. The v2 codec is unchanged;
+the earlier 94,837-byte like-for-like saving is not a new optimization here.
+Local indexing took 14.275 s and preparation/capture 12.660 s, with zero model
+requests. The read-only exact-manifest admission check changed no saved records
+and reserved nothing. The existing R/V authority, not a replacement pair, is used
+for the following real result.
+
+The same retained-proposal **R was reserved and dispatched once and completed**:
+202.164 s monotonic adapter wall, 9 ms shared-slot wait, 60.720 ms local pipe
+write, first provider event at 1.857 s and first substantive/final content at
+191.654 s. Normal process exit and owned-group cleanup were confirmed. The
+260,191 stdin bytes plus 328 schema bytes totaled 260,519 actual prepared
+transport bytes, below the conservative bound; local pipe completion is not a
+remote acknowledgment. Reported usage: 85,901 input / 6,776 output tokens, with
+337 reasoning-output tokens reported separately. CLI-default model identity
+and cost remain unknown; medium reasoning, isolated configuration, strict schema
+and disabled tools were unchanged.
+
+**No private candidate or new checked guide was admitted. V was not reserved or
+dispatched.** The response used an indexed nested change-array path and a
+synthesized relationship-key path, contrary to the existing whole-array/stable-ID
+patch contract. A separate local source comparison also found one new note whose
+quoted text does not match its declared line range. These are received-answer
+contract failures, not another timeout, source-cap refusal or storage loss. The
+unchanged raw answer and exact input/checkpoint are retained; no path, quote or
+interpretation was hand-corrected to obtain a candidate.
+
+The unaccepted response proposed separate claim-local notes and used newly
+supplied observation/dispatch/accounting code. It retained the normative rounding
+question and asked for the concrete caller settlement callback and a coherent
+pool scenario. Those proposals are not semantic approvals. The selected isolated
+workspace now has **two lifetime production requests: original G + R**. The
+original G ledger and all earlier evaluation windows remain unchanged. The same
+R slot is consumed; the unused V slot cannot repair its invalid response.
+
+The real blocked finding was opened in original native 1.2.0 with provider none
+and simulated editor I/O. Manual full-function access and the original report
+remain available; no unchecked annotations or ineffective finding-repair action
+were exposed. Details show the retained rejection and original material question.
+The generic patch error is less specific than the private two-path/quote
+diagnosis above; it is not a completed tutorial. Native inspection made zero
+provider requests and did not demonstrate actual Cursor activation. Initial
+harness setup attempts used an incompatible read-only flag and omitted the
+already installed browser library path; correcting those local launch settings
+allowed inspection without changing product timers or requesting another answer.
+
 ## Material preparation and exact transport sharing (0.19.21)
 
 No new real response or checked tutorial was produced in this local preparation

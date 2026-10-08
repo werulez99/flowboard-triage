@@ -88,6 +88,29 @@ test('serialized Unicode/draft growth is rejected before actual transport admiss
   assert.match(f.draft.error,/262144|packet|bytes/i);assert.equal(f.draft.phase,'blocked');
   assert.equal(f.draft.runs.length,1);assert.equal(f.draft.runs[0].requestId,'old-paid');
 });
+test('simultaneous mandatory views union independently of order; full coverage dominates sparse and missing actual bytes block',{skip:!native},async t=>{
+  const f=await fixture(t,4),doc=f.catalog.document('src/Vault.sol');
+  f.draft.checkpoint={stage:'challenge',followups:0};
+  const base={file:'src/Vault.sol',line:1,endLine:doc.lineCount,sourceHash:engine.hash(doc.text),reason:'Complete local definitions needed for the receiving question.'};
+  const a={...base,ranges:[{line:4,endLine:4}],omissionReason:'Other helpers are optional.'},b={...base,ranges:[{line:6,endLine:6}],omissionReason:a.omissionReason};
+  const outputs=[];
+  for(const requirements of [[a,b],[b,a],[base,b],[b,base]]){
+    const draft=structuredClone(f.draft);draft.localPreparation={contextHash:require('../extension/review-candidate').identity(draft),requirements};
+    await engine.advance({...f,draft,preparationOnly:true,beforeRequest:()=>assert.fail('No reservation'),invoke:()=>assert.fail('No provider')});
+    assert.equal(draft.phase,'local-preparation-ready',draft.error);
+    const packet={sources:engine.modelSources(draft.sources,Infinity,true),materialSourceRequirements:draft.localPreparation.coverage};
+    require('../extension/source-coverage').packet(packet,draft.sources);
+    const id=draft.localPreparation.coverage[0].sourceId,view=packet.sources.find(s=>s.id===id);
+    assert.match(view.code,/4 \| .*receive/);assert.match(view.code,/6 \| .*helper1/);outputs.push(view);
+    const altered=structuredClone(packet),bad=altered.sources.find(s=>s.id===id);
+    bad.providedRanges=[{line:6,endLine:6}];bad.complete=false;bad.code=view.code.split('\n').filter(l=>l.startsWith('6 | ')).join('\n');
+    assert.throws(()=>require('../extension/source-coverage').packet(altered,draft.sources),/Mandatory source.*:4-4|Mandatory source.*:1-/);
+  }
+  assert.deepEqual(outputs[0].providedRanges,outputs[1].providedRanges);assert.equal(outputs[0].code,outputs[1].code);
+  assert.equal(outputs[2].complete,true);assert.equal(outputs[2].code,outputs[3].code);
+  const coverage=require('../extension/source-coverage');assert.equal(coverage.covers([{line:2,endLine:3},{line:4,endLine:6}],2,6),true);
+  assert.equal(coverage.covers([{line:2,endLine:3},{line:5,endLine:6}],2,6),false);
+});
 test('completed external unknown with exhausted followups remains finite and does not reset counters',{skip:!native},async t=>{
   const f=await fixture(t);f.draft.questions[0].target='External observed identity';f.draft.questions[0].text='Supply authenticated deployed identity.';
   f.draft.checkpoint={stage:'complete',followups:2,repairUsed:true};f.draft.failureKind='material-evidence';let calls=0;

@@ -519,7 +519,9 @@ function makeContext(catalog, request, issue) {
     const omittedLocal = [];
     const include = (fn, reason) => { const id = add(fn, reason); if (id) matched.add(id); else if (fn) omittedLocal.push(`${fn.contract || ''}::${fn.name} at ${catalog.relative(fn.file)}:${fn.startLine}`); return id; };
     if(definitionOnly){
-      if(target)include(target,'Exact named question definition, reserved before optional neighboring dependency discovery. No semantic approval.');
+      const previousLimit=sourceLimit;sourceLimit=limits.sources;
+      try{if(target)include(target,'Exact named question definition, reserved before optional neighboring dependency discovery. No semantic approval.');}
+      finally{sourceLimit=previousLimit;}
       return {id:`definition-${crypto.randomUUID()}`,questionId:question.id,claimId:question.claimId,kind:question.action,target:question.target,performedAt:now(),sourceIds:[...matched],
         outcome:omittedLocal.length?'reading-limit':matched.size?'source-returned':'no-additional-context',result:omittedLocal.length?`Named local definition does not fit: ${omittedLocal.join('; ')}`:matched.size?'Exact named definition is available for the next review; dependencies still need completion.':'No exact local definition identified by this preliminary lookup.'};
     }
@@ -623,7 +625,8 @@ function makeContext(catalog, request, issue) {
     const relevantTests = new Set(units.filter(unit => unit.kind === 'test-source').map(unit => unit.id));
     const required = new Set([...(draft?.evidence || []).map(entry => entry.sourceId), ...(draft?.claims || []).map(claim => claim.entry),
       ...(draft?.actions || []).filter(action => ['inspect','callers','symbol','references','code-completion'].includes(action.kind)).flatMap(action => action.sourceIds)]);
-    units.length = 0; functions.clear(); unread.clear(); budget = 110000; sourceLimit = 40;
+    capacity.assertLength(saved,limits.sources,'Saved analytical sources');
+    units.length = 0; functions.clear(); unread.clear(); budget = 110000; sourceLimit = limits.sources;
     const restoredIds = new Set();
     for (const unit of saved) {
       if (!exactResponse && unit.kind === 'test-source' && !relevantTests.has(unit.id) && !required.has(unit.id)) continue;
@@ -640,6 +643,7 @@ function makeContext(catalog, request, issue) {
       if(unit.modelRanges)restored.modelRanges=structuredClone(unit.modelRanges);
       if(unit.readRanges)restored.readRanges=structuredClone(unit.readRanges);
     }
+    sourceLimit = 40; // optional discovery does not inherit analytical capacity
   };
   const prioritize = (draft, protectedIds = [], supersededIds = [], replaceDiscovery = false) => {
     // Only unbound discovery candidates can leave the working packet. Never
@@ -671,12 +675,16 @@ function makeContext(catalog, request, issue) {
     const plan=draft.localPreparation;
     if(!plan?.requirements)return;
     if(plan.contextHash!==require('./review-candidate').identity(draft))throw Object.assign(new Error('Local material source plan is stale for the current report/source/premises.'),{code:'LOCAL_PREPARATION_STALE'});
-    if(!Array.isArray(plan.requirements)||plan.requirements.length>40)throw Error('Material source requirements exceed the source capacity.');
+    capacity.assertLength(plan.requirements,limits.sources,'Material source requirements');
     // Optional acquired neighbors are not permanent obligations. Only remove
     // unreferenced discovery here; original paid units and revision sources
     // are separately pinned and remain exact.
-    const deferred=prioritize(draft,protectedIds,[],true);
-    const receipts=[];
+    const requiredIds=units.filter(u=>plan.requirements.some(r=>r.file===u.source.file&&r.sourceHash===u.source.sourceHash&&
+      r.line===u.source.line&&r.endLine===u.source.endLine)).map(u=>u.id);
+    const deferred=prioritize(draft,[...protectedIds,...requiredIds],[],true);
+    const receipts=[], selections=new Map(), priorLimit=sourceLimit;
+    sourceLimit=limits.sources;
+    try {
     for(const item of plan.requirements){
       const doc=catalog.document(item.file);
       if(hash(doc.text)!==item.sourceHash||!Number.isInteger(item.line)||!Number.isInteger(item.endLine)||item.line<1||item.endLine<item.line||item.endLine>doc.lineCount||typeof item.reason!=='string'||!item.reason.trim())throw Error('Material source requirement has an invalid range, reason or changed source identity.');
@@ -692,13 +700,28 @@ function makeContext(catalog, request, issue) {
           for(const fn of catalog.functions.filter(fn=>fn.file===doc.uri.fsPath&&fn.startLine<=r.endLine&&fn.endLine>=r.line))if(fn.startLine<r.line||fn.endLine>r.endLine)throw Object.assign(new Error(`Selected context ${item.file}:${r.line}-${r.endLine} cuts complete ${fn.name}:${fn.startLine}-${fn.endLine}.`),{code:'LOCAL_READING_LIMIT'});
           through=r.endLine;
         }
-        units.find(u=>u.id===id).modelRanges=structuredClone(item.ranges);
+      }
+      if(id){
+        const selected=item.ranges||[{line:item.line,endLine:item.endLine}];
+        selections.set(id,require('./source-coverage').union([...(selections.get(id)||[]),...selected]));
       }
       receipts.push({...item,sourceId:id||null,outcome:id?'supplied':'reading-limit'});
     }
+    // One current plan, one union per canonical identity. Preserve paid full
+    // views and all old/current evidence; do not accumulate obsolete optional
+    // selections from a previous plan.
+    for(const [id,ranges] of selections){
+      const unit=units.find(u=>u.id===id);
+      const notes=[...(draft.evidence||[]),...(draft.reviewCandidate?.acceptedBase?.evidence||[]),...(draft.reviewCandidate?.referenceBase?.evidence||[]),...(draft.reviewCandidate?.candidate?.evidence||[])];
+      const required=notes.filter(n=>n.sourceId===id).map(n=>({line:n.source?.line??n.line,endLine:n.source?.endLine??n.endLine}));
+      const merged=require('./source-coverage').union([...ranges,...required]);
+      if(protectedIds.includes(id)||require('./source-coverage').covers(merged,unit.source.line,unit.source.endLine))delete unit.modelRanges;
+      else unit.modelRanges=merged;
+    }
+    } finally { sourceLimit=priorLimit; }
     // These are acquisition receipts, never a normative or semantic approval.
     draft.localPreparation={...plan,coverage:receipts,deferred};
-    if(receipts.some(r=>!r.sourceId))throw Object.assign(new Error('Mandatory local source does not fit the forty-source capacity: '+receipts.filter(r=>!r.sourceId).map(r=>`${r.file}:${r.line}-${r.endLine}`).join('; ')),{code:'LOCAL_READING_LIMIT'});
+    if(receipts.some(r=>!r.sourceId))throw Object.assign(new Error(`Mandatory local source does not fit the ${limits.sources}-source analytical capacity: `+receipts.filter(r=>!r.sourceId).map(r=>`${r.file}:${r.line}-${r.endLine}`).join('; ')),{code:'LOCAL_READING_LIMIT'});
     for(const receipt of receipts)for(const unit of units)if(require('./source-coverage').contains(unit,units.find(u=>u.id===receipt.sourceId)))unread.delete(`${unit.name} at ${unit.source.file}:${unit.source.line}`);
     return receipts;
   };
@@ -869,11 +892,12 @@ function correct(draft, change) {
   correctionEffects(draft,correction);draft.revision++;
   return correction;
 }
-function checkExplanations(output, previous, next, units) {
+function checkExplanations(output, previous, next, units, suppliedInput) {
   // This checks the challenge's coverage/identity, NOT the truth of its prose.
   // A real quote cannot by itself certify a model's interpretation.
   const scope = require('./review-scope'), problems = scope.problems(previous, next);
   const sourceIds = new Set(units.map(unit => unit.id)), reviewed = new Set();
+  const supplied=suppliedInput&&require('./source-coverage').packet(suppliedInput,units,[previous,next]);
   const inspected = (ids, target) => {
     const expected = units.find(unit => unit.id === target);
     return ids.some(id => id === target || expected && units.some(unit => unit.id === id && require('./source-coverage').contains(expected, unit)));
@@ -887,6 +911,8 @@ function checkExplanations(output, previous, next, units) {
     const old = previous.evidence.find(item => item.id === check.evidenceId), item = next.evidence.find(item => item.id === check.evidenceId);
     if (reviewed.has(check.evidenceId) || !old && !item || !['kept', 'repaired', 'removed', 'added'].includes(check.result) || !text(check.reason) || !Array.isArray(check.checkedSourceIds) || !check.checkedSourceIds.length || check.checkedSourceIds.some(id => !sourceIds.has(id))) throw new Error('Each explanation check needs its own note, a concrete reason and available code references.');
     if (old && !inspected(check.checkedSourceIds, old.sourceId) || item && !inspected(check.checkedSourceIds, item.sourceId)) throw new Error(`The explanation check for ${check.evidenceId} did not inspect its referenced function (${old?.sourceId || item?.sourceId}).`);
+    if(supplied)for(const note of [old,item].filter(Boolean)){const unit=units.find(u=>u.id===note.sourceId);
+      supplied.requireSpan(unit.source.file,unit.source.sourceHash,note.source.line,note.source.endLine,`Explanation check ${note.id}`,check.checkedSourceIds);}
     if (check.result === 'removed' ? !old || !!item : !item || (check.result === 'added' ? !!old : !old)) throw new Error('The explanation check does not match the retained or removed note.');
     if (check.result === 'kept' && (['note', 'quote', 'stance', 'claimId', 'sourceId'].some(key => old[key] !== item[key]) || JSON.stringify(old.source) !== JSON.stringify(item.source))) throw new Error('A changed explanation must be marked repaired, not kept.');
     const record = { evidenceId: check.evidenceId, result: check.result, reason: require('./review-content').text(check.reason), checkedSourceIds: [...new Set(check.checkedSourceIds)], origin: 'model-challenge', independentlyVerified: false };
@@ -962,7 +988,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // in this pass's initial discovery. Replace it only after accepting a new
     // coherent set of claims, evidence and sources together.
     const retained = new Map(draft.sources.map(unit => [unit.id, unit]));
-    for (const unit of context.units) if (retained.size < 40 || retained.has(unit.id)) retained.set(unit.id, unit);
+    for (const unit of context.units) retained.set(unit.id, unit);
+    capacity.assertLength([...retained.values()],limits.sources,'Retained analytical sources');
     draft.sources = [...retained.values()];
     draft.compiler = context.compiler.available ? { available: true, version: context.compiler.version, file: context.compiler.file, digest: context.compiler.digest, inputCount: context.compiler.inputCount,
       configurationVerified: false, limitation: 'All compilation input texts match. Active build profile/settings and deployed bytecode are not certified by source matching.' } : { available: false, reason: context.compiler.reason };
@@ -1063,6 +1090,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         }
       }
       data = require('./packet-context').compact(data);
+      if(!draft.pendingResponse)require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
       if(preparationOnly&&!draft.pendingResponse){
         const metrics=require('./semantic-provider').requestMetrics(data);
         draft.localPreparation={...draft.localPreparation,preflight:{inputHash:metrics.inputHash,requestBytes:metrics.requestBytes,dispatchable:true,at:now()}};
@@ -1070,6 +1098,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         await save();throw Object.assign(new Error('Local preparation fits. Saved analysis still needs an explicitly requested model repair and full verification.'),{code:'LOCAL_PREPARATION_READY'});
       }
       if (!draft.pendingResponse && !localOnly && prepareRequest) { data = prepareRequest(data); ensure(); }
+      if(!draft.pendingResponse)require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
       const call = async input => {
         const transport = invoke === runProvider || invoke.isProviderTransport === true;
         const health = require('./provider-health'), healthOptions = { ...providerResources, executable };
@@ -1183,6 +1212,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         }
       };
       let response = await call(data); ensure(); data=require('./packet-context').expand(data);workspaceSnapshot.validate(catalog, { force: true });
+      require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,data.earlierDraft]:[]);
       const recordReading = () => { for (const supplied of data.sources) {
         const unit = context.units.find(item => item.id === supplied.id);
         if(unit&&supplied.providedRanges)unit.readRanges=structuredClone(supplied.providedRanges);
@@ -1202,6 +1232,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (data.candidateOnly) {
           const proposed = challengeFormat.candidate(value, data.earlierDraft, formatSchema);
           const material = accept(proposed, draft, reviewUnits, { candidateOnly: true });
+          require('./source-coverage').packet(data,reviewUnits,[previous,material]);
           for(const note of material.evidence){const supplied=data.sources.find(s=>s.id===note.sourceId);
             if(!require('./source-coverage').covers(require('./source-coverage').ranges(supplied),note.source.line,note.source.endLine))throw Object.assign(new Error(`Candidate evidence ${note.id} quotes code outside its supplied context views.`),{code:'LOCAL_READING_LIMIT'});}
           const reference=previous||draft;
@@ -1234,7 +1265,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           // Reading cursors only support the incremental generation path.
           if (!provided&&(phase==='challenge'||!require('./source-coverage').read(unit,entry.source.line,entry.source.endLine))) throw Object.assign(new Error(`Evidence ${entry.id} refers to local code not yet supplied: ${entry.source.file}:${entry.source.line}-${entry.source.endLine}. Request that segment before explaining it.`), { code: 'LOCAL_READING_LIMIT' });
         }
-        const checked = previous ? checkExplanations(value, previous, accepted, reviewUnits) : accepted;
+        const checked = previous ? checkExplanations(value, previous, accepted, reviewUnits, data) : accepted;
         if(data.checkOnly&&data.reviewPurpose)require('./review-content').equal(require('./review-content').fromWire(data.earlierDraft,reviewUnits),checked);
         if (candidateVerification) checked.candidateVerification = candidateVerification;
         return checked;

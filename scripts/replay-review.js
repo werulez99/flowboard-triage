@@ -34,7 +34,7 @@ function replayReview({ saved, input, response, units }) {
     errors.push(...scope.problems(previous, assembled));
     candidate = engine.accept(assembled, previous, inspectedUnits);
     for(const note of candidate.evidence)if(!require('../extension/source-coverage').covers(require('../extension/source-coverage').ranges(input.sources.find(s=>s.id===note.sourceId)),note.source.line,note.source.endLine))throw new Error('Fresh replay evidence lies outside its exact supplied source views.');
-    try { engine.checkExplanations(assembled, previous, candidate, inspectedUnits); }
+    try { engine.checkExplanations(assembled, previous, candidate, inspectedUnits, input); }
     catch (error) { errors.push(...(error.validationProblems || [{ code: 'REVIEW_VALIDATION', message: error.message }])); }
     // Publication gate is diagnostic only even if it reports ready: no phase,
     // seal, journal or accepted object is returned by this route.

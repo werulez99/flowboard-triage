@@ -42,9 +42,10 @@ test('durable v2 replay preserves sparse full-definition views and literal templ
   assert.equal(wire.sourceContextFormat,'source-context-v2');assert.deepEqual(packet.expand(wire),plain);
   const cyclic=structuredClone(wire);cyclic.sourceMetadata.texts=[{$lines:[0,0,1]}];cyclic.sources[0].code={$lines:[0,0,1]};
   assert.throws(()=>packet.expand(cyclic),/Cyclic/);
-  const tooMany={phase:'challenge',sources:Array.from({length:41},(_,i)=>({id:'s'+i,code:'// exact source'}))};
+  const count=require('../extension/review-capacity').limits.sources+1;
+  const tooMany={phase:'challenge',sources:Array.from({length:count},(_,i)=>({id:'s'+i,code:'// exact source'}))};
   assert.equal(provider.measureRequest(tooMany).dispatchable,false);
-  assert.throws(()=>provider.requestMetrics(tooMany),e=>e.code==='LOCAL_SOURCE_LIMIT'&&e.metrics.sourceCount===41);
+  assert.throws(()=>provider.requestMetrics(tooMany),e=>e.code==='LOCAL_SOURCE_LIMIT'&&e.metrics.sourceCount===count);
 });
 test('oversized diagnostics retain exact complete metrics while production still rejects',()=>{
   const input={phase:'challenge',repairOnly:true,sources:[{id:'s',code:'原文'.repeat(50000)}],earlierDraft:{claims:[]}};
