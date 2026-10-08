@@ -3,6 +3,7 @@
 // playback fixture, not a fresh model answer or an executed protocol trace.
 const capacity = require('../../extension/review-capacity');
 function response(input) {
+  input=require('../../extension/packet-context').expand(input);
   const names = ['commit', '_checkAmount', '_preview', '_increment', '_requireApproval'];
   const units = Object.fromEntries(names.map(name => [name, input.sources.find(unit => unit.name === `RouteBook::${name}`)]));
   for (const name of names) if (!units[name]?.complete) throw new Error(`The production packet did not supply complete RouteBook::${name}.`);

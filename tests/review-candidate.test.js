@@ -21,9 +21,10 @@ async function generation(f) {
     const value=fixed(input);value.questions=[{id:'local-guard',claimId:'c1',text:'Interpret the supplied approval guard.',action:'inspect',target:value.evidence.at(-1).sourceId,why:'Complete the guard explanation before review.'}];
     return {value,audit:{phase:'generate',resultAccepted:false,outcome:'completed',requestId:'paid-generation'}};
   }});
-  assert.equal(f.draft.phase,'challenging');return structuredClone(f.draft);
+  assert.equal(f.draft.phase,'challenging',f.draft.error);return structuredClone(f.draft);
 }
 function proposal(input) {
+  input=require('../extension/packet-context').expand(input);
   const unit=input.sources.find(u=>u.name==='RouteBook::_preview');
   const updates=[{path:'/questions',valueJSON:'[]'},{path:'/evidence/approval-guard/explanation',valueJSON:JSON.stringify('The false approval reaches require and reverts. Its uncaught internal failure undoes the preceding writes in commit.')}];
   // Twenty distinct reached-threshold branch conditions, not duplicate notes
@@ -43,7 +44,8 @@ function verification(input) {
     checks:[...capacity.targets(input.earlierDraft.causal).map(t=>t.key),...(input.candidateRevisionTargets||[])].map(target=>({target,reason:'The uncaught false approval reverts this invocation and its intermediate writes; branch inputs remain bounded as reported.',evidence:input.earlierDraft.claims[0].evidence,documentation:[]}))};
   return value;
 }
-for(const missingRule of [false,true])test(`received unaccepted proposal repairs privately and fully verifies (${missingRule?'material rule stays blocked':'source refutation'})`,{skip:!native},async t=>{
+for(const variant of ['refutation','missing-rule','receipt-failure'])test(`received unaccepted proposal repairs privately and fully verifies (${variant})`,{skip:!native},async t=>{
+  const missingRule=variant==='missing-rule',receiptFailure=variant==='receipt-failure';let notifications=0;
   const f=await fixture(t,'mixed');f.draft=engine.create(f);let original,calls=0;
   await engine.advance({...f,invoke:async input=>{
     calls++;const value=require('../scripts/fixtures/mixed-ready-output').response(input);delete value.walkthrough.steps;value.inputReviews=[];
@@ -67,13 +69,24 @@ for(const missingRule of [false,true])test(`received unaccepted proposal repairs
   engine.beginRejectedRepair(f);const reference=structuredClone(f.draft.rejectedProposal.original);
   assert.equal(f.draft.claims.length,0);assert.equal(f.draft.reviewCandidate,undefined);
   const bad=structuredClone(f.draft);bad.corrections.push({value:'new'});assert.throws(()=>require('../extension/rejected-proposal').assertCurrent(bad,provider.schema),/identity changed/);
-  await engine.advance({...f,invoke:async input=>{
+  const reservation={id:'R',phase:'challenge',reviewPurpose:'rejected-proposal-repair'};
+  await engine.advance({...f,beforeRequest:async()=>reservation,onResult:async()=>{notifications++;if(receiptFailure)throw Object.assign(Error('receipt disk full'),{code:'ENOSPC'});},invoke:async input=>{
     calls++;assert.equal(input.reviewPurpose,'rejected-proposal-repair');assert.equal(input.referenceOrigin.kind,'received-rejected');assert.equal(input.candidateOnly,true);
     const note={...input.earlierDraft.evidence[0],id:'guard-second',claimId:'c2'};
     return{value:{mode:format.CANDIDATE,updates:[{path:'/evidence/guard-second',valueJSON:JSON.stringify(note)},
       ...(missingRule?[{path:'/questions',valueJSON:JSON.stringify(input.earlierDraft.questions.map(q=>({...q,id:'rule-current'})))}]:[]),
       {path:'/claims/c2/evidence',valueJSON:'["guard-second"]'},...input.earlierDraft.causal.obligations.filter(o=>o.claimId==='c2').map(o=>({path:'/causal/obligations/'+o.id+'/evidence',valueJSON:'["guard-second"]'}))]},audit:{phase:'challenge',outcome:'completed',requestId:'R'}};
   }});
+  if(receiptFailure){
+    assert.equal(notifications,1);assert.equal(f.draft.failureCode,'RECEIPT_STORAGE_FAILED');assert.equal(f.draft.claims.length,0);
+    assert.equal(f.draft.rejectedProposal.state,'repair-dispatched');
+    f.draft=engine.read(f.root,f.findingId);assert.ok(f.draft.pendingResponse,'New failures preserve replay identity before receipt finalization.');
+    // The older regression saved this state without pendingResponse. Reconcile
+    // only the exact owned R checkpoint, not an unrelated latest response.
+    delete f.draft.pendingResponse;f.draft.revision++;engine.write(f.root,f.draft);f.draft=engine.read(f.root,f.findingId);
+    await engine.advance({...f,localOnly:true,recoveryReservation:reservation,onResult:async(a,r)=>{notifications++;assert.equal(r.id,'R');assert.equal(a.outcome,'completed');},invoke:noCalls});
+    assert.equal(calls,2);assert.equal(notifications,2);assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);
+  }
   assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);assert.equal(f.draft.claims.length,0);
   assert.equal(f.draft.reviewCandidate.acceptedBase,undefined);assert.equal(f.draft.reviewCandidate.referenceBase.evidence.length,1);
   assert.equal(policy.gate(f.draft).ready,false);assert.equal(policy.expose(f.draft).rejectedProposal,undefined);
@@ -107,7 +120,16 @@ test('ordinary imported candidate persists 32 notes and references, then checks 
   for(const mutate of [d=>d.reviewCandidate.candidate.evidence.pop(),d=>d.corrections.push({value:'Changed premise'}),d=>d.snapshot.sourceDigest='a'.repeat(64),d=>d.reviewCandidate.revisions.changes.pop()]) {
     const changed=structuredClone(f.draft);mutate(changed);assert.throws(()=>candidate.assertCurrent(changed,provider.schema),/identity changed/);
   }
-  await engine.advance({...f,invoke:async input=>{count++;assert.equal(input.reviewPurpose,'candidate-verification');assert.equal(input.checkOnly,true);assert.ok(!input.repairOnly);return {value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V'}};}});
+  await engine.advance({...f,invoke:async input=>{
+    count++;assert.equal(input.reviewPurpose,'candidate-verification');assert.equal(input.checkOnly,true);assert.ok(!input.repairOnly);
+    const packets=require('../extension/packet-context'),plain=packets.expand(input),wire=JSON.parse(JSON.stringify(input));
+    assert.deepEqual(packets.expand(wire),plain);
+    assert.equal(plain.earlierDraft.evidence.length,32);assert.equal(plain.earlierDraft.causal.events.length,15);
+    assert.deepEqual(plain.candidateRevisions,input.candidateRevisions);assert.deepEqual(plain.candidateRevisionTargets,input.candidateRevisionTargets);
+    assert.deepEqual(plain.semanticInput,input.semanticInput);assert.equal(provider.requestMetrics(input).dispatchable,true);
+    t.diagnostic(`Complete 32-note/15-event candidate verification transport: ${provider.requestMetrics(input).requestBytes} UTF-8 bytes; deterministic, not a model run.`);
+    return {value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V'}};
+  }});
   assert.equal(count,2);assert.equal(f.draft.phase,'ready',f.draft.error);
   const saved=engine.read(f.root,f.findingId);assert.equal(saved.evidence.length,32);assert.equal(saved.claims[0].evidence.length,32);assert.equal(saved.explanationReviews.length,32);
   assert.equal(saved.candidateHistory[0].acceptedBase.evidence.length,12);assert.equal(saved.candidateHistory[0].verification.result,'kept');

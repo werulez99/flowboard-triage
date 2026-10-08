@@ -175,8 +175,9 @@ async function start(options = {}) {
       const recorded = recording.providerCalls[replayIndex++];
       if (!recorded?.result?.value || recorded.input.phase !== input.phase) throw new Error('Recording has no matching next provider phase.');
       const replacements = new Map();
-      for (const old of recorded.input.sources) {
-        const current = input.sources.find(unit => unit.file === old.file && unit.line === old.line && unit.signature === old.signature && unit.code === old.code);
+      const currentSources=require('../extension/packet-context').expand(input).sources;
+      for (const old of require('../extension/packet-context').expand(recorded.input).sources) {
+        const current = currentSources.find(unit => unit.file === old.file && unit.line === old.line && unit.signature === old.signature && unit.code === old.code);
         if (current) replacements.set(old.id, current.id);
       }
       // Only ephemeral source IDs are remapped, and only for identical complete

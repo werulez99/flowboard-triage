@@ -1,5 +1,78 @@
 # Bounded fresh quality pilot
 
+## Material preparation and exact transport sharing (0.19.21)
+
+No new real response or checked tutorial was produced in this local preparation
+run. The same retained-proposal R/V slots remain unused: zero reservations and
+dispatches. The original G receipt, raw response, two claims, 23 notes and 22
+original source identities remain unchanged. No new generation is needed.
+
+`source-context-v2` shares exact scalar values, record templates, six-coordinate
+spans and overlapping numbered source blocks inside the request. Every reference
+has readable content in the same packet. Expansion is deep-equal to the original
+JSON transport object, including Unicode, receivers, argument order and source
+positions. Stored canonical code, paid v1 packets and native cards are unchanged;
+v1 decoding remains supported. Instructions and enforced response schemas count
+toward the unchanged 262,144-byte limit.
+
+| Measured representation | Report | Source objects | Original proposal | Other metadata | Envelope | Instructions | Schema + framing | Total bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Historical incomplete v1 | 4,495 | 188,767 | 41,827 | 43,168 | 386 | 39,136 | 456 | 318,235 |
+| Exactly the same data, v2 | 4,495 | 96,164 | 41,827 | 39,810 | 386 | 40,260 | 456 | 223,398 |
+| Selected 40-unit context, still incomplete | 4,495 | 122,527 | 41,827 | 43,877 | 416 | 40,260 | 456 | 253,858 |
+| Known required 43-unit diagnostic projection | 4,495 | 125,881 | 41,827 | 46,807 | 416 | 40,260 | 456 | 260,142 |
+
+Only the second row isolates lossless encoding: **94,837 bytes net saved**.
+Later rows also change source selection and acquisition context. Source objects
+include descriptors, not just Solidity. The last row is a pure representational
+measurement, NOT an admitted/frozen execution packet or proof of a globally
+minimal source closure. Its 2,002-byte headroom does not satisfy the independent
+40-source limit. Required guard, return decoding and second-currency accounting
+definitions take the known set to at least 43 while preserving the original 22.
+Further source interpretation may identify additional dependencies. No request
+was purchased with the incomplete 40-unit subset.
+
+Material requirements are processed before unreferenced optional neighbors.
+Exact enclosing coverage avoids false missing-code claims. Explicit context
+views may exclude unrelated complete definitions with a stated rationale; this
+selection is distinct from lossless encoding. They never truncate a function,
+become an execution frame, mark omitted lines read, or approve interpretation.
+Fresh challenges must contain the actual evidence spans even if a previous
+process read them. A source-bound expected rounding/minimum-fee rule remains a
+substantive question, not something the host can invent or decide from arithmetic.
+
+The real bounded coordinator preflight stopped at the 40-source limit in
+15.843 s after 12.509 s local indexing, with no reservation. These are local
+preparation observations, not provider latency. The independent deterministic
+32-note/15-event candidate uses a 91,900-byte full verification packet and retains
+premise, revision/removal and causal checks. It does not predict this real
+candidate's eventual V size or correctness; no real repaired candidate exists.
+
+A durable R checkpoint is linked before terminal receipt persistence. If that
+receipt fails, reopening reconciles the exact owned request/context and performs
+unpaid replay; the result stays private pending full V. Unrelated checkpoints,
+changed premises and superseded answers cannot be borrowed. Receipt failure,
+response retention, acceptance and publication remain separate states.
+
+Selected **Recheck local preparation** works with provider none and exhausted
+allowance, without resetting it or resuming siblings. It refreshes the precise
+source/size reason; it does not claim a model is reviewing or expose a candidate.
+No source-count or packet-byte limit was raised. The remaining next decision is
+how to accommodate the demonstrated material source set within the supported
+acquisition contract before using the same R/V authority, not another G or retry.
+
+Final supported WSL/Node 20.20.1 canonical gate: **527 passed, zero failed or
+skipped**. The first gate found three old fixture consumers reading encoded
+fields without expansion; those consumers and pure local replay now use the
+same decoder, with unchanged source/ownership assertions. Focused controls also
+cover durable JSON replay, source-count rejection, mandatory-before-optional
+acquisition and terminal-receipt fault removal followed by zero-call recovery.
+The original-native 1.2.0 browser harness visibly exercised the real blocked
+finding's local-recheck button (one observation, 4.607 s). It showed the three
+missing definitions and the separate normative question, with zero provider
+calls/reservations or unchecked tutorial annotations. This is simulated editor
+I/O, not actual Cursor activation or new checked-guide playback.
+
 ## Received-proposal recovery (0.19.20)
 
 Completed transport accounting now runs exactly once even when the response

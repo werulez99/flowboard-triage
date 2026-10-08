@@ -80,7 +80,7 @@ test('selection generates and repairs an incorrect real-code explanation, keeps 
   const state = await c.wait(value => value.investigation?.phase === 'blocked');
   const draft = state.investigation;
   assert.deepEqual(inputs.map(input => input.phase), ['generate', 'challenge']);
-  assert.ok(inputs[0].sources.some(unit => unit.name === 'ReservationBook::onlyHolder' && unit.code.includes('holder only')));
+  assert.ok(require('../extension/packet-context').expand(inputs[0]).sources.some(unit => unit.name === 'ReservationBook::onlyHolder' && unit.code.includes('holder only')));
   assert.match(inputs[1].earlierDraft.evidence.find(item => item.id === 'credit-record').explanation, /subtracts/);
   const repaired = draft.evidence.find(item => item.id === 'credit-record');
   assert.match(repaired.note, /adds that amount/); assert.equal(repaired.explanationReview.result, 'repaired');

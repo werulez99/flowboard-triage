@@ -27,6 +27,7 @@ parser.add_argument('--baseline', action='store_true')
 parser.add_argument('--report-preparation', action='store_true')
 parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
 parser.add_argument('--outline-check', action='store_true', help='Additional functional-only initial-list and per-function outline/detour checks; keep separate from compared timing batches.')
+parser.add_argument('--local-recheck', action='store_true', help='Exercise the selected local preparation action with provider none; never a model request.')
 parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
 parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
@@ -470,6 +471,32 @@ try:
             status_text = page.locator('.guide-preparation').inner_text()
             assert 'Make room for the walkthrough' not in status_text, 'Unpublished analysis is not a card-capacity failure.'
             selected_job = next((j for j in (state.get('reportPreparation') or {}).get('jobs', []) if j['id'] == args.finding), None)
+            if args.local_recheck:
+                assert args.provider == 'none' and selected_job.get('localRecheckAvailable')
+                before_requests = state['reportPreparation']['requests']
+                before_revision = draft['revision']
+                started = time.monotonic()
+                action = page.get_by_role('button', name='Recheck local preparation', exact=True)
+                assert action.is_visible() and action.is_enabled()
+                action.click()
+                until = time.monotonic() + 90
+                while time.monotonic() < until:
+                    state = request('/state')
+                    current = state.get('privatePreparationDraft') or state.get('investigation') or {}
+                    if current.get('revision', 0) > before_revision and current.get('phase') in ['blocked', 'local-preparation-ready']:
+                        break
+                    page.wait_for_timeout(250)
+                else:
+                    raise AssertionError('Selected local recheck did not reach its finite result.')
+                assert not state['providerCalls']
+                assert state['reportPreparation']['requests'] == before_requests
+                assert page.locator('.guide-annotation:visible').count() == 0
+                result['localRecheckMs'] = (time.monotonic() - started) * 1000
+                page.wait_for_timeout(300)
+                page.screenshot(path=str(out / 'local-rechecked.png'))
+                result['checks'].append('Actual selected local recheck click reached a finite result, with zero provider calls/reservations and no private candidate annotations.')
+                selected_job = next(j for j in state['reportPreparation']['jobs'] if j['id'] == args.finding)
+                status_text = page.locator('.guide-preparation').inner_text()
             preparation = state.get('reportPreparation') or {}
             if isinstance(preparation.get('requests'), (int, float)) and isinstance(preparation.get('requestLimit'), (int, float)) and preparation['requests'] >= preparation['requestLimit']:
                 assert page.locator('.guide-preparation').get_by_role('button', name='Continue this finding', exact=True).count() == 0

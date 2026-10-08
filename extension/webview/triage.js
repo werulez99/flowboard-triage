@@ -309,9 +309,10 @@
       row.append(heading, expand);
       if (!preparing && canContinueFinding()) row.append(button('Continue this finding', () => send('triage:investigationRetry')));
       if(!preparing&&job?.repairAvailable&&!localAdmission()&&!sharedAllowanceExhausted())row.append(button('Repair saved analysis',()=>send('triage:repairSavedAnalysis')));
+      if(!preparing&&job?.localRecheckAvailable)row.append(button('Recheck local preparation',()=>send('triage:recheckLocalPreparation')));
       row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
       const selected = issueIdentifier() || preparing || 'No finding selected';
-      const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code' })[stage] || stage || 'Reading code';
+      const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code', 'preparing-local-context':'Checking local preparation (no model request)' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
       const stopped = progress?.stopped?.find(job => job.id === active);

@@ -3,6 +3,7 @@
 // Expectations come from reading-project/README.md and the actual Solidity.
 // The first pass deliberately misreads +=; the challenge must repair the note.
 function response(input) {
+  input = require('../../extension/packet-context').expand(input);
   const find = (name, signature) => input.sources.find(unit => unit.name === name && (!signature || unit.signature === signature));
   const local = find('ReservationBook::finishReservation', 'finishReservation(uint256)');
   const settle = find('ReservationBook::_settleCredit');

@@ -88,16 +88,17 @@ Prioritize material unknowns that could change the assessment of THIS current ch
 
 const fullSchema = input => input.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(schema) : schema;
 const responseSchema = input => input.candidateOnly ? challengeFormat.candidateSchema(fullSchema(input)) : input.checkOnly ? challengeFormat.checkSchema(fullSchema(input), !!input.reviewPurpose) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
+const targetSchema = input => JSON.stringify(fullSchema(input));
 const responseInstruction = input => input.checkOnly ? challengeFormat.checkInstruction : input.repairOnly ?
-  challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + JSON.stringify(fullSchema(input)) :
-  input.candidateOnly ? 'Return candidate-patch-v1 using stable-ID slash paths and JSON-encoded valueJSON, as in review-patch-v1, but no review arrays. The assembled candidate must match this exact field schema:\n' + JSON.stringify(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.instruction : '';
+  challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + targetSchema(input) :
+  input.candidateOnly ? 'Return candidate-patch-v1 using stable-ID slash paths and JSON-encoded valueJSON, as in review-patch-v1, but no review arrays. The assembled candidate must match this exact field schema:\n' + targetSchema(input) : input.phase === 'challenge' ? challengeFormat.instruction : '';
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 256 * 1024;
 function measureRequest(input) {
   require('./provisional-work-note').check(input);
   const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : '') +
-    (input.sourceContextFormat === require('./packet-context').VERSION ? '\n' + require('./packet-context').instruction : '') +
+    (input.sourceContextFormat ? '\n' + require('./packet-context').instructionFor(input) : '') +
     (input.provisionalWorkNotes ? '\n' + require('./provisional-work-note').instruction : '') +
     (input.reviewPurpose ? '\n' + require('./review-candidate').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
   const sections = { report: 0, source: 0, previousDraft: 0, metadata: 0 };
@@ -113,7 +114,8 @@ function measureRequest(input) {
   const sourceUnits = (input.sources || []).map(unit => ({ id: unit.id, bytes: Buffer.byteLength(JSON.stringify(unit)),
     fields: Object.fromEntries(Object.entries(unit).map(([key, value]) => [key, Buffer.byteLength(JSON.stringify(value))])) }));
   return { payload, system, encodedSchema, inputBytes: Buffer.byteLength(payload), inputSections: sections, inputFields: fields, sourceUnits, requestBytes,
-    dispatchable: requestBytes <= MAX_REQUEST_BYTES, limit: MAX_REQUEST_BYTES,
+    dispatchable: requestBytes <= MAX_REQUEST_BYTES && (input.sources||[]).length<=limits.sources, limit: MAX_REQUEST_BYTES,
+    sourceCount:(input.sources||[]).length,sourceLimit:limits.sources,
     instructionHash: crypto.createHash('sha256').update(system).digest('hex'), schemaHash: crypto.createHash('sha256').update(encodedSchema).digest('hex'),
     inputHash: crypto.createHash('sha256').update(payload).digest('hex'),
     sourcePacketHash: crypto.createHash('sha256').update(JSON.stringify({ sources: input.sources || [], compiler: input.compiler || null, documentation: input.documentation || [],
@@ -121,6 +123,7 @@ function measureRequest(input) {
 }
 function requestMetrics(input) {
   const metrics = measureRequest(input);
+  if(metrics.sourceCount>metrics.sourceLimit)throw Object.assign(new Error(`The review needs ${metrics.sourceCount} source units, above the ${metrics.sourceLimit}-source local acquisition limit. No source was discarded and no request was reserved.`),{code:'LOCAL_SOURCE_LIMIT',metrics});
   if (!metrics.dispatchable) throw Object.assign(new Error(`The complete review packet is ${metrics.requestBytes} bytes, above the ${MAX_REQUEST_BYTES}-byte local limit (data, instructions and schema). No code or claim was truncated. Complete local packet preparation before dispatch.`),
     { code: 'LOCAL_PACKET_LIMIT', requestBytes: metrics.requestBytes, limit: MAX_REQUEST_BYTES, metrics });
   return metrics;

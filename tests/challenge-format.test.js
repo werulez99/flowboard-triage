@@ -161,7 +161,7 @@ test('explicit removal and fresh scoped note preserve checks/references but cann
 test('pure replay diagnoses the exact rejected base without mutating or publishing any input', () => {
   const { replayReview } = require('../scripts/replay-review');
   const saved = { ...example(), actions: [] }, earlierDraft = format.earlier(saved, schema), update = delta(saved);
-  const source = saved.sources[0], input = { phase: 'challenge', earlierDraft, sources: [{ id: source.id, file: source.source.file,
+  const source = saved.sources[0], input = { phase: 'challenge', earlierDraft, sources: [{ id: source.id, file: source.source.file, sourceHash:source.source.sourceHash,
     line: 1, endLine: 3, code: source.code.split('\n').map((line, i) => `${i + 1} | ${line}`).join('\n') }] };
   const response = { mode: format.PATCH, updates: [{ path: '/evidence/guard/claimId', valueJSON: '""' }, { path: '/evidence/guard/stance', valueJSON: '"context"' }],
     checks: update.causal.checks, explanationReviews: [{ ...update.explanationReviews[0], result: 'repaired' }] };
@@ -170,6 +170,9 @@ test('pure replay diagnoses the exact rejected base without mutating or publishi
   assert.equal(result.fullSchema, true); assert.equal(result.errors[0].code, 'EVIDENCE_SCOPE_CHANGED');
   assert.equal(result.accepted, false); assert.equal(result.writes, 0); assert.equal(result.providerRequests, 0);
   assert.equal(JSON.stringify({ saved, input, response }), before);
+  const rich=structuredClone(input);rich.sources[0].initialization={scopes:Array.from({length:12},()=>({file:source.source.file,sourceHash:source.source.sourceHash,description:'Fixture context is not a verified runtime fact. '.repeat(12)}))};
+  const compact=require('../extension/packet-context').compact(rich);assert.equal(compact.sourceContextFormat,'source-context-v2');
+  assert.deepEqual(replayReview({saved,input:JSON.parse(JSON.stringify(compact)),response,units:saved.sources}),result);
   assert.throws(() => replayReview({ saved: { ...saved, evidence: [] }, input, response, units: saved.sources }), /exact earlierDraft/);
 });
 test('a substantive repair can inspect its old function inside exact complete current context', () => {

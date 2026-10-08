@@ -53,6 +53,31 @@ test('saved resume retains a completed test dependency beyond the actual evictio
   assert.equal(f.draft.runs.length,1);assert.equal(f.draft.runs[0].requestId,'old-paid');
   assert.ok(packet.sources.length<startingSources,'Unbound discovery candidates can still be deferred.');
 });
+test('explicit material regions precede optional discovery and preserve exact context views without read attestation',{skip:!native},async t=>{
+  const f=await fixture(t,34);assert.ok(f.draft.sources.length>32);
+  f.draft.checkpoint={stage:'challenge',followups:0};
+  const doc=f.catalog.document('src/Vault.sol'),leaf=f.catalog.document('test/Dependency.sol');
+  f.draft.localPreparation={contextHash:require('../extension/review-candidate').identity(f.draft),requirements:[
+    {file:'src/Vault.sol',line:1,endLine:doc.lineCount,sourceHash:engine.hash(doc.text),reason:'The receiving definition and selected helper are needed; other helpers are unrelated discovery.',ranges:[{line:4,endLine:4},{line:6,endLine:6}],omissionReason:'Other independent helper bodies do not participate in this question.'},
+    {file:'test/Dependency.sol',line:1,endLine:leaf.lineCount,sourceHash:engine.hash(leaf.text),reason:'The exact test helper is a required local dependency, not approval.'}]};
+  let calls=0,reservations=0;
+  await engine.advance({...f,preparationOnly:true,beforeRequest:()=>{reservations++;},invoke:async()=>{calls++;throw Error('No provider in local preparation');}});
+  assert.equal(calls,0);assert.equal(reservations,0);assert.equal(f.draft.phase,'local-preparation-ready',f.draft.error);
+  const regions=f.draft.localPreparation.coverage.map(c=>f.draft.sources.find(u=>u.id===c.sourceId));assert.ok(regions.every(Boolean));
+  assert.ok(f.draft.sources.length<10,'Optional neighbors do not consume the mandatory queue.');
+  const region=regions[0];assert.equal(region.code,doc.text.split('\n').slice(0,doc.lineCount).join('\n'));
+  assert.equal(region.readThrough,region.source.line-1);assert.equal(region.readRanges,undefined);
+  const input={phase:'challenge',sources:engine.modelSources(f.draft.sources,Infinity,true)},encoded=require('../extension/packet-context').compact(input);
+  assert.deepEqual(require('../extension/packet-context').expand(encoded),input);
+  const view=input.sources.find(u=>u.id===region.id);assert.equal(view.complete,false);assert.match(view.code,/4 \| .*receive/);assert.doesNotMatch(view.code,/helper0/);
+  assert.ok(!require('../extension/source-coverage').covers(view.providedRanges,5,5));
+  const context=engine.makeContext(f.catalog,f.request);context.restore(f.draft.sources,f.draft,{exactResponse:true});
+  const q={id:'later',claimId:'c1',action:'symbol',target:'Vault::helper0',text:'Read this newly required local helper.',why:'New material question.'};
+  context.act(q,f.draft.claims[0],{definitionOnly:true});
+  assert.ok(require('../extension/source-coverage').covers(context.units.find(u=>u.id===region.id).modelRanges,5,5),'A later explicit question cannot claim omitted bytes were already supplied.');
+  const bad=structuredClone(f.draft);bad.localPreparation.requirements[0].sourceHash='0'.repeat(64);
+  await engine.advance({...f,draft:bad,preparationOnly:true,invoke:()=>assert.fail('Stale plan cannot dispatch')});assert.match(bad.error,/changed source identity/);
+});
 test('serialized Unicode/draft growth is rejected before actual transport admission or dispatch',{skip:!native},async t=>{
   const f=await fixture(t);f.draft.checkpoint={stage:'challenge',followups:0};
   f.draft.claims[0].reason='\u6587'.repeat(100000);

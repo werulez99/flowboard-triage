@@ -3,6 +3,7 @@
 // the production gate/scheduler/renderer, not the correctness of a real model.
 const capacity = require('../../extension/review-capacity');
 function response(input) {
+  input = require('../../extension/packet-context').expand(input);
   if (input.finding.id === 'I-4') return {};
   if (input.candidateOnly) throw new Error('An unchanged external dependency has no candidate amendment; retain its full verification instead.');
   const remote = input.finding.id === 'I-3', count = input.finding.id === 'I-2';

@@ -71,7 +71,11 @@ function gate(draft) {
   for (const claim of draft.claims) if (claim.status === 'unresolved' || claim.needsReassessment || claim.unknowns?.length) fail(`${claim.id}: ${claim.unknowns?.[0] || claim.nextQuestion || 'A material statement is unresolved.'}`, 'material-evidence', claim.id);
   if (draft.conclusion?.limitations?.length) fail(draft.conclusion.limitations[0], 'material-evidence');
   const required = new Set([...draft.evidence.map(item => item.sourceId), ...draft.claims.map(item => item.entry)]);
-  for (const unit of units.values()) if (required.has(unit.id) && Number.isInteger(unit.readThrough) && unit.readThrough < unit.source.endLine) fail(`Local code remains unread: ${unit.source.file}:${unit.readThrough + 1}-${unit.source.endLine}. The complete function is available locally.`, 'local-reading', unit.id);
+  for (const unit of units.values()) if (required.has(unit.id) && Number.isInteger(unit.readThrough) && unit.readThrough < unit.source.endLine) {
+    const contextNotes=unit.contextKind==='excerpt'&&unit.modelRanges&&!draft.claims.some(c=>c.entry===unit.id)&&
+      draft.evidence.filter(e=>e.sourceId===unit.id).every(e=>require('./source-coverage').read(unit,e.source.line,e.source.endLine));
+    if(!contextNotes)fail(`Local code remains unread: ${unit.source.file}:${unit.readThrough + 1}-${unit.source.endLine}. The complete function is available locally.`, 'local-reading', unit.id);
+  }
   if (!nonempty(model.scope) || !nonempty(model.summary) || !['supported', 'refuted','blocked'].includes(model.outcome)) fail('The material explanation or its scoped conclusion is incomplete.');
   else if(model.outcome==='blocked') fail('The checked explanation retains a material blocker.','material-evidence');
   const assessment = draft.walkthrough?.assessment;

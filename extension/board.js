@@ -679,7 +679,7 @@ class TriageBoard {
     }
     const model = this.models.get(this.activeId);
     if (message.issueId && message.issueId !== this.activeId) return;
-    if (message.type?.startsWith('triage:investigation') && model) {
+    if ((message.type?.startsWith('triage:investigation')||['triage:repairSavedAnalysis','triage:recheckLocalPreparation'].includes(message.type)) && model) {
       if (message.token !== this.activeToken) throw new Error('This investigation view is out of date.');
       if (message.type === 'triage:investigationFocus') return this.focusInvestigation(model, message);
       if (message.type === 'triage:investigationDocumentation') return this.openDocumentation(model, message);
@@ -689,6 +689,13 @@ class TriageBoard {
         const report=this.callbacks.reportPreparation?.();
         if(!report)throw new Error('Open this imported finding through its report preparation to repair saved analysis.');
         report.continueFinding(model.id,{repairSavedAnalysis:true})?.catch(error=>this.vscode.window.showErrorMessage(error.message));
+        return this.reportProgress();
+      }
+      if(message.type==='triage:recheckLocalPreparation'){
+        if(!this.investigationCurrent(model))return;
+        const report=this.callbacks.reportPreparation?.();
+        if(!report)throw new Error('Local preparation requires the imported report coordinator.');
+        report.continueFinding(model.id,{recheckLocalPreparation:true})?.catch(error=>this.vscode.window.showErrorMessage(error.message));
         return this.reportProgress();
       }
       if (message.type === 'triage:investigationEnable') return this.enableInvestigation(model);

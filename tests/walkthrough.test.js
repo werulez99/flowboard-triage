@@ -192,7 +192,7 @@ test('ordinary selection prepares guide, completes missing helpers, keeps remote
   assert.ok(ready.investigation.evidence.some(entry => entry.id === 'credit-record'), 'Useful private work is retained.');
   assert.equal(walk.assessment(ready.investigation).result, 'unavailable');
   assert.deepEqual(inputs.map(input => input.phase), ['generate', 'challenge']);
-  assert.ok(inputs[1].sources.some(item => item.name.endsWith('::_settleCredit')));
+  assert.ok(require('../extension/packet-context').expand(inputs[1]).sources.some(item => item.name.endsWith('::_settleCredit')));
   await request('/message', { type: 'triage:investigationFocus', issueId: 'I-02', token: ready.token, evidenceId: 'credit-record', navigationId: 'step-request-1' });
   const focused = await wait(state => state.received.some(item => item.type === 'triage:investigationFocus'));
   const events = await request('/events?after=0');

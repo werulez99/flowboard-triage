@@ -458,7 +458,7 @@ test('source selectors reject stale identities before publication and preserve r
   const future = structuredClone(result.accepted); future.bindingPlan.version = 'unknown'; assert.ok(binding.integrity(future).length);
   const earlier = binding.wire(format.earlier(result.accepted, schema), result.accepted.bindingPlan);
   const input = { phase: 'challenge', bindingFormat: binding.VERSION, earlierDraft: earlier,
-    sources: draft.sources.map(unit => ({ id: unit.id, file: unit.source.file, line: unit.source.line, endLine: unit.source.endLine,
+    sources: draft.sources.map(unit => ({ id: unit.id, file: unit.source.file, sourceHash:unit.source.sourceHash, line: unit.source.line, endLine: unit.source.endLine,
       code: unit.code.split('\n').map((line, index) => `${unit.source.line + index} | ${line}`).join('\n') })) };
   const response = structuredClone(earlier); response.explanationReviews = result.accepted.explanationReviews.map(({ evidenceId, result, reason, checkedSourceIds }) => ({ evidenceId, result, reason, checkedSourceIds }));
   const replay = require('../scripts/replay-review').replayReview({ saved: result.accepted, input, response, units: draft.sources });

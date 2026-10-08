@@ -41,4 +41,14 @@ function retain(root,findingId,reference,expected) {
   if(!existing)p.atomicJson(root,archive,record);
   return {...reference,archive};
 }
-module.exports = { save, read, retain, digest };
+function recover(root,findingId,reservation,expected) {
+  if(!reservation?.id)throw new Error('Owned original reservation is required for receipt recovery.');
+  const record=p.readWorkspaceJson(root,location(findingId),MAX_BYTES);
+  const reference={hash:record.hash,phase:record.input?.phase,snapshot:digest(record.snapshot),corrections:digest(record.corrections),previous:record.previous};
+  const value=read(root,findingId,reference,expected);
+  if(!value||value.result.audit.requestId!==reservation.id||value.input.phase!==reservation.phase||
+     value.input.reviewPurpose!==reservation.reviewPurpose||value.result.audit.teardown?.confirmed===false||
+     value.reservation&&digest(value.reservation)!==digest(reservation))throw new Error('Retained response does not match the owned reservation/context or confirmed cleanup.');
+  return {reference,value};
+}
+module.exports = { save, read, retain, recover, digest };

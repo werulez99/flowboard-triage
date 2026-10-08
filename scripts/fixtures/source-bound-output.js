@@ -2,6 +2,7 @@
 // Controlled reference answers only. Production never chooses a dispatch from
 // an existing label or converts an unreviewed legacy response into a new review.
 function encode(output, input) {
+  input = require('../../extension/packet-context').expand(input);
   const bindings = require('../../extension/source-bindings');
   if (input.bindingFormat !== bindings.VERSION) return output;
   output = structuredClone(output); delete output.walkthrough.steps; output.inputReviews ||= [];

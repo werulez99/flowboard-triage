@@ -47,6 +47,19 @@ function candidatePatch(value) {
   value=structuredClone(value);delete value.walkthrough.steps;
   return {mode:'candidate-patch-v1',updates:Object.entries(value).filter(([key])=>!['inputReviews','explanationReviews'].includes(key)).map(([key,item])=>({path:'/'+key,valueJSON:JSON.stringify(item)}))};
 }
+test('selected local recheck works with exhausted allowance and provider none without resuming siblings',{skip:!native},async t=>{
+  const f=await fixture(t,2);f.options.configuration=()=>({provider:'codex',requestLimit:8,workers:1});
+  f.options.invoke=async input=>{f.calls.push(input.phase);await f.runner.control('pause');return{value:response(input),audit:{phase:input.phase,outcome:'completed'}};};
+  await f.runner.continueFinding('I-1');const before=structuredClone(f.runner.state),draft=engine.read(f.root,'I-1');
+  draft.phase='blocked';draft.failureKind='local-reading';draft.failureCode='LOCAL_PACKET_LIMIT';draft.revision++;engine.write(f.root,draft);
+  f.runner.state.resources.limit=f.runner.state.resources.requests;f.runner.state.jobs['I-1'].requestLimit=f.runner.state.jobs['I-1'].requests;f.runner.save();
+  f.options.configuration=()=>({provider:'none'});let calls=f.calls.length;
+  await f.runner.continueFinding('I-1',{recheckLocalPreparation:true});
+  const saved=engine.read(f.root,'I-1');assert.equal(saved.phase,'local-preparation-ready',saved.error);assert.equal(f.calls.length,calls);
+  assert.equal(f.runner.state.resources.requests,before.resources.requests);assert.deepEqual(f.runner.state.resources.receipts,before.resources.receipts);
+  assert.equal(f.runner.state.jobs['I-2'].requests,0);assert.equal(f.runner.state.jobs['I-1'].repairAvailable,false);
+  await f.runner.ensure();assert.equal(f.calls.length,calls);assert.equal(engine.read(f.root,'I-1').localPreparation.preflight.dispatchable,true);
+});
 function checkedCandidate(input) {
   const value=response({...input,checkOnly:true});value.inputReviews=[];
   value.explanationReviews=value.explanationReviews.map(item=>{
@@ -71,9 +84,14 @@ test('completed provider receipt survives checkpoint ENOSPC without acceptance o
   assert.equal(engine.read(f.root,'I-1').claims.length,0);assert.equal(f.runner.status().ready,0);
   assert.equal(f.runner.state.jobs['I-1'].failureKind,'storage');
 });
-test('ordinary coordinator repairs a retained rejection explicitly once, keeps siblings and verifies exact private revision',{skip:!native},async t=>{
-  const stages=[],f=await fixture(t,2);let original;
-  f.options.invoke=async input=>{
+for(const receiptFault of [false,true])test(`ordinary coordinator repairs a retained rejection once and recovers terminal storage (${receiptFault?'receipt fault':'normal'})`,{skip:!native},async t=>{
+  const stages=[],f=await fixture(t,2);let original,failReceipt=false;
+  const atomic=p.atomicJson;t.mock.method(p,'atomicJson',function(root,file,value){
+    if(failReceipt&&file==='.flowboard/report-preparation.json'&&Object.values(value.resources?.receipts||{}).some(r=>r.reviewPurpose==='rejected-proposal-repair'&&r.finishedAt)){
+      failReceipt=false;throw Object.assign(Error('controlled terminal receipt ENOSPC'),{code:'ENOSPC'});
+    }return atomic(root,file,value);
+  });
+  f.options.invoke=async (input,options)=>{
     stages.push([input.finding.id,input.reviewPurpose||input.phase]);
     let value=response(input);
     if(input.finding.id==='I-1'&&input.phase==='generate'){
@@ -83,17 +101,26 @@ test('ordinary coordinator repairs a retained rejection explicitly once, keeps s
     } else if(input.reviewPurpose==='rejected-proposal-repair'){
       const note={...input.earlierDraft.evidence[0],id:'guard-second',claimId:'c2'};
       value={mode:'candidate-patch-v1',updates:[{path:'/evidence/guard-second',valueJSON:JSON.stringify(note)},{path:'/claims/c2/evidence',valueJSON:'["guard-second"]'},
-        ...input.earlierDraft.causal.obligations.filter(o=>o.claimId==='c2').map(o=>({path:'/causal/obligations/'+o.id+'/evidence',valueJSON:'["guard-second"]'}))]};f.runner.control('pause');
+        ...input.earlierDraft.causal.obligations.filter(o=>o.claimId==='c2').map(o=>({path:'/causal/obligations/'+o.id+'/evidence',valueJSON:'["guard-second"]'}))]};f.runner.control('pause');failReceipt=receiptFault;
     } else if(input.reviewPurpose==='candidate-verification'){
       value={result:'kept',problems:[],inputReviews:[],explanationReviews:input.earlierDraft.evidence.map(e=>({evidenceId:e.id,result:e.id==='guard'?'kept':'added',reason:e.explanation,checkedSourceIds:[e.sourceId]})),
         checks:[...require('../extension/review-capacity').targets(input.earlierDraft.causal).map(t=>t.key),...input.candidateRevisionTargets].map(target=>({target,reason:'The require(false) guard reverts before any normal settlement for both claims.',evidence:['guard','guard-second'],documentation:[]}))};
     }
-    return{value,audit:{phase:input.phase,outcome:'completed',teardown:{confirmed:true}}};
+    return{value,audit:{phase:input.phase,requestId:options.requestId,outcome:'completed',teardown:{confirmed:true}}};
   };
   await f.runner.ensure();assert.ok(f.runner.artifact('I-2'));const before=f.runner.state.resources.requests;
   assert.equal(engine.read(f.root,'I-1').claims.length,0);assert.ok(f.runner.status().jobs.find(j=>j.id==='I-1').repairAvailable);
   await f.runner.ensure();assert.equal(f.runner.state.resources.requests,before,'Unchanged local replay is unpaid.');
   const a=f.runner.continueFinding('I-1',{repairSavedAnalysis:true}),b=f.runner.continueFinding('I-1',{repairSavedAnalysis:true});await Promise.all([a,b]);
+  if(receiptFault){
+    assert.equal(engine.read(f.root,'I-1').failureCode,'RECEIPT_STORAGE_FAILED');
+    const used=f.runner.state.resources.requests,called=stages.length;
+    f.runner.dispose();await f.runner.loop;f.runner=new ReportPreparation(f.root,f.options);
+    await f.runner.ensure();
+    assert.equal(stages.length,called);assert.equal(f.runner.state.resources.requests,used);
+    const receipt=Object.values(f.runner.state.resources.receipts).find(r=>r.reviewPurpose==='rejected-proposal-repair');
+    assert.equal(receipt.outcome,'completed');assert.ok(receipt.finishedAt);assert.ok(f.runner.artifact('I-2'));
+  }
   const draft=engine.read(f.root,'I-1');assert.ok(draft.reviewCandidate,draft.error);assert.equal(draft.claims.length,0);assert.equal(f.runner.artifact('I-1'),null);assert.ok(f.runner.artifact('I-2'));
   assert.equal(f.runner.state.jobs['I-1'].hasPrivateCandidate,true);assert.equal(f.runner.state.jobs['I-1'].retainedRejection,false,'A completed private repair can offer verification, not another link-repair action.');
   const old=require('../extension/provider-result').read(f.root,'I-1',draft.rejectedProposal.original,{phase:'generate',snapshot:draft.snapshot,corrections:draft.corrections,previous:null});assert.deepEqual(old.result.value,original);
@@ -1169,6 +1196,7 @@ test('a long function keeps its full local body and reads its tail before a subs
   const guardLine = long.split('\n').findIndex(line => line.includes('require(accepted')) + 1;
   const packets = [];
   const f = await fixture(t, 1, input => {
+    input=require('../extension/packet-context').expand(input);
     packets.push(input);
     if(input.reviewPurpose && input.checkOnly)return checkedCandidate(input);
     const result = response(input);

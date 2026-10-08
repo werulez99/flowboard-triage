@@ -1,7 +1,7 @@
 'use strict';
 // Explicit developer pilot only; no setting, board route or provider fallback.
 const { hash } = require('../extension/investigation-engine');
-const materialSources = input => hash(input.sources.map(({ id, file, line, endLine, code, sourceHash }) => ({ id, file, line, endLine, code, sourceHash })));
+const materialSources = input => hash(require('../extension/packet-context').expand(input).sources.map(({ id, file, line, endLine, code, sourceHash }) => ({ id, file, line, endLine, code, sourceHash })));
 const substantive = value => value && typeof value === 'object' && !Array.isArray(value) &&
   [value.checks, value.explanationReviews, value.claims, value.causal?.checks].some(items => Array.isArray(items) && items.some(item => typeof item?.reason === 'string' && item.reason.trim().length >= 8));
 class ChallengePilotGuard {

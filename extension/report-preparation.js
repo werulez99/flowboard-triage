@@ -53,12 +53,12 @@ class ReportPreparation {
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
     this.pendingFindings = new Map(); this.admitting = new Map(); this.localEligible = new Set(); this.controlRevision = 0;
   }
-  continueFinding(id, { repairSavedAnalysis = false } = {}) {
+  continueFinding(id, { repairSavedAnalysis = false, recheckLocalPreparation = false, requirements } = {}) {
     p.identifier(id, 'finding continuation ID');
     if (this.disposed) throw new Error('This report owner is closed. Reopen the report.');
     if (!store.readReport(this.root).issues.some(item => item.id === id)) throw new Error('The selected finding is no longer in this report.');
     if (!this.pendingFindings.has(id) && !this.admitting.has(id) && !this.localEligible.has(id) && !this.tasks.has(id))
-      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis });
+      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis, recheckLocalPreparation, requirements });
     // Existing workers admit this at a durable stage boundary. No report-wide
     // resume, allowance increase or cancellation of a sibling is implied.
     return this.ensure();
@@ -183,7 +183,7 @@ class ReportPreparation {
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, retainedRejection, repairAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,retainedRejection,repairAvailable,
+      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, retainedRejection, repairAvailable, localRecheckAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,retainedRejection,repairAvailable,localRecheckAvailable,
         publishable: !!this.artifact(id), digest: this.artifact(id), outcome, publishedAt })),
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
@@ -391,7 +391,7 @@ class ReportPreparation {
         job.state = 'queued'; job.publishable = false; job.accepted = null; this.accepted.delete(entry.id);
       } else if (checked(saved)) {
         this.accept(entry, saved, job);
-      } else if (saved.pendingResponse && !this.pendingFindings.get(entry.id)?.repairSavedAnalysis) {
+      } else if ((saved.pendingResponse || saved.failureCode==='RECEIPT_STORAGE_FAILED') && !this.pendingFindings.get(entry.id)?.repairSavedAnalysis) {
         // A completed transport receipt is already paid. Revalidate/replay it
         // before provider, pause and allowance checks, without authorizing a
         // new request or resuming any sibling's paid work.
@@ -414,6 +414,17 @@ class ReportPreparation {
         if (!entry || !job) { this.options.log?.('Selected continuation was discarded because its finding left the report.'); continue; }
         if (job.publishable || this.tasks.has(id)) continue;
         if (job.correctionHold && job.correctionHold.state!=='applied') { job.reason='Saved correction is still held. Settle or reconcile it before continuing.';this.save();continue; }
+        if(intent.recheckLocalPreparation){
+          const draft=engine.read(this.root,id);
+          if(!draft||draft.pendingResponse||draft.rejectedProposal?.state==='repair-dispatched'){job.reason='Recover the existing paid response or reconcile its owned attempt before preparing new input.';this.save();continue;}
+          if(intent.requirements){
+            if(!engine.compatible(draft,catalog,this.request(entry,catalog,report),this.issue(entry)))throw new Error('Local preparation changed context.');
+            draft.localPreparation={requirements:structuredClone(intent.requirements),contextHash:require('./review-candidate').identity(draft)};
+            draft.revision++;engine.write(this.root,draft);
+          }
+          await this.work(entry,catalog,report,job,epoch,config,false,true);
+          continue;
+        }
         if (this.options.phaseRemaining?.(id) === false) { job.reason = 'The explicitly authorized evaluation phases are exhausted. Retained work is unchanged; no further request is permitted.'; this.save(); continue; }
         const remaining = this.state.resources.limit - this.state.resources.requests;
         if (remaining <= 0) {
@@ -587,7 +598,7 @@ class ReportPreparation {
     for (const job of Object.values(this.state.jobs)) if (job.state === 'queued') { job.state = 'paused'; job.reason = 'Waiting for report request budget.'; }
     this.save();
   }
-  async work(entry, catalog, report, job, epoch, config, localOnly = false) {
+  async work(entry, catalog, report, job, epoch, config, localOnly = false, preparationOnly = false) {
     if (job.correctionHold) return;
     if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); this.save(); return; }
     const issue = this.issue(entry), request = this.request(entry, catalog, report);
@@ -603,7 +614,7 @@ class ReportPreparation {
     if (checked(draft)) { engine.validateCurrent(catalog, draft); this.accept(entry, draft, job); this.save(); return; }
     let settled;const abort = new AbortController(); this.active = { abort, id: entry.id, settled:new Promise(resolve=>settled=resolve) }; this.tasks.set(entry.id, this.active);
     const attemptId = crypto.randomUUID();
-    Object.assign(job, { state: 'running', stage: draft.checkpoint?.stage || 'locating-code', progress: null,
+    Object.assign(job, { state: 'running', stage: preparationOnly?'preparing-local-context':draft.checkpoint?.stage || 'locating-code', progress: null,
       attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
     const current = () => {
@@ -616,7 +627,7 @@ class ReportPreparation {
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
         provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
-        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly, prepareRequest: this.options.prepareRequest, candidateSeed: this.options.candidateSeed?.(entry.id),
+        providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly, preparationOnly, prepareRequest: this.options.prepareRequest, candidateSeed: this.options.candidateSeed?.(entry.id), recoveryReservation: job.lastReservation,
         beforeRequest: async data => {
           const phases = this.options.phasePlan?.(entry.id);
           if (phases && !phases.includes(data.phase)) throw Object.assign(new Error('This authorized phase plan does not permit the next request; retained observation remains unpublished.'), { code: 'REPORT_PAUSED' });
@@ -656,7 +667,11 @@ class ReportPreparation {
           this.progress();
         },
         onResult: (audit, reservation) => {
-          if (!reservation || this.state.reportHash !== report.reportHash || this.state.resources.receipts[reservation.id]?.finishedAt) return;
+          if (!reservation || this.state.reportHash !== report.reportHash) return;
+          const owned=this.state.resources.receipts[reservation.id];
+          if(!this.ownsLock()||!owned||owned.findingId!==job.id||owned.phase!==reservation.phase||owned.reviewPurpose!==reservation.reviewPurpose||audit.requestId&&audit.requestId!==reservation.id)throw new Error('Terminal receipt does not belong to this owned finding reservation.');
+          if(owned.finishedAt)return;
+          const previous=structuredClone(this.state.resources);
           this.state.resources.receipts[reservation.id] = { ...reservation, findingId: job.id, finishedAt: now(), outcome: audit.outcome,
             hostInvocationElapsedMs: Date.now() - Date.parse(reservation.at),
             audit,
@@ -664,7 +679,7 @@ class ReportPreparation {
             elapsedMs: audit.startedAt && audit.finishedAt ? Date.parse(audit.finishedAt) - Date.parse(audit.startedAt) : null };
           const receipts = Object.values(this.state.resources.receipts);
           this.state.resources.costUSD = receipts.length === this.state.resources.requests && receipts.every(item => item.costUSD !== null) ? receipts.reduce((n, item) => n + item.costUSD, 0) : null;
-          this.save();
+          try{this.save();}catch(error){this.state.resources=previous;throw error;}
         },
         onAccepted: audit => {
           const receipt = audit.requestId && this.state.resources.receipts[audit.requestId];
@@ -716,6 +731,7 @@ class ReportPreparation {
   recoveryStatus(job, draft) {
     job.failureKind = draft.failureKind || null;
     job.hasPrivateCandidate=!!draft.reviewCandidate;
+    job.localRecheckAvailable=draft.failureKind==='local-reading'&&!draft.pendingResponse&&!job.correctionHold&&draft.rejectedProposal?.state!=='repair-dispatched';
     job.retainedRejection=!job.hasPrivateCandidate&&(!!draft.lastRejected&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'||!!draft.rejectedProposal);
     const repairPending=require('./rejected-proposal').eligible(draft)||draft.rejectedProposal?.state==='repair-pending'&&!draft.reviewCandidate;
     job.repairAvailable=!!repairPending&&!draft.recoveryRequired&&!['local-reading','storage'].includes(draft.failureKind)&&!job.correctionHold&&['codex','claude'].includes(this.options.configuration().provider)&&
