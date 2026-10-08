@@ -39,10 +39,11 @@ class EvaluationPlanGuard {
     if (!receipts.length && engine.hash(packetIdentity(input))!==engine.hash(c.firstPacket)) deny('First outbound data/source/schema/instruction packet drifted.');
     if (input.phase==='challenge') {
       const base=this.acceptedBase(c.findingId);
-      const rejected=base?.rejectedProposal&&['rejected-proposal-repair','candidate-verification'].includes(c.reviewPurpose);
+      const rejected=base?.rejectedProposal&&['rejected-proposal-repair','rejected-proposal-followup','candidate-verification'].includes(c.reviewPurpose);
       if (!base || !engine.sameSnapshot(base.snapshot,input.snapshot) || base.pendingResponse || base.lastRejected&&!rejected ||
           !['challenge','complete'].includes(base.checkpoint?.stage)) deny('A compatible accepted stage is required, not a pending/rejected response.');
       if(rejected){const state=require('../extension/rejected-proposal').assertCurrent(base,provider.schema);
+        if(state.followup)require('../extension/rejected-proposal').assertFollowup(this.root,base,provider.schema);
         if(c.originalProposalHash!==state.origin.recordHash || engine.hash(input.referenceOrigin)!==engine.hash(state.origin))deny('The exact unaccepted original proposal changed.');
         const record=require('../extension/provider-result').read(this.root,c.findingId,state.original,{phase:'generate',snapshot:base.snapshot,corrections:base.corrections,previous:null});
         if(!record||engine.hash(record.result.value)!==state.origin.responseHash)deny('Original proposal archive is missing or changed.');
@@ -58,6 +59,10 @@ class EvaluationPlanGuard {
         if(engine.hash(actual.candidateIdentity)!==engine.hash(input.candidateIdentity) || engine.hash(actual.earlierDraft)!==engine.hash(input.earlierDraft) ||
            engine.hash(actual.candidateRevisions)!==engine.hash(input.candidateRevisions)) deny('Candidate/revision/provenance changed.');
         if(c.reviewPurpose==='candidate-repair' && (!c.repairProblemsHash || c.repairProblemsHash!==engine.hash(base.reviewCandidate.verification.problems))) deny('Targeted repair needs exact completed checker feedback.');
+        if(c.reviewPurpose==='rejected-proposal-followup' && (!c.followupAuthorization ||
+          c.followupAuthorization.id!==base.rejectedProposal.followup?.id || c.followupAuthorization.responseHash!==base.rejectedProposal.followup?.fromResponseHash ||
+          engine.hash(actual.authoringFollowup)!==engine.hash(input.authoringFollowup) || engine.hash(actual.untrustedAuthoring)!==engine.hash(input.untrustedAuthoring) ||
+          engine.hash(actual.candidateProblems)!==engine.hash(input.candidateProblems)))deny('Explicit authoring follow-up or its rejected guidance changed.');
       } else if (engine.hash(input.earlierDraft)!==engine.hash(expected.earlierDraft) || engine.hash(input.assembledEarlier||null)!==engine.hash(expected.assembledEarlier))
         deny('Challenge must review the exact compiled accepted generation.');
       if (!receipts.length && engine.hash(expected)!==c.retainedBaseHash) deny('Retained challenge-only base changed.');
@@ -117,6 +122,12 @@ class EvaluationPlanGuard {
        !b.parentManifestHash || engine.hash(b.baseline)!==b.baselineHash || journal.project!==b.baseline.project || journal.reportHash!==b.baseline.reportHash)
       deny('Continuation requires its exact parent/nonzero-history baseline and challenge-only cases.');
     const marker=journal.evaluationContinuations?.[engine.hash(this.manifest)];
+    const cycle=this.manifest.reviewCycle;
+    const purpose=this.manifest.cases[0]?.reviewPurpose;
+    if(cycle?.kind==='received-proposal-repair-v1'&&['rejected-proposal-followup','candidate-verification'].includes(purpose)) {
+      const other=Object.entries(journal.evaluationContinuations||{}).find(([id,entry])=>id!==engine.hash(this.manifest)&&entry.reviewCycle?.id===cycle.id&&entry.reviewCycle.purpose===purpose);
+      if(other)deny('This lineage already owns its authoring follow-up or full verification slot. No duplicate window can be granted.');
+    }
     if(!marker && engine.hash(accountingBaseline(journal))!==b.baselineHash)deny('Production baseline changed before additive approval.');
     if(marker && (marker.baselineHash!==b.baselineHash || marker.maximumRequests!==this.manifest.maximumRequests))deny('Continuation marker changed.');
     const prior=b.baseline.receipts;
@@ -126,6 +137,7 @@ class EvaluationPlanGuard {
       deny('Continuation ledger is behind or unrelated to production history.');
     for(const [id,old]of Object.entries(b.baseline.jobs))if(journal.jobs[id]?.requests!==old.requests+extra.filter(r=>r.findingId===id).length)deny('Finding accounting differs from the pinned baseline.');
     return {id:engine.hash(this.manifest),parentManifestHash:b.parentManifestHash,baselineHash:b.baselineHash,baselineRequests:b.baseline.requests,
+      ...(cycle?{reviewCycle:{...cycle,purpose}}:{}),
       maximumRequests:this.manifest.maximumRequests,findings:Object.fromEntries(this.manifest.cases.map(c=>[c.findingId,{baselineRequests:b.baseline.jobs[c.findingId].requests,attempts:c.phases.length}]))};
   }
   phaseRemaining(id) {

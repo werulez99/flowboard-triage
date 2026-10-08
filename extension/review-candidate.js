@@ -6,7 +6,7 @@ const format = require('./challenge-format');
 const scope = require('./review-scope');
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const VERSION = 'private-candidate-v1';
-const purposes = ['candidate-completion', 'candidate-verification', 'candidate-repair', 'candidate-reverification','rejected-proposal-repair'];
+const purposes = ['candidate-completion', 'candidate-verification', 'candidate-repair', 'candidate-reverification','rejected-proposal-repair','rejected-proposal-followup'];
 function unchecked(value) {
   const result = structuredClone(value);
   result.inputReviews = []; result.explanationReviews = [];
@@ -40,6 +40,7 @@ function assertCurrent(draft, schema) {
   if (!state || state.version !== VERSION || state.contextHash !== identity(draft) ||
       (rejected ? state.referenceBaseHash!==rejected.proposalHash || hash(state.referenceOrigin)!==hash(rejected.origin) || hash(state.referenceBase)!==rejected.proposalHash : state.acceptedBaseHash !== hash(wire(draft, schema))) ||
       state.candidateHash !== hash(state.candidate) ||
+      state.lineage?.at(-1)?.authoringMapping && state.lineage.at(-1).authoringMapping.canonicalHash !== state.candidateHash ||
       hash(state.revisions) !== hash(revision(state.referenceBase||state.acceptedBase, state.candidate,state.referenceOrigin)))
     throw Object.assign(new Error('Private candidate/source/premise/base or revision identity changed. No prior checks can be reused.'), { code: 'CANDIDATE_STALE' });
   return state;
@@ -78,7 +79,9 @@ function needsCompletion(draft) {
   });
 }
 function purpose(draft, schema) {
-  if(draft.rejectedProposal&&!draft.reviewCandidate){const state=require('./rejected-proposal').assertCurrent(draft,schema);if(state.state!=='repair-pending')throw new Error('The retained proposal repair is terminal; no automatic repeat is permitted.');return 'rejected-proposal-repair';}
+  if(draft.rejectedProposal&&!draft.reviewCandidate){const state=require('./rejected-proposal').assertCurrent(draft,schema);
+    if(state.followup){if(state.followup.state!=='pending')throw new Error('The explicit authoring follow-up is already consumed; no automatic repeat is permitted.');return 'rejected-proposal-followup';}
+    if(state.state!=='repair-pending')throw new Error('The retained proposal repair is terminal; no automatic repeat is permitted.');return 'rejected-proposal-repair';}
   if (!draft.reviewCandidate) return needsCompletion(draft) ? 'candidate-completion' : null;
   const state = assertCurrent(draft, schema);
   if (state.state === 'seeded') return 'candidate-completion';
@@ -99,14 +102,21 @@ function packet(input, draft, schema, selectedPurpose) {
       candidateHash: hash(candidate), revisionHash: hash(revisions), versionNumber: state?.versionNumber || 0 },
     candidateRevisions: revisions,
     ...(rejected?{referenceOrigin:rejected.origin,previousScopes:rejected.proposal.claims.map(({id,allegation,implementation,conditions})=>({id,allegation,implementation,conditions})),evidenceScopes:scope.manifest(rejected.proposal)}:{}) };
-  delete result.checkOnly; delete result.repairOnly; delete result.provisionalWorkNotes;
+  delete result.checkOnly; delete result.repairOnly; delete result.candidateOnly; delete result.authoringFormat; delete result.provisionalWorkNotes;
   // This explicit repair names the immutable proposal once in earlierDraft.
   // Old replay feedback can contain a second complete rejectedOutput and
   // obsolete host errors. Current typed diagnostics are candidateProblems.
   if(rejected)delete result.hostReview;
   if (selectedPurpose.endsWith('verification')) { result.checkOnly = true; result.candidateRevisionTargets = revisionTargets(result.candidateRevisions); }
   else { result.candidateOnly = true; if (selectedPurpose === 'candidate-repair') result.candidateProblems = state.verification.problems;
-    if(selectedPurpose==='rejected-proposal-repair')result.candidateProblems=rejected.validationProblems; }
+    if(selectedPurpose==='rejected-proposal-repair')result.candidateProblems=rejected.validationProblems;
+    if(selectedPurpose==='rejected-proposal-followup'){
+      const f=rejected.followup;
+      if(!f||hash(f.response)!==f.fromResponseHash)throw new Error('Retained authoring guidance changed.');
+      result.authoringFollowup={id:f.id,requestId:f.requestId,inputHash:f.inputHash,responseHash:f.fromResponseHash,originalProposalHash:rejected.origin.recordHash};
+      result.candidateProblems=f.diagnostics;
+      result.untrustedAuthoring={status:'RECEIVED BUT REJECTED; NO EDIT WAS APPLIED; NOT A CANDIDATE OR APPROVAL',proposal:require('./authoring-contract').guidance(f.response)};
+    } }
   return result;
 }
 function revisionTargets(revisions) {
@@ -131,5 +141,5 @@ function checkRevisions(value, input, draft) {
 const instruction = `PRIVATE CANDIDATE LIFECYCLE. earlierDraft is the exact UNCHECKED candidate, not an accepted review. candidateRevisions spans the immutable original reference to this candidate; its before fields are exact old content, afterHash identifies content in earlierDraft. When referenceOrigin.kind=received-rejected, the original was NEVER accepted; it supplies material scope and revision lineage, not evidence of correctness or approvals. rejected-proposal-repair must resolve the typed candidateProblems and all material local questions/dependencies across the entire original claim scope, retaining genuine blockers. Review scope never disappears when a note is removed. No diagnostic or candidate checks confer approval.
 For a checkOnly request: overall kept means the CANDIDATE remains EXACTLY unchanged. Fresh explanationReviews classify each note relative to the ORIGINAL reference (accepted base, or explicitly unaccepted received proposal): unchanged=kept, changed=repaired, new=added, absent=removed. Review every current note AND every old changed/removed note in candidateRevisions, with their original and current sources. Check the reasons and dependent reference changes, all original claim groups, every current causal target and all premises. No approvals are inherited. If any edit is needed return repair with concrete affected IDs; do not rewrite the candidate. An indispensable missing fact stays a finite blocker, not a forced verdict.
 In that same checks array, additionally check EVERY exact target in candidateRevisionTargets. Explain why its exact original-to-candidate change/removal is justified (or reject it), using old/current evidence IDs or supplied documentation. These checks do not replace any current causal target or explanation review. Revision targets are separate from runtime events and never become tutorial steps.
-For candidateOnly: normal instructions demanding fresh inputReviews, explanationReviews and causal checks do NOT apply to this authoring request. Complete the WHOLE explanation across all material claim groups, rule basis, conditions, consequences and counterevidence, or retain exact indispensable blockers. Return only candidate-patch-v1 updates; it supplies no attestations. Keep unaffected content and stable IDs. A candidate-repair request may change only the stated problems and their necessary dependencies. Do not invent facts or remove material scope to fit. The complete candidate will receive a separate fresh check.`;
+For candidateOnly: normal instructions demanding fresh inputReviews, explanationReviews and causal checks do NOT apply to this authoring request. Complete the WHOLE explanation across all material claim groups, rule basis, conditions, consequences and counterevidence, or retain exact indispensable blockers. Return only the enforced candidate authoring shape; it supplies no attestations. Keep unaffected content and stable IDs. A candidate-repair request may change only the stated problems and their necessary dependencies. untrustedAuthoring is a rejected earlier proposal, not the current candidate: its edits were NOT applied to earlierDraft. Independently use or reject its material reasoning against source and current diagnostics; never inherit its checks. The complete candidate will receive a separate fresh check.`;
 module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, instruction };

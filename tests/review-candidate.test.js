@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const engine=require('../extension/investigation-engine'),provider=require('../extension/semantic-provider'),candidate=require('../extension/review-candidate');
+const actualEngine=require('../extension/investigation-engine'),fixtureAuthoring=require('../scripts/fixtures/authoring-output');
+const engine={...actualEngine,advance:options=>actualEngine.advance({...options,invoke:fixtureAuthoring.invoke(options.invoke)})},provider=require('../extension/semantic-provider'),candidate=require('../extension/review-candidate');
 const format=require('../extension/challenge-format'),policy=require('../extension/guide-policy'),capacity=require('../extension/review-capacity');
 const native=process.env.FLOWBOARD_EXTENSION_PATH;
 async function fixture(t,kind='route',index=0,extra=0) {

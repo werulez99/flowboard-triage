@@ -1,7 +1,8 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
-const { ReportPreparation, reconcile } = require('../extension/report-preparation');
+const preparation = require('../extension/report-preparation'), { reconcile }=preparation;
+class ReportPreparation extends preparation.ReportPreparation { constructor(root,options){super(root,require('../scripts/fixtures/authoring-output').options(options));} }
 const { importReport, parseReport, mapFile } = require('../extension/report');
 const { analyze } = require('../extension/runner-adapter'), { SourceCatalog } = require('../extension/source');
 const engine = require('../extension/investigation-engine'), policy = require('../extension/guide-policy');
@@ -84,7 +85,7 @@ test('completed provider receipt survives checkpoint ENOSPC without acceptance o
   assert.equal(engine.read(f.root,'I-1').claims.length,0);assert.equal(f.runner.status().ready,0);
   assert.equal(f.runner.state.jobs['I-1'].failureKind,'storage');
 });
-for(const receiptFault of [false,true])test(`ordinary coordinator repairs a retained rejection once and recovers terminal storage (${receiptFault?'receipt fault':'normal'})`,{skip:!native},async t=>{
+for(const receiptFault of [false,true,'followup'])test(`ordinary coordinator repairs a retained rejection once and recovers terminal storage (${receiptFault||'normal'})`,{skip:!native},async t=>{
   const stages=[],f=await fixture(t,2);let original,failReceipt=false;
   const atomic=p.atomicJson;t.mock.method(p,'atomicJson',function(root,file,value){
     if(failReceipt&&file==='.flowboard/report-preparation.json'&&Object.values(value.resources?.receipts||{}).some(r=>r.reviewPurpose==='rejected-proposal-repair'&&r.finishedAt)){
@@ -98,10 +99,11 @@ for(const receiptFault of [false,true])test(`ordinary coordinator repairs a reta
       value.inputReviews=[];delete value.walkthrough.steps;
       value.claims.push({...structuredClone(value.claims[0]),id:'c2',allegation:'The same false call settles successfully.'});
       value.causal.obligations.push(...value.causal.obligations.map(o=>({...o,id:o.id+'-second',claimId:'c2'})));original=structuredClone(value);
-    } else if(input.reviewPurpose==='rejected-proposal-repair'){
+    } else if(['rejected-proposal-repair','rejected-proposal-followup'].includes(input.reviewPurpose)){
       const note={...input.earlierDraft.evidence[0],id:'guard-second',claimId:'c2'};
       value={mode:'candidate-patch-v1',updates:[{path:'/evidence/guard-second',valueJSON:JSON.stringify(note)},{path:'/claims/c2/evidence',valueJSON:'["guard-second"]'},
-        ...input.earlierDraft.causal.obligations.filter(o=>o.claimId==='c2').map(o=>({path:'/causal/obligations/'+o.id+'/evidence',valueJSON:'["guard-second"]'}))]};f.runner.control('pause');failReceipt=receiptFault;
+        ...input.earlierDraft.causal.obligations.filter(o=>o.claimId==='c2').map(o=>({path:'/causal/obligations/'+o.id+'/evidence',valueJSON:'["guard-second"]'}))]};f.runner.control('pause');failReceipt=receiptFault===true;
+      if(receiptFault==='followup'&&input.reviewPurpose==='rejected-proposal-repair')value={mode:'candidate-edit-v2',edits:[{op:'set',target:'/causal/events/event/changes/1/evidence',value:[]}]};
     } else if(input.reviewPurpose==='candidate-verification'){
       value={result:'kept',problems:[],inputReviews:[],explanationReviews:input.earlierDraft.evidence.map(e=>({evidenceId:e.id,result:e.id==='guard'?'kept':'added',reason:e.explanation,checkedSourceIds:[e.sourceId]})),
         checks:[...require('../extension/review-capacity').targets(input.earlierDraft.causal).map(t=>t.key),...input.candidateRevisionTargets].map(target=>({target,reason:'The require(false) guard reverts before any normal settlement for both claims.',evidence:['guard','guard-second'],documentation:[]}))};
@@ -112,7 +114,27 @@ for(const receiptFault of [false,true])test(`ordinary coordinator repairs a reta
   assert.equal(engine.read(f.root,'I-1').claims.length,0);assert.ok(f.runner.status().jobs.find(j=>j.id==='I-1').repairAvailable);
   await f.runner.ensure();assert.equal(f.runner.state.resources.requests,before,'Unchanged local replay is unpaid.');
   const a=f.runner.continueFinding('I-1',{repairSavedAnalysis:true}),b=f.runner.continueFinding('I-1',{repairSavedAnalysis:true});await Promise.all([a,b]);
-  if(receiptFault){
+  if(receiptFault==='followup'){
+    const failed=engine.read(f.root,'I-1'),used=f.runner.state.resources.requests,count=stages.length;
+    assert.equal(failed.reviewCandidate,undefined);assert.equal(failed.currentRejection.reviewPurpose,'rejected-proposal-repair');
+    assert.equal(f.runner.state.jobs['I-1'].validationProblems[0].code,'EDIT_TARGET');
+    assert.ok(f.runner.state.jobs['I-1'].rejectionHistory.some(r=>r.validationProblems.some(p=>p.code==='REVIEW_REFERENCE_SCOPE')));
+    await f.runner.ensure();assert.equal(stages.length,count);assert.equal(f.runner.state.resources.requests,used);
+    const authorization={id:'unique-owned-followup',responseHash:failed.currentRejection.responseHash};
+    await f.runner.continueFinding('I-1',{recheckLocalPreparation:true,followupAuthorization:authorization});
+    const prepared=engine.read(f.root,'I-1');assert.equal(prepared.rejectedProposal.state,'repair-dispatched');assert.equal(prepared.rejectedProposal.followup.state,'pending');
+    assert.equal(stages.length,count);assert.equal(f.runner.state.resources.requests,used);assert.equal(prepared.pendingResponse,undefined);
+    const archive=prepared.rejectedProposal.followup.archive;
+    const retained=require('../extension/provider-result').read(f.root,'I-1',archive,{phase:'challenge',snapshot:prepared.snapshot,corrections:prepared.corrections,previous:archive.previous});
+    assert.equal(engine.hash(retained.result.value),authorization.responseHash);
+    await Promise.all([f.runner.continueFinding('I-1'),f.runner.continueFinding('I-1')]);
+    assert.equal(stages.filter(s=>s[1]==='rejected-proposal-followup').length,1);
+    const candidate=engine.read(f.root,'I-1');assert.ok(candidate.reviewCandidate,candidate.error);
+    assert.equal(candidate.rejectedProposal.followup.state,'dispatched');assert.equal(candidate.reviewCandidate.acceptedBase,undefined);
+    assert.deepEqual(require('../extension/provider-result').read(f.root,'I-1',archive,{phase:'challenge',snapshot:candidate.snapshot,corrections:candidate.corrections,previous:archive.previous}).result.value,retained.result.value);
+    assert.ok(candidate.reviewCandidate.lineage[0].authoringMapping.selections.length);
+  }
+  if(receiptFault===true){
     assert.equal(engine.read(f.root,'I-1').failureCode,'RECEIPT_STORAGE_FAILED');
     const used=f.runner.state.resources.requests,called=stages.length;
     f.runner.dispose();await f.runner.loop;f.runner=new ReportPreparation(f.root,f.options);
@@ -125,8 +147,8 @@ for(const receiptFault of [false,true])test(`ordinary coordinator repairs a reta
   assert.equal(f.runner.state.jobs['I-1'].hasPrivateCandidate,true);assert.equal(f.runner.state.jobs['I-1'].retainedRejection,false,'A completed private repair can offer verification, not another link-repair action.');
   const old=require('../extension/provider-result').read(f.root,'I-1',draft.rejectedProposal.original,{phase:'generate',snapshot:draft.snapshot,corrections:draft.corrections,previous:null});assert.deepEqual(old.result.value,original);
   await f.runner.continueFinding('I-1');assert.ok(f.runner.artifact('I-1'),engine.read(f.root,'I-1').error);
-  assert.deepEqual(stages.filter(s=>s[0]==='I-1').map(s=>s[1]),['generate','rejected-proposal-repair','candidate-verification']);
-  assert.equal(f.runner.state.jobs['I-1'].requests,3);assert.equal(f.runner.state.jobs['I-2'].requests,2);
+  assert.deepEqual(stages.filter(s=>s[0]==='I-1').map(s=>s[1]),['generate','rejected-proposal-repair',...(receiptFault==='followup'?['rejected-proposal-followup']:[]),'candidate-verification']);
+  assert.equal(f.runner.state.jobs['I-1'].requests,receiptFault==='followup'?4:3);assert.equal(f.runner.state.jobs['I-2'].requests,2);
   const count=stages.length;f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(stages.length,count);
 });
 async function seedCorrectionRace(t) {
@@ -792,8 +814,11 @@ test('Resume during a finishing request is not lost and does not regenerate the 
   assert.deepEqual(f.calls.map(call => call[1]), ['generate', 'challenge']);
 });
 test('a repaired answer can request new local evidence without spending the semantic-repair allowance again', { skip: !native }, async t => {
-  let inspected = false;
+  let inspected = false, typedRepair = false;
   const f = await fixture(t, 1, (input, calls) => {
+    if(input.repairOnly){typedRepair=true;assert.equal(input.authoringFormat,require('../extension/authoring-contract').VERSION);
+      const schema=require('../extension/semantic-provider').responseSchema(input);
+      assert.equal(require('../extension/challenge-format').valid({mode:'review-edit-v2',edits:[{op:'set',target:'/causal/events/event/changes/0/evidence',value:[]}],inputReviews:[],explanationReviews:[],checks:[]},schema),false);}
     if(input.reviewPurpose && input.checkOnly)return checkedCandidate(input);
     if (input.checkOnly) return { result: 'repair', problems: ['Read the declared check before finalizing.'], explanationReviews: [], checks: [] };
     const value = response(input);
@@ -814,6 +839,7 @@ test('a repaired answer can request new local evidence without spending the sema
   const result = await analyze(native, f.root, { mode: 'source' }); f.replaceCatalog(new SourceCatalog(f.root, result.runner, result.result));
   await f.runner.ensure();
   assert.equal(inspected, true);
+  assert.equal(typedRepair,true,'The actual inline repair callback uses the same enforced edit grammar.');
   assert.equal(f.calls.length, 5, 'Generation, compact check, repair discovering local context, private completion, full verification.');
   assert.equal(f.runner.status().published, true);
   const saved = engine.read(f.root, 'I-1');
@@ -986,7 +1012,7 @@ test('historical expiry does not auto-resume a paused job but explicit local con
   await f.runner.continueFinding('I-1'); assert.equal(f.calls.length, 2); assert.equal(f.runner.status().ready, 1);
   assert.equal(f.runner.state.batch.startedAt, startedAt);
 });
-test('scoped runner admits rejected-proposal R then full V over paid history and refuses duplicate or stale authority',{skip:!native},async t=>{
+for(const extraAuthoring of [false,true])test(`scoped runner preserves spent R and same V with explicit follow-up=${extraAuthoring}`,{skip:!native},async t=>{
   const f=await fixture(t,1, input=>{const value=response(input);value.inputReviews=[];delete value.walkthrough.steps;value.claims[0].evidence.push('absent-note');return value;});
   await f.runner.ensure();f.runner.dispose();await f.runner.loop;
   const {EvaluationPlanGuard,packetIdentity,savedBase,accountingBaseline}=require('../scripts/evaluation-plan-guard'),{executionOptions,runCases,verifyParent}=require('../scripts/run-evaluation-plan');
@@ -995,27 +1021,41 @@ test('scoped runner admits rejected-proposal R then full V over paid history and
   let owner=f.runner,parent={manifest:{cases:[{findingId:entry.id,phases:['generate']}]},ledger:{used:1,receipts:[{outcome:'completed'}]}};
   const storeParent=()=>{parent.manifestPath=path.join(f.root,'parent-'+(parent.manifest.cases[0].reviewPurpose||'G')+'.json');parent.ledgerPath=parent.manifestPath+'.ledger';fs.writeFileSync(parent.manifestPath,JSON.stringify(parent.manifest));fs.writeFileSync(parent.ledgerPath,JSON.stringify(parent.ledger));};storeParent();
   const calls=[];
-  for(const purpose of ['rejected-proposal-repair','candidate-verification']){
+  for(const purpose of ['rejected-proposal-repair',...(extraAuthoring?['rejected-proposal-followup']:[]),'candidate-verification']){
+    if(purpose==='rejected-proposal-followup'){
+      owner=new ReportPreparation(f.root,{...f.options,configuration:()=>({provider:'none'}),invoke:()=>assert.fail('Preparing explicit follow-up is local')});
+      const rejected=engine.read(f.root,entry.id);
+      await owner.continueFinding(entry.id,{recheckLocalPreparation:true,followupAuthorization:{id:'new-authoring-only',responseHash:rejected.currentRejection.responseHash}});
+      owner.dispose();await owner.loop;
+    }
     const saved=engine.read(f.root,entry.id),baseline=accountingBaseline(owner.state),{packet}=await require('../scripts/saved-stage-packet').inspectSavedStage({root:f.root,catalog,request,issue,findingId:entry.id,saved});
     assert.equal(packet.reviewPurpose,purpose);const inputPath=path.join(f.root,purpose+'.input.json');fs.writeFileSync(inputPath,JSON.stringify(packet));
     const manifest={root:f.root,referenceHash:'private-reference-not-input',maximumRequests:1,reviewCycle:{kind:'received-proposal-repair-v1',id:'one-R-V'},cases:[{findingId:entry.id,phases:['challenge'],reviewPurpose:purpose,
-      originalProposalHash:saved.rejectedProposal.original.hash,timeoutMs:purpose==='rejected-proposal-repair'?300000:600000,snapshotHash:engine.hash(saved.snapshot),retainedBaseHash:engine.hash(savedBase(saved)),firstPacket:packetIdentity(packet),firstPacketPath:inputPath}],
+      originalProposalHash:saved.rejectedProposal.original.hash,timeoutMs:purpose.endsWith('verification')?600000:300000,
+      ...(purpose==='rejected-proposal-followup'?{followupAuthorization:{id:saved.rejectedProposal.followup.id,responseHash:saved.rejectedProposal.followup.fromResponseHash}}:{}),
+      snapshotHash:engine.hash(saved.snapshot),retainedBaseHash:engine.hash(savedBase(saved)),firstPacket:packetIdentity(packet),firstPacketPath:inputPath}],
       continuation:{parentManifestPath:parent.manifestPath,parentLedgerPath:parent.ledgerPath,parentManifestHash:engine.hash(parent.manifest),parentLedgerHash:engine.hash(parent.ledger),baseline,baselineHash:engine.hash(baseline)}};
     verifyParent(manifest);
-    if(purpose==='candidate-verification'){const failed=structuredClone(parent.ledger);failed.receipts[0].outcome='failed';fs.writeFileSync(parent.ledgerPath,JSON.stringify(failed));const changed=structuredClone(manifest);changed.continuation.parentLedgerHash=engine.hash(failed);assert.throws(()=>verifyParent(changed),/one R then one full V/);fs.writeFileSync(parent.ledgerPath,JSON.stringify(parent.ledger));}
+    if(purpose==='candidate-verification'){const failed=structuredClone(parent.ledger);failed.receipts[0].outcome='failed';fs.writeFileSync(parent.ledgerPath,JSON.stringify(failed));const changed=structuredClone(manifest);changed.continuation.parentLedgerHash=engine.hash(failed);assert.throws(()=>verifyParent(changed),/same one full V/);fs.writeFileSync(parent.ledgerPath,JSON.stringify(parent.ledger));}
     const ledger={manifestHash:engine.hash(manifest),used:0,receipts:[]},approval={authorized:true,manifestHash:engine.hash(manifest),maximumRequests:1};
     const guard=new EvaluationPlanGuard({manifest,ledger,approval,root:f.root,save:()=>{},acceptedBase:id=>engine.read(f.root,id)});
     assert.ok(guard.check(packet));assert.equal(ledger.used,0);assert.throws(()=>guard.check({...packet,referenceOrigin:{...packet.referenceOrigin,recordHash:'changed'}}));
     const invoke=async(input,options)=>{const receipt=guard.dispatch(input,options.requestId);calls.push(input.reviewPurpose);let value;
       if(input.candidateOnly)value={mode:'candidate-patch-v1',updates:[{path:'/claims/c1/evidence',valueJSON:'["guard"]'}]};
       else{value=response(input);value.inputReviews=[];value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The absent reference is replaced by the already scoped exact require evidence; the same allegation is retained.',evidence:['guard'],documentation:[]})));}
-      const result={value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};guard.result(receipt,input,result);return result;};
+      if(extraAuthoring&&input.reviewPurpose==='rejected-proposal-repair')value={mode:'candidate-edit-v2',edits:[{op:'set',target:'/causal/relationships/not-an-id',value:[]}]};
+      const result={value:require('../scripts/fixtures/authoring-output').encode(value,input),audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};guard.result(receipt,input,result);return result;};
     owner=new ReportPreparation(f.root,executionOptions({manifest,guard,catalog:async()=>catalog,invoke}));await runCases(owner,manifest);
     assert.equal(ledger.used,1,JSON.stringify(owner.status().jobs));assert.equal(owner.state.resources.requests,baseline.requests+1);
     const count=calls.length;await runCases(owner,manifest);assert.equal(calls.length,count);assert.throws(()=>guard.authorize(packet),/Aggregate/);
+    if(purpose==='rejected-proposal-followup'||purpose==='candidate-verification'){
+      const duplicate=structuredClone(manifest);duplicate.authorization='different manifest, same consumed lineage slot';duplicate.continuation.baseline=accountingBaseline(owner.state);duplicate.continuation.baselineHash=engine.hash(duplicate.continuation.baseline);
+      const another=new EvaluationPlanGuard({manifest:duplicate,approval:{authorized:true,manifestHash:engine.hash(duplicate),maximumRequests:1},ledger:{manifestHash:engine.hash(duplicate),used:0,receipts:[]},root:f.root,save:()=>assert.fail('No renewed slot')});
+      assert.throws(()=>another.continuation(owner.state),/lineage already owns/);
+    }
     owner.dispose();await owner.loop;parent={manifest,ledger};storeParent();
   }
-  assert.deepEqual(calls,['rejected-proposal-repair','candidate-verification']);assert.equal(engine.read(f.root,entry.id).publication.ready,true);
+  assert.deepEqual(calls,['rejected-proposal-repair',...(extraAuthoring?['rejected-proposal-followup']:[]),'candidate-verification']);assert.equal(engine.read(f.root,entry.id).publication.ready,true);
 });
 
 test('204 fresh jobs complete both real engine stages and publication with automatic finite allowance', { skip: !native }, async t => {

@@ -87,15 +87,17 @@ walkthrough.assessment is a PRELIMINARY opinion of the whole issue, never the sa
 Prioritize material unknowns that could change the assessment of THIS current checkout and reported conditions. Do not ask about an already-true flag when rollback already settles whether the current call changed it. Do not invent a historical-version or deployment requirement for a source-only allegation that is resolved by the supplied code. Retain such uncertainty only where the report or actual dispatch makes it relevant. In multi-route findings, put the unknown of an unresolved route before optional background questions on an already contradicted route. One concise question is better than repeating unavailable specification/history language for every note.`;
 
 const fullSchema = input => input.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(schema) : schema;
-const responseSchema = input => input.candidateOnly ? challengeFormat.candidateSchema(fullSchema(input)) : input.checkOnly ? challengeFormat.checkSchema(fullSchema(input), !!input.reviewPurpose) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
+const responseSchema = input => input.authoringFormat === require('./authoring-contract').VERSION && (input.candidateOnly || input.repairOnly) ? require('./authoring-contract').schema(input, fullSchema(input)) : input.candidateOnly ? challengeFormat.candidateSchema(fullSchema(input)) : input.checkOnly ? challengeFormat.checkSchema(fullSchema(input), !!input.reviewPurpose) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
 const targetSchema = input => JSON.stringify(fullSchema(input));
-const responseInstruction = input => input.checkOnly ? challengeFormat.checkInstruction : input.repairOnly ?
+const responseInstruction = input => input.checkOnly ? challengeFormat.checkInstruction : input.authoringFormat === require('./authoring-contract').VERSION && (input.candidateOnly || input.repairOnly) ? require('./authoring-contract').instruction + '\n' + require('./authoring-contract').task(input) : input.repairOnly ?
   challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + targetSchema(input) :
   input.candidateOnly ? 'Return candidate-patch-v1 using stable-ID slash paths and JSON-encoded valueJSON, as in review-patch-v1, but no review arrays. The assembled candidate must match this exact field schema:\n' + targetSchema(input) : input.phase === 'challenge' ? challengeFormat.instruction : '';
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 256 * 1024;
 function measureRequest(input) {
+  if (input.authoringFormat && (input.authoringFormat !== require('./authoring-contract').VERSION || !(input.candidateOnly || input.repairOnly) || input.checkOnly))
+    throw Object.assign(new Error('Unsupported or conflicting authoring contract. No legacy schema fallback or request is permitted.'), { code: 'AUTHORING_CONTRACT' });
   require('./provisional-work-note').check(input);
   const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : '') +
     (input.sourceContextFormat ? '\n' + require('./packet-context').instructionFor(input) : '') +

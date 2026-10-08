@@ -1,7 +1,8 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
-const { ReportPreparation } = require('../extension/report-preparation'), { importReport } = require('../extension/report');
+const preparation = require('../extension/report-preparation'), { importReport } = require('../extension/report');
+class ReportPreparation extends preparation.ReportPreparation { constructor(root,options){super(root,require('../scripts/fixtures/authoring-output').options(options));} }
 const { analyze } = require('../extension/runner-adapter'), { SourceCatalog } = require('../extension/source');
 const engine = require('../extension/investigation-engine'), slots = require('../extension/provider-slots'), health = require('../extension/provider-health');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;

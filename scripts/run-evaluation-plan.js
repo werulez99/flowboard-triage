@@ -83,14 +83,15 @@ function verifyParent(manifest) {
   if(manifest.cases.some(item=>item.reviewPurpose)) {
     const cycle=manifest.reviewCycle, parent=JSON.parse(fs.readFileSync(c.parentManifestPath)), ledger=JSON.parse(fs.readFileSync(c.parentLedgerPath));
     if(cycle?.kind==='received-proposal-repair-v1'){
-      const selected=manifest.cases[0],previous=parent.cases[0],isRepair=selected?.reviewPurpose==='rejected-proposal-repair';
+      const selected=manifest.cases[0],previous=parent.cases[0],isRepair=selected?.reviewPurpose==='rejected-proposal-repair',isFollowup=selected?.reviewPurpose==='rejected-proposal-followup';
       if(!cycle.id||manifest.cases.length!==1||manifest.maximumRequests!==1||!selected.originalProposalHash||parent.cases.length!==1||previous.findingId!==selected.findingId||
-        selected.phases?.length!==1||selected.phases[0]!=='challenge'||!Number.isFinite(selected.timeoutMs)||selected.timeoutMs<=0||selected.timeoutMs>(isRepair?300000:600000)||
+        selected.phases?.length!==1||selected.phases[0]!=='challenge'||!Number.isFinite(selected.timeoutMs)||selected.timeoutMs<=0||selected.timeoutMs>(isRepair||isFollowup?300000:600000)||
         ledger.receipts?.length!==1||
         (isRepair?(!!parent.reviewCycle||previous.phases?.length!==1||previous.phases[0]!=='generate'||ledger.used!==1||ledger.receipts[0].outcome!=='completed'):
-          selected.reviewPurpose!=='candidate-verification'||parent.reviewCycle?.id!==cycle.id||parent.reviewCycle.kind!==cycle.kind||previous.reviewPurpose!=='rejected-proposal-repair'||
+          (isFollowup?previous.reviewPurpose!=='rejected-proposal-repair'||!selected.followupAuthorization?.id||selected.followupAuthorization.responseHash!==ledger.receipts[0].responseHash:
+            selected.reviewPurpose!=='candidate-verification'||!['rejected-proposal-repair','rejected-proposal-followup'].includes(previous.reviewPurpose))||parent.reviewCycle?.id!==cycle.id||parent.reviewCycle.kind!==cycle.kind||
           previous.originalProposalHash!==selected.originalProposalHash||ledger.used!==1||ledger.receipts[0].outcome!=='completed'||ledger.receipts[0].audit?.teardown?.confirmed!==true))
-        throw Error('Rejected-proposal continuation permits one R then one full V only; no generation, repeat or repair after verification.');
+        throw Error('Rejected-proposal continuation requires its exact completed parent and explicit new authoring authority, then the same one full V; no retry or repair after verification.');
       return;
     }
     const order=['candidate-completion','candidate-verification','candidate-repair','candidate-reverification'];

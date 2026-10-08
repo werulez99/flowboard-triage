@@ -65,7 +65,7 @@ function response(input, name) {
   const explanationReviews = evidence.map(e => ({ evidenceId: e.id, result: 'kept', reason: e.explanation, checkedSourceIds: [...new Set(evidence.map(x => x.sourceId))] }));
   const inputReviews = (input.semanticInput?.premises || []).map(p => ({ id: p.id, status: 'applied', reason: 'The stated expectation and source-conditional scenario are retained with their original attribution.', claimIds: ['c1'], eventIds: events.map(e => e.id), evidence: all }));
   if (input.checkOnly) return { result: 'kept', problems: [], inputReviews, explanationReviews, checks };
-  if (input.repairOnly) return { mode: 'review-patch-v1', updates: [], inputReviews, explanationReviews, checks };
+  if (input.repairOnly) return require('./authoring-output').encode({ mode: 'review-patch-v1', updates: [], inputReviews, explanationReviews, checks },input);
   if (input.phase === 'challenge') causal.checks = checks;
   return require('./source-bound-output').encode({ inputReviews, property: { text: spec.rule, basis: name === 'time' ? 'source-contract' : 'report-assumption', evidence: name === 'time' ? ['rule'] : [], documentation: [] },
     claims: [{ id: 'c1', allegation: input.finding.reportParagraphs.find(p => p.text.includes('Description'))?.text || spec.summary, actor: 'Caller', entry: Object.values(units)[0].id, implementation: spec.contract, conditions: spec.conditions, requiredFacts: [spec.rule], supportsIf: 'The reported operation differs from the checked expected rule.', contradictsIf: 'The decisive source contradicts the reported operation or consequence.', status: spec.outcome === 'supported' ? 'supported' : 'contradicted', reason: spec.conclusion, evidence: all, unknowns: [], nextQuestion: '' }],

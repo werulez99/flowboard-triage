@@ -101,7 +101,10 @@ test('the normal engine applies a compact challenge while retaining the unresolv
   const result = await engine.advance({ ...context, provider: 'codex', publish: async () => {}, invoke: async input => {
     inputs.push(input.phase);
     let value = response(input);
-    if (input.phase === 'challenge') {
+    if (input.repairOnly) {
+      assert.equal(input.authoringFormat,require('../extension/authoring-contract').VERSION);
+      value={mode:'review-edit-v2',edits:[],inputReviews:value.inputReviews,explanationReviews:value.explanationReviews,checks:[]};
+    } else if (input.phase === 'challenge') {
       value.property.documentation = [];
       const fields = format.schemaFor(schema).properties;
       value = { mode: format.MODE, changes: Object.fromEntries(Object.keys(fields.changes.properties).map(key => [key, value[key] ?? null])),

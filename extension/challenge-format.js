@@ -104,16 +104,23 @@ function earlier(draft, schema) {
   value.explanationReviews = [];
   return value;
 }
-function valid(value, schema) {
-  if (schema.anyOf) return schema.anyOf.some(option => valid(value, option));
+function valid(value, schema, root = schema, references = new Set()) {
+  if (!schema || typeof schema !== 'object') return false;
+  if (schema.$ref) {
+    const key = /^#\/\$defs\/([A-Za-z0-9_-]+)$/.exec(schema.$ref)?.[1];
+    if (!key || !root.$defs?.[key] || references.has(key)) return false;
+    return valid(value, root.$defs[key], root, new Set([...references, key]));
+  }
+  if (schema.anyOf) return schema.anyOf.some(option => valid(value, option, root, references));
   if (schema.enum && !schema.enum.includes(value)) return false;
   if (schema.type === 'null') return value === null;
   if (schema.type === 'string' && (typeof value !== 'string' || schema.maxLength && Array.from(value).length > schema.maxLength || schema.pattern && !new RegExp(schema.pattern).test(value))) return false;
-  if (schema.type === 'integer' && !Number.isSafeInteger(value)) return false;
-  if (schema.type === 'array') return Array.isArray(value) && (!schema.maxItems || value.length <= schema.maxItems) && value.every(item => valid(item, schema.items));
+  if (schema.type === 'integer' && (!Number.isSafeInteger(value) || schema.minimum !== undefined && value < schema.minimum || schema.maximum !== undefined && value > schema.maximum)) return false;
+  if (schema.type === 'boolean' && typeof value !== 'boolean') return false;
+  if (schema.type === 'array') return Array.isArray(value) && (!schema.maxItems || value.length <= schema.maxItems) && value.every(item => valid(item, schema.items, root, references));
   if (schema.type === 'object') return !!value && typeof value === 'object' && !Array.isArray(value) &&
     schema.required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => Object.hasOwn(schema.properties, key)) &&
-    Object.entries(schema.properties).every(([key, child]) => !Object.hasOwn(value, key) || valid(value[key], child));
+    Object.entries(schema.properties).every(([key, child]) => !Object.hasOwn(value, key) || valid(value[key], child, root, references));
   return true;
 }
 function expand(value, previous, fullSchema) {

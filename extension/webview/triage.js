@@ -248,10 +248,16 @@
         parent.append(needed);
       }
       if (selectedJob?.validationProblems?.length) {
-        const invalid = element('details'); invalid.append(element('summary', '', 'Retained response: targeted repair needed'));
-        for (const item of selectedJob.validationProblems) invalid.append(element('p', '', `${item.code}${item.target ? ` (${item.target})` : ''}: ${item.message}`), ...(item.action ? [element('small', 'triage-muted', item.action)] : []));
+        const invalid = element('details'); invalid.append(element('summary', '', 'Current received response: correction details'));
+        if(selectedJob.currentAttempt)invalid.append(element('small','triage-muted',`${selectedJob.currentAttempt.reviewPurpose} · ${selectedJob.currentAttempt.requestId || 'retained response'} · ${selectedJob.currentAttempt.verificationStarted?'Verification attempted':'Verification not started'}`));
+        for (const item of selectedJob.validationProblems) {
+          invalid.append(element('p', '', `${item.code}${item.target ? ` (${item.target})` : ''}: ${item.message}`), ...(item.sourceId?[element('small','triage-muted',`${item.file||item.sourceId}:${item.line}-${item.endLine}`)]:[]), ...(item.action ? [element('small', 'triage-muted', item.action)] : []));
+          if(item.file)invalid.append(button(`Read source lines ${item.line}-${item.endLine}`,()=>send('triage:openReference',{file:item.file,line:item.line})));
+        }
         parent.append(invalid);
       }
+      if(selectedJob?.rejectionHistory?.length){const history=element('details');history.append(element('summary','','Earlier response history'));
+        for(const item of selectedJob.rejectionHistory)history.append(element('p','triage-muted',item.requestId||'Original received response'),...item.validationProblems.map(p=>element('small','triage-muted',`${p.target||''}: ${p.message}`)));parent.append(history);}
       const controls = element('div', 'guide-preparation-actions');
       if (canContinueFinding()) {
         parent.append(element('small', 'triage-muted', 'Continue uses remaining shared allowance and may renew only this finding’s limit. Paused siblings stay paused. It never adds report allowance.'));
@@ -318,7 +324,7 @@
       const stopped = progress?.stopped?.find(job => job.id === active);
       const reason = cardBlocked ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if(job?.retainedRejection){
-        preparationSurface.append(element('p','guide-status-reason','Analysis was received, but its evidence links need correction. The original answer is retained and is not a checked tutorial.'),
+        preparationSurface.append(element('p','guide-status-reason','Analysis received · correction required. The retained response has not produced a checked tutorial. Verification has not started for this proposal.'),
           element('small','triage-muted',job.repairAvailable?'Repair saved analysis starts a model request using the retained proposal; a separate full verification is still required.':job.failureKind==='local-reading'?'Complete local context and fit the whole review packet before a repair request. No new review has been sent; source and manual review remain available.':'No eligible repair request is available in the current provider/allowance or stage. Source and manual review remain available; local replay cannot correct the model’s links.'));
         if(reason&&job.failureKind!=='structural'&&job.failureKind!=='validation')preparationSurface.append(element('p','guide-status-reason',reason));
       }else if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));

@@ -40,4 +40,49 @@ function material(draft,units,schema) {
   return {...value,evidence:value.evidence.map(e=>({...e,note:e.explanation,source:{...units.find(u=>u.id===e.sourceId).source,line:e.line,endLine:e.endLine}}))};
 }
 function originalSourceIds(root,draft,schema){const state=assertCurrent(draft,schema),record=checkpoint.read(root,draft.findingId,state.original,{phase:'generate',snapshot:draft.snapshot,corrections:draft.corrections,previous:null});if(!record)throw new Error('Original proposal sources are unavailable.');return record.units.map(u=>u.id);}
-module.exports={VERSION,assertCurrent,eligible,begin,material,originalSourceIds};
+function followupEligible(draft) {
+  return !!draft?.rejectedProposal && !draft.reviewCandidate && !!draft.pendingResponse &&
+    draft.currentRejection?.responseHash && draft.currentRejection.cleanupConfirmed && draft.currentRejection.reviewPurpose?.startsWith('rejected-proposal-') &&
+    (!draft.rejectedProposal.followup || draft.rejectedProposal.followup.state === 'dispatched');
+}
+function assertFollowup(root,draft,schema) {
+  const state=assertCurrent(draft,schema),f=state.followup;if(!f)return null;
+  const expected={phase:'challenge',snapshot:draft.snapshot,corrections:draft.corrections,previous:candidates.hash(format.earlier(draft,schema))};
+  const record=checkpoint.read(root,draft.findingId,f.archive,expected);
+  if(!record||!['pending','dispatched'].includes(f.state)||record.result.audit.outcome!=='completed'||record.result.audit.teardown?.confirmed!==true||
+    record.result.audit.requestId!==f.requestId||candidates.hash(record.input)!==f.inputHash||candidates.hash(record.result.value)!==f.fromResponseHash||
+    candidates.hash(f.response)!==f.fromResponseHash||record.input.candidateIdentity?.referenceOrigin?.recordHash!==state.origin.recordHash||
+    !state.authoringHistory.some(h=>h.archive.hash===f.archive.hash&&h.responseHash===f.fromResponseHash))
+    throw Object.assign(new Error('Follow-up no longer matches its immutable received response, ownership or source/premise/proposal lineage.'),{code:'REJECTED_PROPOSAL_STALE'});
+  return record;
+}
+function followup(root,draft,schema,authorization) {
+  const state=assertCurrent(draft,schema);
+  if(!authorization?.id||!authorization.responseHash)throw new Error('An explicit owned follow-up identity and rejected response are required.');
+  if(state.followup?.id===authorization.id){
+    if(state.followup.fromResponseHash!==authorization.responseHash)throw new Error('Follow-up authorization changed.');
+    return state.followup; // Never renew a consumed/pending identity on restart.
+  }
+  if(!followupEligible(draft)||draft.currentRejection.responseHash!==authorization.responseHash||
+      state.authoringHistory?.some(item=>item.authorizationId===authorization.id))throw new Error('No matching completed rejected authoring attempt can transfer to this follow-up.');
+  const expected={phase:'challenge',snapshot:draft.snapshot,corrections:draft.corrections,previous:candidates.hash(format.earlier(draft,schema))};
+  const received=checkpoint.read(root,draft.findingId,draft.pendingResponse,expected);
+  if(!received||received.result.audit.outcome!=='completed'||received.result.audit.teardown?.confirmed!==true||
+      received.result.audit.requestId!==draft.currentRejection.requestId||candidates.hash(received.result.value)!==authorization.responseHash||
+      received.input.candidateIdentity?.referenceOrigin?.recordHash!==state.origin.recordHash)
+    throw new Error('Completed response ownership, original proposal, context or cleanup is not confirmed.');
+  const archive=checkpoint.retain(root,draft.findingId,draft.pendingResponse,expected);
+  state.authoringHistory=[...(state.authoringHistory||[]),{archive,diagnostics:structuredClone(draft.currentRejection),
+    authorizationId:state.followup?.id||null,requestId:received.result.audit.requestId,responseHash:authorization.responseHash}];
+  state.followup={id:authorization.id,state:'pending',fromResponseHash:authorization.responseHash,archive,
+    inputHash:candidates.hash(received.input),requestId:received.result.audit.requestId,
+    response:structuredClone(received.result.value),diagnostics:structuredClone(draft.currentRejection.validationProblems),at:new Date().toISOString()};
+  // The consumed first repair stays repair-dispatched. A distinct explicitly
+  // requested follow-up, not a refund/reset, now owns subsequent work.
+  delete draft.pendingResponse;
+  draft.phase='rejected-proposal-followup';draft.failureKind=null;draft.failureCode=null;
+  draft.error='Saved rejected authoring is archived. Local preparation precedes the explicitly requested correction; verification has not started.';
+  delete draft.localPreparation?.preflight;
+  return state.followup;
+}
+module.exports={VERSION,assertCurrent,eligible,begin,material,originalSourceIds,followupEligible,followup,assertFollowup};

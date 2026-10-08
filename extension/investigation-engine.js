@@ -837,6 +837,7 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   return accepted;
 }
 function invalidateCandidate(draft,reason,correctionId) {
+  if(draft.currentRejection){draft.rejectionHistory=[...(draft.rejectionHistory||[]),{...draft.currentRejection,invalidation:{reason,correctionId,at:now()}}];delete draft.currentRejection;}
   if(draft.rejectedProposal){draft.rejectedProposalHistory=[...(draft.rejectedProposalHistory||[]),{...draft.rejectedProposal,invalidation:{reason,correctionId,at:now()}}];delete draft.rejectedProposal;}
   if(draft.reviewCandidate) {
     draft.invalidatedCandidates=[...(draft.invalidatedCandidates||[]),{reason,correctionId,at:now(),snapshot:structuredClone(draft.snapshot),candidate:structuredClone(draft.reviewCandidate),pendingResponse:draft.pendingResponse||null}];
@@ -936,6 +937,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
   };
   try {
     if(draft.recoveryRequired)return draft;
+    if(draft.rejectedProposal?.followup)require('./rejected-proposal').assertFollowup(root,draft,reviewSchema);
     ensure(); workspaceSnapshot.validate(catalog, { force: true }); const context = makeContext(catalog, request, issue);
     if(persist&&!draft.pendingResponse&&draft.failureCode==='RECEIPT_STORAGE_FAILED'&&recoveryReservation){
       const recovered=require('./provider-result').recover(root,findingId,recoveryReservation,{phase:recoveryReservation.phase,snapshot:draft.snapshot,corrections:draft.corrections,
@@ -1089,6 +1091,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           data.assembledEarlier = require('./source-bindings').derived(proposed);
         }
       }
+      if (!draft.pendingResponse && (data.candidateOnly || data.repairOnly)) data.authoringFormat = require('./authoring-contract').VERSION;
       data = require('./packet-context').compact(data);
       if(!draft.pendingResponse)require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
       if(preparationOnly&&!draft.pendingResponse){
@@ -1148,6 +1151,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           ensure(); release.markDispatching?.();
           reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)), input, capacity: release.capacity });
           if(input.reviewPurpose==='rejected-proposal-repair'&&persist){draft.rejectedProposal.state='repair-dispatched';await save();}
+          if(input.reviewPurpose==='rejected-proposal-followup'&&persist){draft.rejectedProposal.followup.state='dispatched';await save();}
           const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
             onProcessStart: details => release.attachProcess?.(details) });
           terminalAudit = result.audit || {};
@@ -1211,7 +1215,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           }
         }
       };
-      let response = await call(data); ensure(); data=require('./packet-context').expand(data);workspaceSnapshot.validate(catalog, { force: true });
+      let response = await call(data); ensure(); let outboundHash=hash(data);data=require('./packet-context').expand(data);workspaceSnapshot.validate(catalog, { force: true });
       require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,data.earlierDraft]:[]);
       const recordReading = () => { for (const supplied of data.sources) {
         const unit = context.units.find(item => item.id === supplied.id);
@@ -1229,8 +1233,19 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           return supplied?.providedRanges?{...unit,readRanges:structuredClone(supplied.providedRanges)}:supplied && supplied.line <= through + 1 ? { ...unit, readThrough: Math.max(through, supplied.endLine) } : unit;
         });
         const formatSchema = data.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
+        let authoringMapping;
+        if (data.authoringFormat === require('./authoring-contract').VERSION && (data.candidateOnly || data.repairOnly)) {
+          const compiled = require('./authoring-contract').compile(value, data, formatSchema, reviewUnits);
+          value = compiled.output; authoringMapping = compiled.mapping;
+        }
         if (data.candidateOnly) {
-          const proposed = challengeFormat.candidate(value, data.earlierDraft, formatSchema);
+          if (!authoringMapping) {
+            const problems = require('./authoring-contract').legacyProblems(value, data, formatSchema, reviewUnits);
+            if (problems.length) throw require('./authoring-contract').failure(problems);
+          }
+          const proposed = authoringMapping ? value : challengeFormat.candidate(value, data.earlierDraft, formatSchema);
+          const problems = [...require('./review-scope').referenceProblems(proposed), ...require('./authoring-contract').evidenceProblems(proposed.evidence,data,reviewUnits)];
+          if (problems.length) throw require('./authoring-contract').failure(problems);
           const material = accept(proposed, draft, reviewUnits, { candidateOnly: true });
           require('./source-coverage').packet(data,reviewUnits,[previous,material]);
           for(const note of material.evidence){const supplied=data.sources.find(s=>s.id===note.sourceId);
@@ -1238,7 +1253,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           const reference=previous||draft;
           require('./review-scope').assert(reference, material);
           for (const claim of reference.claims) if (!material.claims.some(item => item.id === claim.id)) throw new Error(`Candidate omitted material claim ${claim.id}.`);
-          return { candidateWire: candidates.unchecked(proposed), candidateMaterial: material };
+          return { candidateWire: candidates.unchecked(proposed), candidateMaterial: material, authoringMapping };
         }
         let candidateVerification;
         if (data.checkOnly && data.reviewPurpose) {
@@ -1280,6 +1295,17 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       let accepted;
       try { accepted = validate(response.value); }
       catch (error) {
+        if (data.reviewPurpose) {
+          const diagnostics = { phase, reviewPurpose: data.reviewPurpose, requestId: response.audit?.requestId || null,
+            inputHash: outboundHash, responseHash: hash(response.value), at: now(),
+            cleanupConfirmed: response.audit?.teardown?.confirmed === true,
+            materialQuestions: require('./authoring-contract').questions(response.value,reviewSchema),
+            validationProblems: error.validationProblems || [{code:error.code || 'REVIEW_STRUCTURE',target:'/',message:error.message}],
+            checksRun: 'Independent addressing/value/source checks where readable; no partial candidate was admitted.' };
+          if (draft.currentRejection && draft.currentRejection.responseHash !== diagnostics.responseHash)
+            draft.rejectionHistory = [...(draft.rejectionHistory || []),draft.currentRejection];
+          draft.currentRejection = diagnostics; error.validationProblems = diagnostics.validationProblems;
+        }
         if(['REVIEW_CONTENT_BOUND','REVIEW_CONTENT_MISMATCH','REVIEW_REFERENCE_SCOPE'].includes(error.code)) {
           // Preserve an unrepresentable answer or invalid claim reference;
           // do not silently change meaning or buy an automatic rewrite.
@@ -1315,7 +1341,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         draft.checkpoint = { stage: phase, snapshot: hash(draft.snapshot), repairUsed: true, followups, feedback: repairFeedback, at: now() }; await save();
         // One bounded repair with the exact rejected response and host error.
         // Never guess new line spans, silently fix meaning, or publish it.
-        response = await call({ ...data, checkOnly: false, repairOnly: phase === 'challenge', hostReview: repairFeedback }); ensure(); workspaceSnapshot.validate(catalog, { force: true });
+        data = require('./packet-context').compact({ ...data, checkOnly: false, repairOnly: phase === 'challenge', hostReview: repairFeedback,
+          ...(phase === 'challenge' ? { authoringFormat: require('./authoring-contract').VERSION } : {}) });
+        require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
+        response = await call(data); ensure();outboundHash=hash(data);data=require('./packet-context').expand(data);workspaceSnapshot.validate(catalog, { force: true });
         draft.runs.push({ ...response.audit, resultAccepted: false, repair: true });
         try { accepted = validate(response.value); }
         catch (error) {
@@ -1348,6 +1377,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     let preparedNewCode = false;
     if (resumeChallenge && !draft.pendingResponse && !localOnly) {
       const preparationSubject = draft.reviewCandidate ? { ...draft, ...accept(candidates.assertCurrent(draft, reviewSchema).candidate, draft, context.units, { candidateOnly: true }) } : draft.rejectedProposal ? {...draft,...require('./rejected-proposal').material(draft,context.units,reviewSchema)} : draft;
+      if(draft.rejectedProposal?.followup&&!draft.reviewCandidate){
+        const hints=require('./authoring-contract').questions(draft.rejectedProposal.followup.response,reviewSchema);
+        preparationSubject.questions=[...new Map([...preparationSubject.questions,...hints].map(q=>[q.id,q])).values()];
+      }
       const acquired = readQuestions(preparationSubject);
       const deferred = context.prioritize(preparationSubject, [...(draft.reviewCandidate || draft.rejectedProposal ? draft.sources.map(unit => unit.id) : []), ...draft.actions.filter(action => action.acquisitionVersion === ACQUISITION_VERSION).flatMap(action => action.sourceIds)], [...supersededCandidates]);
       if (deferred.length) draft.actions.push({id:`priority-${crypto.randomUUID()}`,kind:'context-priority',outcome:'candidates-deferred',performedAt:now(),sourceIds:[],
@@ -1376,8 +1409,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const saveCandidate = async next => {
       if (!next.candidateWire) return false;
       const repairing = draft.reviewCandidate?.state === 'repair-requested';
-      const state = candidates.save(draft, next.candidateWire, reviewSchema, { kind: draft.rejectedProposal?'rejected-proposal-repair':repairing ? 'candidate-repair' : 'candidate-completion',
-        requestId: draft.runs.at(-1)?.requestId, responseHash: draft.runs.at(-1)?.responseHash || null, at: now() });
+      const state = candidates.save(draft, next.candidateWire, reviewSchema, { kind: draft.rejectedProposal?(draft.rejectedProposal.followup?'rejected-proposal-followup':'rejected-proposal-repair'):repairing ? 'candidate-repair' : 'candidate-completion',
+        requestId: draft.runs.at(-1)?.requestId, responseHash: next.authoringMapping?.responseHash || draft.runs.at(-1)?.responseHash || null,
+        ...(next.authoringMapping ? { authoringMapping: next.authoringMapping } : {}), at: now() });
       if (repairing) state.repairCount++;
       // Source acquisition concerns the new candidate, not acceptance of its
       // interpretation. Keep old source references for revision checking too.
@@ -1471,4 +1505,10 @@ function beginRejectedRepair({root,draft,catalog,request,issue}) {
   const state=require('./rejected-proposal').begin(root,draft,reviewSchema);
   draft.revision++;write(root,draft);return state;
 }
-module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, beginRejectedRepair, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };
+function beginRejectedFollowup({root,draft,catalog,request,issue,authorization}) {
+  if(!sameSnapshot(draft.snapshot,snapshot(catalog,request,issue)))throw new Error('Rejected authoring no longer matches current report/source/premises.');
+  validateCurrent(catalog,draft);
+  const state=require('./rejected-proposal').followup(root,draft,reviewSchema,authorization);
+  draft.revision++;write(root,draft);return state;
+}
+module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, beginRejectedRepair, beginRejectedFollowup, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };

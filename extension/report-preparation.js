@@ -53,12 +53,12 @@ class ReportPreparation {
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
     this.pendingFindings = new Map(); this.admitting = new Map(); this.localEligible = new Set(); this.controlRevision = 0;
   }
-  continueFinding(id, { repairSavedAnalysis = false, recheckLocalPreparation = false, requirements } = {}) {
+  continueFinding(id, { repairSavedAnalysis = false, recheckLocalPreparation = false, requirements, followupAuthorization } = {}) {
     p.identifier(id, 'finding continuation ID');
     if (this.disposed) throw new Error('This report owner is closed. Reopen the report.');
     if (!store.readReport(this.root).issues.some(item => item.id === id)) throw new Error('The selected finding is no longer in this report.');
     if (!this.pendingFindings.has(id) && !this.admitting.has(id) && !this.localEligible.has(id) && !this.tasks.has(id))
-      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis, recheckLocalPreparation, requirements });
+      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis, recheckLocalPreparation, requirements, followupAuthorization });
     // Existing workers admit this at a durable stage boundary. No report-wide
     // resume, allowance increase or cancellation of a sibling is implied.
     return this.ensure();
@@ -183,7 +183,7 @@ class ReportPreparation {
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, retainedRejection, repairAvailable, localRecheckAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,retainedRejection,repairAvailable,localRecheckAvailable,
+      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, currentAttempt, rejectionHistory, retainedRejection, repairAvailable, localRecheckAvailable }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,currentAttempt,rejectionHistory,retainedRejection,repairAvailable,localRecheckAvailable,
         publishable: !!this.artifact(id), digest: this.artifact(id), outcome, publishedAt })),
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
@@ -416,7 +416,8 @@ class ReportPreparation {
         if (job.correctionHold && job.correctionHold.state!=='applied') { job.reason='Saved correction is still held. Settle or reconcile it before continuing.';this.save();continue; }
         if(intent.recheckLocalPreparation){
           const draft=engine.read(this.root,id);
-          if(!draft||draft.pendingResponse||draft.rejectedProposal?.state==='repair-dispatched'){job.reason='Recover the existing paid response or reconcile its owned attempt before preparing new input.';this.save();continue;}
+          if(intent.followupAuthorization)engine.beginRejectedFollowup({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry),authorization:intent.followupAuthorization});
+          if(!draft||draft.pendingResponse||draft.rejectedProposal?.state==='repair-dispatched'&&draft.rejectedProposal.followup?.state!=='pending'){job.reason='Recover the existing paid response or reconcile its owned attempt before preparing new input.';this.save();continue;}
           if(intent.requirements){
             if(!engine.compatible(draft,catalog,this.request(entry,catalog,report),this.issue(entry)))throw new Error('Local preparation changed context.');
             draft.localPreparation={requirements:structuredClone(intent.requirements),contextHash:require('./review-candidate').identity(draft)};
@@ -444,7 +445,9 @@ class ReportPreparation {
         if (available <= 0) { job.reason = 'Shared report allowance exhausted during admission; no request was reserved.'; this.save(); continue; }
         if(intent.repairSavedAnalysis){
           const draft=engine.read(this.root,id);
-          engine.beginRejectedRepair({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry)});
+          if(require('./rejected-proposal').followupEligible(draft))engine.beginRejectedFollowup({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry),
+            authorization:intent.followupAuthorization||{id:crypto.randomUUID(),responseHash:draft.currentRejection.responseHash}});
+          else engine.beginRejectedRepair({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry)});
           job.checkpoint=draft.checkpoint;this.recoveryStatus(job,draft);
         }
         // Only an exhausted selected-finding allowance can be renewed, bounded
@@ -731,15 +734,21 @@ class ReportPreparation {
   recoveryStatus(job, draft) {
     job.failureKind = draft.failureKind || null;
     job.hasPrivateCandidate=!!draft.reviewCandidate;
-    job.localRecheckAvailable=draft.failureKind==='local-reading'&&!draft.pendingResponse&&!job.correctionHold&&draft.rejectedProposal?.state!=='repair-dispatched';
+    job.localRecheckAvailable=draft.failureKind==='local-reading'&&!draft.pendingResponse&&!job.correctionHold&&(draft.rejectedProposal?.state!=='repair-dispatched'||draft.rejectedProposal.followup?.state==='pending');
     job.retainedRejection=!job.hasPrivateCandidate&&(!!draft.lastRejected&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'||!!draft.rejectedProposal);
-    const repairPending=require('./rejected-proposal').eligible(draft)||draft.rejectedProposal?.state==='repair-pending'&&!draft.reviewCandidate;
+    const repairPending=require('./rejected-proposal').eligible(draft)||require('./rejected-proposal').followupEligible(draft)||
+      !draft.reviewCandidate&&(draft.rejectedProposal?.state==='repair-pending'||draft.rejectedProposal?.followup?.state==='pending');
     job.repairAvailable=!!repairPending&&!draft.recoveryRequired&&!['local-reading','storage'].includes(draft.failureKind)&&!job.correctionHold&&['codex','claude'].includes(this.options.configuration().provider)&&
       this.state.resources.requests<this.state.resources.limit&&job.requests<job.requestLimit&&this.options.phaseRemaining?.(job.id)!==false;
-    const validation = draft.validationProblems?.length ? draft.validationProblems : draft.lastRejected?.validationProblems?.length ? draft.lastRejected.validationProblems : draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
+    const validation = draft.currentRejection ? draft.currentRejection.validationProblems : draft.validationProblems?.length ? draft.validationProblems : draft.lastRejected?.validationProblems?.length ? draft.lastRejected.validationProblems : draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
       (draft.publication?.details || []).filter(item => ['structural', 'capability'].includes(item.kind)).map(item => ({ code: item.kind === 'capability' ? 'ANALYSIS_CAPABILITY' : 'CAUSAL_BINDING_OR_COVERAGE', target: item.target, message: item.reason, action: item.action }));
-    job.validationProblems = validation.map(({ code, target, evidenceId, oldClaimId, proposedClaimId, actualOwner,allowedOwners,message, action }) => ({ code, target, evidenceId, oldClaimId, proposedClaimId,actualOwner,allowedOwners,message, action }));
-    const questions=draft.reviewCandidate?.candidate.questions||draft.rejectedProposal?.proposal.questions||
+    job.validationProblems = validation.map(({ code, target, evidenceId, sourceId, line, endLine, oldClaimId, proposedClaimId, actualOwner,allowedOwners,message, action }) => ({ code, target, evidenceId, sourceId, line, endLine,
+      ...(sourceId&&Number.isSafeInteger(line)?{file:draft.sources.find(s=>s.id===sourceId)?.source.file}:{}),oldClaimId, proposedClaimId,actualOwner,allowedOwners,message, action }));
+    job.currentAttempt=draft.currentRejection?{requestId:draft.currentRejection.requestId,reviewPurpose:draft.currentRejection.reviewPurpose,phase:draft.currentRejection.phase,verificationStarted:!!draft.reviewCandidate?.verification}:null;
+    job.rejectionHistory=(draft.rejectedProposal?.authoringHistory||[]).filter(item=>item.responseHash!==draft.currentRejection?.responseHash).map(item=>({requestId:item.requestId,validationProblems:item.diagnostics.validationProblems}));
+    if(draft.rejectedProposal&&draft.lastRejected?.phase==='generate')job.rejectionHistory.unshift({requestId:draft.rejectedProposal.origin.requestId,validationProblems:draft.rejectedProposal.validationProblems});
+    const proposedQuestions=draft.rejectedProposal?.followup?require('./authoring-contract').questions(draft.rejectedProposal.followup.response,require('./semantic-provider').schema):draft.currentRejection?.materialQuestions;
+    const questions=draft.reviewCandidate?.candidate.questions||(proposedQuestions?.length?proposedQuestions:null)||draft.rejectedProposal?.proposal.questions||
       (draft.pendingResponse&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'?draft.lastRejected?.output?.questions:draft.questions)||[];
     job.missingInputs = questions.map(({ id, claimId, text, why, action }) => {
       const receipt = [...(draft.actions || [])].reverse().find(item => item.questionId === id);

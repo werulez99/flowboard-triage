@@ -1,5 +1,114 @@
 # Bounded fresh quality pilot
 
+## Typed authoring and attributed rejection recovery (0.19.23)
+
+**No new checked real guide and zero new provider reservations/dispatches.**
+The preceding received G and R remain unaccepted, with one completed request
+each; R is spent. The separately authorized R2 and the same unused V remain
+unused because the complete new packet fails local byte admission, not because
+another approval or a model response is missing.
+
+The saved R instructions confirm a host contract mismatch: candidateOnly named
+the old patch format but did not include its complete stable-ID/whole-array
+grammar. Its enforced schema admitted arbitrary path/valueJSON strings. The
+two illegal addresses therefore cannot be described as ignored rules that were
+actually supplied. The distinct exact-quote error remains an error in that
+received proposal. Local replay now reports all three independently readable
+problems without applying any of R, preserving its exact checkpoint and G.
+
+New authoring uses `source-edits-v2`: one schema-derived catalog provides exact
+legal targets, typed complete additions/replacements, whole ID-less array
+replacement and explicit removals. Candidate authors cannot attest checks.
+Repair authors use the same syntax, including the ordinary inline repair path,
+with separate fresh-review requirements. Duplicate/overlapping edits reject
+atomically. Shared schema definitions replace the duplicated instruction-side
+target schema; old string-path decoding and its limits remain unchanged for
+historical replay. Supported typed content does not pass through the legacy
+JSON-string size bound or lose qualifications.
+
+New/replaced evidence explicitly selects supplied source ID/version and original
+line interval. The host extracts literal canonical bytes only after current
+sparse-view coverage matches. It does not search nearby text, correct a legacy
+quotation, infer a claim association, or approve meaning. The response-to-candidate
+mapping is retained with lineage; full V still covers original/current/removed
+notes, claim scope, premises and causal revisions.
+
+Current diagnostics bind request, input and response identities. Earlier G
+problems remain history instead of replacing the current R failure. An explicit
+owned follow-up archives the complete R before transferring pending-response
+ownership; it preserves spent R state and accounting. The scoped runner binds
+one new authoring purpose to its exact rejected parent and prevents duplicate
+authoring/verification windows in the same lineage. No repair runs merely on
+reopen or local Recheck.
+
+The new preparation supplies the locally imported caller callback, its balance
+and settlement helpers, exact transient accessor/inheritance, and the existing
+test pool/liquidity setup. These are source-only observations, not executed
+protocol transactions or proof of a completed dust scenario. All 22 paid G
+source identities, both original claim groups and all 23 original notes remain.
+The upward-rounding/minimum-fee rule and actual scoped consequence still need
+semantic assessment; host acquisition neither establishes nor refutes them.
+
+| Complete captured R2 component | UTF-8 bytes |
+| --- | ---: |
+| Report | 4,495 |
+| Source objects, code and descriptors (52 units) | 142,400 |
+| Original unaccepted proposal | 41,827 |
+| Other metadata, including shared values and untrusted R guidance | 79,770 |
+| JSON envelope | 478 |
+| Instructions | 31,695 |
+| Enforced typed schema | 17,139 |
+| Conservative framing | 128 |
+| Total | 317,932 |
+
+This captured ordinary saved-stage request exceeds 262,144 by **55,788 bytes**;
+52 is below the unchanged 64-source ceiling. The preceding owned Recheck recorded
+318,155 bytes before its saved acquisition bookkeeping settled; neither packet
+is admitted or frozen for dispatch. No old approval was changed. Decoding R's
+legacy JSON-in-string values as explicitly untrusted guidance preserves every
+proposed value and qualification and saves 1,538 net bytes (319,470 to 317,932)
+on this same context. It is not assembly or semantic repair. The guidance alone
+occupies 27,388 bytes: even removing all of it, which is not permitted, would
+not fit this representation. No material context or review obligation was cut.
+
+For overhead comparison only, the historical 43-source R data with current
+legacy instructions measures 260,795 bytes; switching only to the typed contract
+measures 268,726. Constraining targets is not claimed as a packet-size saving.
+The historical observed 260,597-byte R remains unchanged. New local indexing
+was 12.386 s and preparation/capture 12.087 s; none is provider time. The 172
+retained G/v31/v32/v33 evidence files were hash-checked unchanged.
+
+The next real request requires a complete lossless representation fitting the
+same byte limit, not a larger allowance, omitted counterevidence or a retry of
+R. No throughput or fresh semantic-quality improvement is established here.
+
+Final supported sequential WSL/Node 20.20.1 gate: **539 passed, zero failed or
+skipped**, 124.434 s. The first gate had 535 passes and three failures: the new
+catalog mishandled a legacy null causal reference in two negative controls,
+and an ended-process-group recovery missed its short capacity wait. The catalog
+now permits authoring against the incomplete reference without inventing causal
+content; an empty repair still fails the complete schema. The adversarial scope
+test preserves the original omission diagnostic and now also checks the typed
+contract's refusal of blanket claim replacement. The isolated process-recovery
+control and final suite pass without changing ownership rules or timeouts.
+Focused authoring/candidate controls passed 19/19 before the additional legacy
+regression; the focused gate-failure controls then passed 4/4. An independent
+JSON Schema validator also checked the actual retained enforced schema and
+rejected the illegal indexed target. All callbacks here are deterministic.
+
+Original native 1.2.0 inspection of the real blocked result passed five groups
+with provider `none`: current R diagnostics, separate older history, exact-file
+code action, material questions, and withheld unchecked annotations. Images
+were actually inspected privately. This is simulated editor IO, not a checked
+tutorial or observed Cursor activation. The first browser launch requested a
+missing cached binary; the existing installed Chromium was then selected
+explicitly. No provider request or product timer change was involved.
+Installed 0.19.23 matches all 67 extension/package files; the source archive
+matches 232 allowlisted files. Its same five native blocked-state groups also
+pass with zero provider calls. Installation is not activation: actual Cursor
+activation remains unobserved. Save editor work, then use Developer: Reload
+Window, Flowboard Triage: Diagnose Setup, and Output -> Flowboard Triage.
+
 ## Material capacity and exact supplied views (0.19.22)
 
 Analytical acquisition, restore, retained merging, request admission and response
@@ -65,8 +174,10 @@ and disabled tools were unchanged.
 
 **No private candidate or new checked guide was admitted. V was not reserved or
 dispatched.** The response used an indexed nested change-array path and a
-synthesized relationship-key path, contrary to the existing whole-array/stable-ID
-patch contract. A separate local source comparison also found one new note whose
+synthesized relationship-key path that the host's whole-array/stable-ID assembler
+cannot apply. Later inspection (0.19.23 above) established that candidateOnly
+had not supplied that full grammar or enforced it in the response schema.
+A separate local source comparison also found one new note whose
 quoted text does not match its declared line range. These are received-answer
 contract failures, not another timeout, source-cap refusal or storage loss. The
 unchanged raw answer and exact input/checkpoint are retained; no path, quote or

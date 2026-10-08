@@ -110,11 +110,13 @@ test('a challenge cannot silently omit the unresolved implementation or bless a 
       // Keep the adversarial response internally well-formed so this test
       // isolates challenge scope loss, not an unknown saved-input claim ID.
       for (const review of value.inputReviews) review.claimIds = review.claimIds.filter(id => id !== 'remote-credit');
+      if(input.repairOnly)return {value:{mode:'review-edit-v2',edits:[{op:'set',target:'/claims',value:value.claims}],inputReviews:value.inputReviews,explanationReviews:value.explanationReviews,checks:[]},audit:{phase:input.phase,outcome:'completed'}};
       return { value, audit: { phase: input.phase, outcome: 'completed' } }; }
     return response(input);
   } }); t.after(() => host.close()); const c = await client(host); await c.select('I-02');
   const state = await c.wait(value => value.investigation?.phase === 'blocked');
-  assert.match(state.investigation.error, /omitted statement remote-credit/);
+  assert.match(state.investigation.checkpoint.feedback.problems.join('\n'), /omitted statement remote-credit/,'The original full-response omission is retained as repair feedback.');
+  assert.match(state.investigation.error, /enumerated target/,'The new typed repair cannot express blanket claim replacement/removal.');
   assert.ok(state.investigation.claims.some(claim => claim.id === 'remote-credit' && claim.status === 'unresolved'));
   units = state.investigation.sources;
   previous = engine.accept(previous, state.investigation, units);

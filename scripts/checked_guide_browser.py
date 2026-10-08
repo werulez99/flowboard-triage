@@ -506,7 +506,8 @@ try:
                 if not selected_job.get('retainedRejection') or selected_job.get('failureKind') not in ['structural', 'validation']:
                     assert selected_job['reason'] in status_text
             if selected_job and selected_job.get('retainedRejection'):
-                assert 'Analysis was received, but its evidence links need correction.' in status_text
+                assert 'Analysis received · correction required.' in status_text
+                assert 'Verification has not started for this proposal.' in status_text
                 assert page.locator('.guide-preparation').get_by_role('button', name='Continue this finding', exact=True).count() == 0
                 assert page.locator('.guide-preparation').get_by_role('button', name='Repair saved analysis', exact=True).count() == int(bool(selected_job.get('repairAvailable')) and args.provider != 'none')
                 assert len(state['providerCalls']) == 0, 'Retained rejection inspection is local, never a repair request.'
@@ -520,6 +521,36 @@ try:
                 assert 'paid responses are retained' in status_text
                 result['checks'].append('The real incomplete question and retained-work distinction are visible; acquired source is not shown as reviewed.')
                 page.screenshot(path=str(out / 'incomplete-details.png'))
+            if (selected_job or {}).get('currentAttempt'):
+                if not questions:
+                    page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
+                details = page.locator('details').filter(has=page.get_by_text('Current received response: correction details', exact=True))
+                details.locator('summary').click()
+                details.scroll_into_view_if_needed()
+                assert details.is_visible()
+                text = details.inner_text()
+                assert selected_job['currentAttempt']['requestId'] in text
+                for problem in selected_job['validationProblems']:
+                    assert problem['message'] in text
+                    if problem.get('target'):
+                        assert problem['target'] in text
+                    if problem.get('file'):
+                        action = details.get_by_role('button', name=f"Read source lines {problem['line']}-{problem['endLine']}", exact=True)
+                        assert action.is_visible() and action.is_enabled()
+                        action.click()
+                        until = time.monotonic() + 10
+                        while time.monotonic() < until:
+                            opened = request('/state').get('opened', [])
+                            if opened and opened[-1]['file'] == problem['file']:
+                                break
+                            page.wait_for_timeout(50)
+                        else:
+                            raise AssertionError('Current diagnostic source action did not open its exact file.')
+                history = page.get_by_text('Earlier response history', exact=True)
+                assert history.count() == int(bool(selected_job.get('rejectionHistory')))
+                assert not request('/state')['providerCalls']
+                page.screenshot(path=str(out / 'current-rejection.png'))
+                result['checks'].append('Expanded current-attempt diagnostics name this received request and every affected field; earlier failures are separate history, with no provider call.')
             result['checks'].append('Incomplete explanation is withheld, with an explicit preparation status.')
         result['pageErrors'] = errors
         assert not errors, errors
