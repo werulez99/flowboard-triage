@@ -1,5 +1,69 @@
 # Bounded fresh quality pilot
 
+## Evidence browsing and independent scope completion (0.19.29)
+
+Zero live provider requests. The v40 checked-content/observation/correction
+contracts and all analytical limits remain unchanged. No provider instruction,
+response schema or mandatory review stage was added.
+
+Four bounded corrections use the ordinary lifecycle:
+
+- A complete supported/refuted two-scenario fixture initially publishes. An
+  observation attached to its independent secondary root with a context reading
+  handoff preserves primary support with partial coverage, while withholding the
+  complete tutorial. A controlled failed recheck/cancellation and save/reopen
+  preserve that distinction. Explicit shared evidence/premises and execution/data
+  dependencies remain conservative; unknown association does not authorize reuse.
+- Ready exploration with no active guide uses host-approved assessment evidence
+  inspection. An unrelated retained guide cannot intercept that artifact's action.
+  Historical mismatches are refused rather than redirected to a newer statement.
+- Native inspection preserves complete original function rows and exact comments,
+  including comment-only, multiline and late citations. The actual native code
+  scroller is used for focus/Return; ordinary exploration cleanup is restored.
+  Native acceptance also found the exploration-only drawer branch hiding a
+  partial assessment; its admissible opinion/evidence now remain available.
+- Profile resolution emits available/unavailable/none-selected once per update.
+  Malformed JSON, missing/oversized/invalid/out-of-workspace profiles withdraw only
+  engagement mapping. The ordered artifact-bound path preserves technical and
+  severity evidence, older displayed revisions and human input. The existing
+  settings action repairs configuration without a review or source reindex.
+
+Acceptance uses fictional fixed responses through importer/coordinator/storage,
+actual extension selection/save handlers, and original native 1.2.0 with simulated
+editor I/O. The matching 0.19.28 source build's Ready/explore evidence action emitted
+zero navigation messages. The new reader was inspected at 1440x900 and 801x600,
+dark/light: all original function lines 10-40, comment-only line 33 and multiline
+34-37, exact rendered text, resize, reachable tail, Return and provider-none reopen.
+Comments are not treated as independent semantic approval. A Ready finding also
+remained available beside background/blocked siblings.
+
+Changed-path samples on Linux/Node 20.20.1/headless Chromium: six comment/range
+open/Return pairs across those viewports/themes took 334-1158 / 109-358 ms, including
+harness delivery/render assertions. One invalid-profile save appeared in 156 ms;
+one valid repair appeared in 101 ms, with zero added indexing or provider callbacks.
+The exploration fixture used two initial fixed callbacks plus two explicitly
+controlled correction/verification callbacks for its newer revision; all subsequent
+navigation/mapping was local. The independent-scenario fixture used two initial
+fixed callbacks and zero after its new unreviewed observation. These are not model
+tokens/latency, matched speedup, p95 or throughput measurements. Earlier delivered
+v40 timings are not rerun here as missing performance requirements.
+
+Focused assessment/navigation/inline controls passed 38/38. The first canonical
+gate passed 582/583: an existing legacy empty-slot control assumed a real `/proc`
+inode scan finished within 200 ms. That control now uses ordinary cancellable
+acquisition under a finite test deadline, explicitly checking the ended child
+and removed slot. Production ownership and deadlines are unchanged. Its focused
+lifecycle file passed 21/21. The final supported sequential gate passed **583/583,
+zero failed/skipped**, in 144.253 seconds with native 1.2.0. This is local test
+duration, not provider latency or an audit throughput result.
+
+Ambiguous/same-execution context remains conservative. Material execution
+handoffs, source or impact gaps still block affected approval; missing normative
+evidence is not refutation. No paid historical finding was reopened or rewritten.
+The later representative real-evaluation checklist below remains necessary;
+actual model accuracy, tutorial usefulness on diverse real cases and 200-finding
+throughput are unmeasured. Installed files do not establish Cursor activation.
+
 ## Checked assessment freshness and evidence inspection (0.19.28)
 
 **Zero live provider requests; no new real checked tutorial.** Existing real

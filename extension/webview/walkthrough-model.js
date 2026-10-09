@@ -12,8 +12,11 @@
   // transfers another revision's technical result, evidence or severity.
   function remap(assessment,profile){
     const copy=structuredClone(assessment);copy.engagement={state:'not-assessed',reason:'No engagement rules selected.'};
+    if(profile?.state==='unavailable'){copy.engagement={state:'not-assessed',availability:'unavailable',code:profile.code,reason:profile.reason,action:profile.action};return copy;}
+    if(profile?.state)profile=profile.state==='available'?profile.profile:null;
+    copy.engagement.availability=profile?'available':'none-selected';
     const s=copy.severity;
-    if(profile){copy.engagement={state:'not-assessed',name:profile.name,revision:profile.revision,identity:profile.identity,reason:'No reviewed severity band is available for this mapping.'};
+    if(profile){copy.engagement={state:'not-assessed',availability:'available',name:profile.name,revision:profile.revision,identity:profile.identity,reason:'No reviewed severity band is available for this mapping.'};
       if(copy.technical.result==='supported'&&s?.band&&s.identity===copy.technical.identity)copy.engagement={...copy.engagement,state:s.state==='conditional'?'conditional':profile.eligibleBands.includes(s.band)?'eligible':'excluded',label:profile.labels[s.band]||s.band,reason:`${profile.name} (${profile.revision}) ${profile.eligibleBands.includes(s.band)?'includes':'excludes'} the ${s.band} band.`};}
     return copy;
   }

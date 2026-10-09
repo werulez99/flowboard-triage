@@ -71,24 +71,24 @@ class TriageBoard {
     }
     return this.native.panel.webview.postMessage(message);
   }
-  exposed(draft) {
+  profileMapping(){const relative=this.vscode?.workspace.getConfiguration?.('flowboardTriage',this.vscode.Uri.file(this.root)).get('engagementProfile','');return require('./assessment-profile').resolve(this.root,relative);}
+  exposed(draft,mapping) {
     if(!draft)return null;
+    mapping??=this.profileMapping();
     const evaluated=guidePolicy.evaluate(draft);
-    try{const profiles=require('./assessment-profile'),relative=this.vscode.workspace.getConfiguration('flowboardTriage',this.vscode.Uri.file(this.root)).get('engagementProfile','');
-      Object.assign(evaluated.assessment,profiles.project(draft,evaluated.assessment,profiles.load(this.root,relative)));
-    }catch(error){evaluated.assessment.engagement={state:'not-assessed',reason:error.message};}
+    const profiles=require('./assessment-profile');Object.assign(evaluated.assessment,profiles.project(draft,evaluated.assessment));
+    evaluated.assessment=profiles.remap(evaluated.assessment,mapping);
     const report = this.callbacks?.reportPreparation?.();
-    const status = report?.status();
+    const status = report?.status(mapping);
     return guidePolicy.expose(draft, status ? { findingId: draft?.findingId, findingReady: report.published(draft,evaluated) } : this.callbacks?.reportPreparation ? {
       findingId: draft?.findingId, findingReady: false } : null,evaluated);
   }
   async remapProfile(){const model=this.models.get(this.activeId);if(!model?.investigationDraft)return;
     this.assertCurrent(model);
-    const profiles=require('./assessment-profile'),relative=this.vscode.workspace.getConfiguration('flowboardTriage',this.vscode.Uri.file(this.root)).get('engagementProfile','');
-    const projection=this.exposed(model.investigationDraft).assessmentProjection;
+    const mapping=this.profileMapping(),projection=this.exposed(model.investigationDraft,mapping).assessmentProjection;
     await this.post({type:'triage:assessmentProjection',issueId:model.id,token:model.token,artifact:projection.artifact,projection,
-      profile:profiles.load(this.root,relative),profileObservation:this.profileObservation=(this.profileObservation||0)+1});
-    const report=this.callbacks.reportPreparation?.();if(report)await this.post({type:'triage:reportPreparation',report:report.status()});}
+      mapping,profileObservation:this.profileObservation=(this.profileObservation||0)+1});
+    const report=this.callbacks.reportPreparation?.();if(report)await this.post({type:'triage:reportPreparation',report:report.status(mapping)});}
   async reportProgress() {
     if (this.disposed) return;
     const report = this.callbacks.reportPreparation?.();
@@ -753,6 +753,10 @@ class TriageBoard {
     }
     const model = this.models.get(this.activeId);
     if (message.issueId && message.issueId !== this.activeId) return;
+    if(message.type==='triage:engagementSettings'){
+      if(message.token!==this.activeToken)throw new Error('This view is out of date.');
+      return this.vscode.commands.executeCommand('workbench.action.openSettings','@id:flowboardTriage.engagementProfile');
+    }
     if ((message.type?.startsWith('triage:investigation')||['triage:repairSavedAnalysis','triage:recheckLocalPreparation'].includes(message.type)) && model) {
       if (message.token !== this.activeToken) throw new Error('This investigation view is out of date.');
       if (message.type === 'triage:investigationFocus') return this.focusInvestigation(model, message);

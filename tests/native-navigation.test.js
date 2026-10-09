@@ -22,7 +22,34 @@ test('profile notifications remap each retained artifact without mixing verdicts
  for(const change of [{artifact:older.artifact,profileObservation:2},{profileObservation:0},{issueId:'other',profileObservation:3},{token:'old',profileObservation:4}]){
    context.message={...context.message,artifact:newer.artifact,issueId:'F',token:'T',...change};vm.runInNewContext(body,context);assert.equal(refreshes,1);
  }
- context.sourceStale=true;context.message={...context.message,issueId:'F',token:'T',profileObservation:9};vm.runInNewContext(body,context);assert.equal(refreshes,1);
+ context.message={...context.message,issueId:'F',token:'T',artifact:newer.artifact,profileObservation:5,mapping:{state:'unavailable',code:'PROFILE_JSON',reason:'Selected rules contain invalid JSON.'}};
+ vm.runInNewContext(body,context);assert.equal(refreshes,2);assert.equal(context.guide.draft.assessmentProjection.engagement.availability,'unavailable');assert.equal(context.investigationDraft.assessmentProjection.engagement.state,'not-assessed');
+ context.message={...context.message,mapping:{state:'available',profile},profileObservation:4};vm.runInNewContext(body,context);assert.equal(refreshes,2,'Delayed valid mapping cannot resurrect eligibility');
+ context.message.profileObservation=6;vm.runInNewContext(body,context);assert.equal(context.guide.draft.assessmentProjection.engagement.state,'excluded');assert.equal(context.guide.draft.assessmentProjection.technical.result,'supported');
+ context.sourceStale=true;context.message={...context.message,issueId:'F',token:'T',profileObservation:9};vm.runInNewContext(body,context);assert.equal(refreshes,3);
+});
+
+test('Ready exploration evidence uses approved assessment inspection; only the matching active guide intercepts',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),body=source.slice(source.indexOf('  function assessmentEvidence'),source.indexOf('  function evidenceActions'));
+ const vm=require('node:vm'),entry={id:'proof'},projection={artifact:{identity:'new',findingId:'F',sourceDigest:'S',reportHash:'R'},technical:{evidence:[entry]}};let detours=0;const sent=[],warnings=[];
+ const context={sourceStale:false,selectedProjection:()=>projection,investigationDraft:{assessmentProjection:projection},guide:null,FlowboardWalkthrough:require('../extension/webview/walkthrough-model'),
+  guideEvidence(){detours++;},location:()=>({}),checkedLocation:null,visibleInvestigation:null,guideIntent:'explore',preparationExpanded:false,preparationSurface:{scrollTop:19},cards:new Map(),crypto:require('node:crypto'),
+  send:(type,value)=>sent.push({type,...value}),drawer:{prepend:n=>warnings.push(n)},element:(_t,_c,text)=>text};
+ vm.runInNewContext(body,context);context.assessmentEvidence(entry);assert.equal(sent[0].type,'triage:investigationEvidence');assert.equal(context.assessmentReturn.intent,'explore');
+ context.guide={draft:{assessmentProjection:{...projection,artifact:{...projection.artifact,identity:'old'}}}};context.assessmentEvidence(entry);assert.equal(sent.length,2);assert.equal(detours,0);
+ context.assessmentEvidence(entry,context.guide.draft.assessmentProjection);assert.equal(warnings.length,1);assert.equal(sent.length,2);
+ context.guide.draft.assessmentProjection=projection;context.assessmentEvidence(entry);assert.equal(detours,1);
+ context.sourceStale=true;context.assessmentEvidence(entry);assert.equal(detours,1);assert.equal(sent.length,2);
+});
+
+test('independent inspection original-source mode preserves comment rows and CRLF without changing ordinary native cleanup',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),body=source.slice(source.indexOf('  function originalSource'),source.indexOf('  function arrangeCards'));
+ const raw='function sample() {\r\n // cited comment\r\n /* first\r\n    last */\r\n return;\r\n}',clean=require('../extension/webview/inline-review').cleanCode(raw);
+ const card={id:'card',data:{code:raw},clean,codeEl:{setAttribute(){}},name:'sample'},context={sourceStale:false,guide:null,guideMode:'closed',selectedCard:'card',assessmentReturn:{cardId:'card'},hints:{},
+  FlowboardWalkthrough:require('../extension/webview/walkthrough-model'),highlightSolidity:s=>s,esc:s=>s,nativeRenderCode:c=>{context.rendered=c.clean;},decorateInline(){}};
+ require('node:vm').runInNewContext(body,context);context.renderCodeBody(card);assert.equal(context.rendered,raw.replace(/\r\n/g,'\n'));assert.equal(card.clean,clean);assert.equal(card._triageOriginal,true);
+ context.assessmentReturn=null;context.renderCodeBody(card);assert.equal(context.rendered,clean);assert.equal(card._triageOriginal,false);
+ context.assessmentReturn={cardId:'card'};context.sourceStale=true;context.renderCodeBody(card);assert.equal(context.rendered,clean);
 });
 
 test('board final revision check rejects a Git change during its ready await before any view publication', async t => {

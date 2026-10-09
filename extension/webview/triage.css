@@ -318,7 +318,7 @@ body.vscode-light,body.vscode-high-contrast-light {
 .card-code .triage-line-number { color:var(--triage-muted); }
 .guide-reading .tok-keyword,.triage-assessment-card .tok-keyword { color:#80b9f1; }
 .guide-reading .tok-string,.triage-assessment-card .tok-string { color:#e2a98b; }
-.guide-reading .tok-comment { color:#b2c9a5; }
+.guide-reading .tok-comment,.triage-assessment-card .tok-comment { color:#b2c9a5; }
 body.vscode-light .tok-comment,body.vscode-high-contrast-light .tok-comment { color:#426c31; }
 body.vscode-light .tok-string,body.vscode-high-contrast-light .tok-string { color:#8c401f; }
 body.vscode-light .tok-number,body.vscode-high-contrast-light .tok-number { color:#24613f; }

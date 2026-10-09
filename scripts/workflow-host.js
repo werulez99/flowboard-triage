@@ -81,6 +81,7 @@ async function start(options = {}) {
   if (!readOnly) {
     if (options.mixedFixture || options.routeFixture || options.teachingFixture) {
       fs.cpSync(teachingFolder ? path.join(teachingFolder, 'project') : path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/project' : 'fixtures/mixed-preparation/project'), root, { recursive: true });
+      if(['exploration','scenarios'].includes(options.assessmentFixture))fs.copyFileSync(path.join(__dirname,'fixtures/assessment-source.sol'),path.join(root,'src/DeadlineWindow.sol'));
       if (options.productionSelection) {
         const git = (...args) => require('node:child_process').execFileSync('git', args, { cwd: root, stdio: 'pipe', timeout: 10000 });
         git('init', '-q'); git('add', '.');
@@ -141,9 +142,12 @@ async function start(options = {}) {
   // fictional quality cases expose these records; no private workspace capture.
   const providerCalls = [];
   let releaseMixed, mixedHeld = false, localChallengeFailed = false, assessmentRefuted=false;
+  let releaseAssessment,assessmentHeld=false;
+  const assessmentWait=['exploration','scenarios'].includes(options.assessmentFixture)&&new Promise(resolve=>{releaseAssessment=resolve;});
   const mixedWait = options.mixedFixture && new Promise(resolve => { releaseMixed = resolve; });
   const mixedInvoke = options.mixedFixture || options.routeFixture || options.teachingFixture ? async (input, settings) => {
     const record = { input: structuredClone(input), fixture: options.routeFixture ? 'controlled-route-preparation' : 'controlled-mixed-preparation' }; providerCalls.push(record);
+    if(assessmentWait&&input.phase==='challenge'&&!assessmentRefuted){assessmentHeld=true;await assessmentWait;assessmentHeld=false;}
     if (input.finding.id === 'I-2' && input.phase === 'challenge') {
       if (options.localRetryFixture && !localChallengeFailed) {
         localChallengeFailed = true;
@@ -156,7 +160,7 @@ async function start(options = {}) {
       })]);
       mixedHeld = false;
     }
-    const result = { value: options.assessmentFixture?require('./fixtures/assessment-output').response(input,{blocked:options.assessmentFixture==='blocked',refuted:assessmentRefuted}):require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
+    const result = { value: options.assessmentFixture?require('./fixtures/assessment-output').response(input,{blocked:options.assessmentFixture==='blocked',refuted:assessmentRefuted,scenarios:options.assessmentFixture==='scenarios',inspection:['exploration','scenarios'].includes(options.assessmentFixture)}):require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
     if(options.routeFixture&&options.longQualification){
       const explanation='The checked guard bounds this source interpretation. '.repeat(82)+' MATERIAL SCOPE: only this false-approval invocation rolls back; no historical deployment loss is established.';
       const note=result.value.evidence?.find(e=>e.id==='approval-guard');if(note)note.explanation=explanation;
@@ -323,7 +327,7 @@ async function start(options = {}) {
     if (request.method === 'GET' && address.pathname === '/state') {
       const snapshots = {};
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
-      return json({ readOnly, productionExtension, productionVersion, selectionRoute: options.productionSelection ? 'extension.activate/openFinding/sourceCatalog/board.open' : 'controller-harness', productionTrace, reportPreparation: reportPreparation?.status(), ...(options.mixedFixture ? { mixedHeld } : {}), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
+      return json({ readOnly, productionExtension, productionVersion, selectionRoute: options.productionSelection ? 'extension.activate/openFinding/sourceCatalog/board.open' : 'controller-harness', productionTrace, reportPreparation: reportPreparation?.status(), assessmentHeld, ...(options.mixedFixture ? { mixedHeld } : {}), panelTitle: panel.title, providerCalls, activeId: board.activeId, token: board.activeToken, opened, logs, errors, received, snapshots,
         investigation: board.models.get(board.activeId)?.investigationDraft || null,
         exposedInvestigation: board.exposed(board.models.get(board.activeId)?.investigationDraft) || null,
         privatePreparationDraft: reportPreparation && board.activeId ? require(path.join(productionExtension, 'investigation-engine')).read(root, board.activeId) : null,
@@ -349,6 +353,8 @@ async function start(options = {}) {
         await reportPreparation.loop;configuration.semanticProvider='none';
       } else if (message.name === 'release-mixed' && options.mixedFixture) {
         releaseMixed();
+      } else if(message.name==='release-assessment'&&assessmentWait){
+        releaseAssessment();
       } else if (message.name === 'external-reimport' && options.mixedFixture && productionEditor) {
         await reportPreparation.loop;
         reportPreparation.control('pause'); configuration.semanticProvider='none';
@@ -368,9 +374,19 @@ async function start(options = {}) {
       } else if (message.name === 'profile-mapping' && !readOnly && options.teachingFixture) {
         fs.writeFileSync(path.join(root,'engagement.json'),JSON.stringify({version:1,name:'Fixture H/M mapping',revision:'1',labels:{Low:'Low — no payout'},eligibleBands:['High','Medium']}));
         configuration.engagementProfile='engagement.json';
-        await board.remapProfile();
-      } else if(message.name==='assessment-revision'&&!readOnly&&options.assessmentFixture==='ready'){
-        await reportPreparation.loop;assessmentRefuted=true;
+        if(productionEditor)productionEditor.saved(path.join(root,'engagement.json'));else await board.remapProfile();
+      } else if(message.name==='profile-invalid'&&!readOnly&&options.assessmentFixture){
+        fs.writeFileSync(path.join(root,'engagement.json'),'{');if(productionEditor)productionEditor.saved(path.join(root,'engagement.json'));else await board.remapProfile();
+      } else if(message.name==='scenario-observation'&&!readOnly&&options.assessmentFixture==='scenarios'){
+        await reportPreparation.loop;configuration.semanticProvider='none';
+        const engine=require(path.join(productionExtension,'investigation-engine')),draft=engine.read(root,board.activeId),e=draft.evidence.find(e=>e.claimId==='separate');
+        draft.experiments.push({id:'independent-observation',claimId:'separate',sourceId:e.sourceId,source:e.source,outcome:'test-failed',interpretation:'The secondary scenario observation needs interpretation.',tests:[{name:'testIndependentZero',status:'Failure',reason:'Controlled result, not an executed protocol test.'}],command:['fixture'],limits:['Deterministic local observation fixture, not external execution.']});
+        draft.phase='experiment-recorded';draft.revision++;engine.write(root,draft);
+        await board.publishInvestigation(board.models.get(board.activeId),draft);
+        await reportPreparation.continueFinding(board.activeId,{localOnly:true});
+        await board.publishInvestigation(board.models.get(board.activeId),engine.read(root,board.activeId));
+      } else if(message.name==='assessment-revision'&&!readOnly&&['ready','exploration'].includes(options.assessmentFixture)){
+        await reportPreparation.loop;assessmentRefuted=true;configuration.semanticProvider='codex';
         const engine=require(path.join(productionExtension,'investigation-engine')),draft=engine.read(root,board.activeId);
         // Simulate delivery of a newly completed artifact while the reader
         // retains an earlier one. All intermediate host states are still real;

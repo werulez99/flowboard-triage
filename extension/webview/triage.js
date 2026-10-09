@@ -213,7 +213,10 @@
     document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(960, flowboard.clientWidth - 48))}px`);
     requestAnimationFrame(() => {
       const card = cards.get(selectedCard);
-      if(assessmentReturn&&card&&!sourceStale)card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);
+      if(assessmentReturn?.cardId===card?.id&&card&&!sourceStale){
+        card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);
+        if(checkedLocation)guideReveal(checkedLocation.line);
+      }
       if (guideMode === 'guided' && card && !sourceStale) {
         // Keep the same node, scale and line when a smaller viewport would
         // otherwise clip the entire long card. Never fit the whole graph.
@@ -608,12 +611,14 @@
     send('triage:investigationFocus', { evidenceId: entry.id, claimId: entry.claimId, navigationId: guideNavigation, editor, materialize: !!unit && !guideCard(unit) });
     renderGuide(); schedulePersist();
   }
-  function assessmentEvidence(entry){
-    const projection=investigationDraft?.assessmentProjection;
+  function assessmentEvidence(entry,projection=selectedProjection()){
     if(sourceStale||!projection?.artifact||!projection.technical.evidence?.some(e=>e.id===entry.id))return;
+    if(!FlowboardWalkthrough.sameArtifact(projection.artifact,investigationDraft?.assessmentProjection?.artifact)){
+      drawer.prepend(element('p','triage-warning','This historical evidence belongs to a different checked revision. Use the available current review before opening its evidence.'));return;
+    }
     if(guide&&FlowboardWalkthrough.sameArtifact(guide.draft.assessmentProjection?.artifact,projection.artifact))return guideEvidence(entry);
     assessmentReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),intent:guideIntent,expanded:preparationExpanded,
-      preparationScroll:preparationSurface.scrollTop,scrolls:[...cards].map(([id,c])=>[id,c.codeEl.scrollTop])};
+      preparationScroll:preparationSurface.scrollTop,visibleInvestigation,scrolls:[...cards].map(([id,c])=>[id,c.codeEl.parentElement.scrollTop])};
     guideNavigation=crypto.randomUUID();
     send('triage:investigationEvidence',{assessmentIdentity:projection.artifact.identity,evidenceId:entry.id,navigationId:guideNavigation});
   }
@@ -672,7 +677,7 @@
       const entry = assessment[key];
       if (!entry) { decisive.append(element('p', 'triage-muted', key === 'supports' ? 'No supporting code established.' : 'No opposing code established.')); continue; }
       const index = guide?.steps.findIndex(step => step.evidence?.id === entry.id) ?? -1;
-      const action=button(`${label} · ${entry.sourceName||entry.claimId}${index >= 0 ? ` · Step ${index + 1}` : ''}`, () => readyDraft(draft)?guideEvidence(entry):assessmentEvidence(entry));action.title=entry.claimTitle||entry.claimId;
+      const action=button(`${label} · ${entry.sourceName||entry.claimId}${index >= 0 ? ` · Step ${index + 1}` : ''}`, () => assessmentEvidence(entry,draft.assessmentProjection));action.title=entry.claimTitle||entry.claimId;
       decisive.append(action, element('p', '', entry.note));
     }
     const remains = part('What remains', 'remains'), unknowns = assessment.remaining;
@@ -687,7 +692,9 @@
     if(projection?.severity){const severity=element('section','guide-severity');severity.append(element('h3','','Suggested severity · General Audit v1'),element('strong','',projection.severity.label),element('p','',projection.severity.reason));
       severity.dataset.artifact=projection.artifact?.identity||'';
       for(const text of projection.severity.conditions||[])severity.append(element('p','',text));
-      severity.append(element('p','triage-muted',projection.engagement?.reason||'Engagement eligibility not assessed.'));parent.append(severity);}
+      severity.append(element('p',projection.engagement?.availability==='unavailable'?'triage-warning':'triage-muted',projection.engagement?.reason||'Engagement eligibility not assessed.'));
+      if(projection.engagement?.availability==='unavailable')severity.append(element('p','','Engagement not assessed · selected rules unavailable.'),button('Repair engagement settings',()=>send('triage:engagementSettings')));
+      parent.append(severity);}
   }
   function refreshSeverity(){for(const node of document.querySelectorAll('.guide-severity')){
     const draft=guideAside.contains(node)?guide?.draft:investigationDraft;
@@ -1265,6 +1272,7 @@
       // The publication gate hides generated reasoning, not the independently
       // available code explorer and the researcher's manual note controls.
       if (guideIntent === 'explore' && cards.has(selectedCard)) {
+        renderOpinion(drawer);
         drawer.append(sourceInspector(), button('Preparation status', () => { guideStart(); renderDrawer(); }));
         return;
       }
@@ -1870,8 +1878,10 @@
   // Native re-renders for tracing, annotations and Undo keep their own code and
   // call listeners. Our text-only notes are applied afterwards, independently.
   const nativeRenderCode = renderCodeBody;
+  function originalSource(card){return !sourceStale&&!card.data.notFound&&selectedCard===card.id&&
+    (!!guide&&guideMode!=='closed'||assessmentReturn?.cardId===card.id);}
   renderCodeBody = function(card) {
-    const original = !!guide && guideMode !== 'closed' && selectedCard === card.id && !card.data.notFound;
+    const original = originalSource(card);
     card._triageOriginal = original;
     if (original) {
       const clean = card.clean, highlight = highlightSolidity;
@@ -1907,7 +1917,7 @@
   const nativeRedraw = redrawEdges;
   redrawEdges = function() {
     for (const card of cards.values()) {
-      const original = !!guide && guideMode !== 'closed' && selectedCard === card.id && !card.data.notFound;
+      const original = originalSource(card);
       if (!!card._triageOriginal !== original) renderCodeBody(card);
     }
     decorateCards(); nativeRedraw();
@@ -2137,10 +2147,10 @@
         !FlowboardWalkthrough.sameArtifact(investigationDraft.assessmentProjection?.artifact,message.artifact)||
         !FlowboardWalkthrough.sameArtifact(selectedProjection()?.artifact,message.artifact))return;
       profileObservation=message.profileObservation;
-      investigationDraft.assessmentProjection=FlowboardWalkthrough.remap(investigationDraft.assessmentProjection,message.profile);
+      investigationDraft.assessmentProjection=FlowboardWalkthrough.remap(investigationDraft.assessmentProjection,message.mapping||message.profile);
       const old=guide?.draft.assessmentProjection;
       if(old?.artifact&&old.artifact.findingId===message.artifact.findingId&&old.artifact.sourceDigest===message.artifact.sourceDigest&&old.artifact.reportHash===message.artifact.reportHash)
-        guide.draft.assessmentProjection=FlowboardWalkthrough.remap(old,message.profile);
+        guide.draft.assessmentProjection=FlowboardWalkthrough.remap(old,message.mapping||message.profile);
       // Replace only the mapping presentation. Preserve all input nodes,
       // selection/caret, source scroll, camera and the deliberate old guide.
       refreshSeverity();renderPreparation();updatePreparationRows();
@@ -2162,17 +2172,20 @@
     else if(message?.type==='triage:assessmentFocus'&&message.issueId===active&&message.token===token&&!sourceStale){
       if(message.navigationId!==guideNavigation||!assessmentReturn||!FlowboardWalkthrough.sameArtifact(message.artifact,investigationDraft?.assessmentProjection?.artifact))return;
       const card=cards.get(message.id);if(!card&&!message.editor)return;
+      assessmentReturn.cardId=card?.id;visibleInvestigation=null;
       guideIntent='explore';if(card){card.el.classList.add('triage-assessment-card');inspectCard(card,false);
         card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);checkedLocation=message.source;redrawEdges();
-        const row=card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`);if(row)card.codeEl.scrollTop+=row.getBoundingClientRect().top-card.codeEl.getBoundingClientRect().top-32;
+        guideReveal(message.source.line);
       }else show('flow');
-      const note=element('section','guide-assessment-inspection');note.append(element('h2','',`${message.entry.stance==='contradicts'?'Opposing':'Supporting'} evidence · ${message.entry.sourceName||message.entry.claimId}`),element('p','',message.entry.note),element('p','triage-muted','Source inspection only · the full walkthrough remains unavailable.'));
+      const note=element('section','guide-assessment-inspection');note.append(element('h2','',`${message.entry.stance==='contradicts'?'Opposing':message.entry.stance==='supports'?'Supporting':'Context'} evidence · ${message.entry.sourceName||message.entry.claimId}`),element('p','',message.entry.note),element('p','triage-muted',readyDraft(investigationDraft)?'Checked evidence inspection · the full walkthrough is available separately.':'Source inspection only · the full walkthrough remains unavailable.'));
+      if(card&&Array.from({length:(message.source.endLine||message.source.line)-message.source.line+1},(_,i)=>message.source.line+i).some(line=>!card.codeEl.querySelector(`[data-source-line="${line}"]`)))
+        note.append(element('p','triage-warning','The exact cited rows could not be displayed. Open the original source to inspect this range.'),button('Open exact source in editor',()=>send('triage:openReference',{file:message.source.file,line:message.source.line})));
       const claim=element('details');claim.append(element('summary','','Exact checked statement'),element('p','',message.entry.claimTitle||message.entry.claimId));note.append(claim);
       note.prepend(button('Return to assessment',()=>{const saved=assessmentReturn;if(!saved)return;assessmentReturn=null;
-        card?.el.classList.remove('triage-assessment-card');const v=saved.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=saved.checkedLocation;
+        card?.el.classList.remove('triage-assessment-card');visibleInvestigation=saved.visibleInvestigation;const v=saved.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=saved.checkedLocation;
         show(v.drawerTab);({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;
-        for(const[id,scroll]of saved.scrolls){const c=cards.get(id);if(c)c.codeEl.scrollTop=scroll;}
-        guideIntent=saved.intent;preparationExpanded=saved.expanded;renderPreparation();preparationSurface.scrollTop=saved.preparationScroll;redrawEdges();schedulePersist();}));
+        guideIntent=saved.intent;preparationExpanded=saved.expanded;renderPreparation();preparationSurface.scrollTop=saved.preparationScroll;redrawEdges();
+        for(const[id,scroll]of saved.scrolls){const c=cards.get(id);if(c)c.codeEl.parentElement.scrollTop=scroll;}schedulePersist();}));
       drawer.prepend(note);drawer.scrollTop=0;schedulePersist();
     }
     else if (message?.type === 'triage:investigationFocus' && message.issueId === active && message.token === token && !sourceStale) {

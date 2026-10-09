@@ -21,14 +21,14 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
       }
     }
   };
-  const watchers = [];
+  const watchers = [], savedDocuments=[];
   const watcher = pattern => { const callbacks=[]; const value={pattern:pattern.pattern,callbacks}; watchers.push(value);
     return { ...disposable(), onDidCreate: disposable, onDidChange: callback => {callbacks.push(callback);return disposable();}, onDidDelete: disposable }; };
   Object.assign(api, { RelativePattern: class { constructor(_folder, pattern) { this.pattern = pattern; } }, ProgressLocation: { Notification: 15 },
     commands: { registerCommand: (id, callback) => { commands.set(id, callback); return disposable(); } },
     extensions: { getExtension: () => ({ extensionPath: upstream, extensionUri: api.Uri.file(upstream), packageJSON: { version: '1.2.0' }, activate: async () => {} }) } });
   Object.assign(api.workspace, { textDocuments: [], createFileSystemWatcher: watcher, onDidChangeWorkspaceFolders: disposable,
-    onDidChangeConfiguration: disposable, onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable });
+    onDidChangeConfiguration: disposable, onDidChangeTextDocument: disposable, onDidSaveTextDocument: callback=>{savedDocuments.push(callback);return disposable();} });
   Object.assign(api.window, { createOutputChannel: () => ({ appendLine(message) { trace('extension-log', { message }); }, show() {}, dispose() {} }),
     withProgress: async (_options, action) => action({ report() {} }) });
   const filename = path.join(extension, 'extension.js'), loaded = new Module(filename, module);
@@ -73,7 +73,8 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
     // time remains in the trace, outside the subsequent cached-open boundary.
     if (readOnly) await initialPreparation?.loop;
     return commands.get('flowboardTriage.report')();
-  }, reportChanged: file => { const match=watchers.find(w=>w.pattern.includes('.flowboard/report.json')); if(!match)throw Error('Actual report watcher is unavailable');
+  }, saved: file=>{for(const callback of savedDocuments)callback({uri:api.Uri.file(file)});},
+  reportChanged: file => { const match=watchers.find(w=>w.pattern.includes('.flowboard/report.json')); if(!match)throw Error('Actual report watcher is unavailable');
     for(const callback of match.callbacks) callback(api.Uri.file(file)); },
   dispose: () => { fs.readFileSync=originalRead; subscriptions.forEach(item => item.dispose()); } };
 }

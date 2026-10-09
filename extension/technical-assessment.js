@@ -89,16 +89,22 @@ function project(draft,publication){
     const claim=draft.claims.find(c=>c.id===observation.claimId);
     // An explicitly associated context-only statement with no material
     // dependencies is independent. Unknown association is pending, not safe.
-    const dependencies=(draft.causal?.obligations||[]).filter(o=>o.claimId!==claim?.id&&o.evidence?.some(id=>claim?.evidence?.includes(id)));
     const linked=new Set(claim?[claim.id]:[]),events=draft.causal?.events||[];
-    // A causal dependency is not independent merely because its note has a
-    // different owner. Follow the existing bounded graph, never text similarity.
-    let changed=true;while(changed){changed=false;for(const link of draft.causal?.relationships||[]){
-      const ids=[link.from,link.to].map(id=>events.find(e=>e.id===id)?.claimId).filter(Boolean);
-      if(ids.some(id=>linked.has(id)))for(const id of ids)if(!linked.has(id)){linked.add(id);changed=true;}
-    }}
-    if(claim?.kind==='context'&&!dependencies.length&&linked.size===1)continue;
-    if(claim){for(const id of linked)withheld.add(id);for(const o of dependencies)withheld.add(o.claimId);}
+    // Reading order/context alone does not connect independent root scenarios.
+    // Retain explicit evidence/premise dependencies and uncertain same-execution
+    // context; never infer independence from prose or source-name similarity.
+    const refs=c=>new Set([...c.evidence||[],...(draft.causal?.obligations||[]).filter(o=>o.claimId===c.id).flatMap(o=>o.evidence||[]),
+      ...events.filter(e=>e.claimId===c.id).flatMap(e=>[e.evidenceId,...[...e.inputs||[],...e.changes||[]].flatMap(x=>x.evidence||[])])]);
+    const groups=(draft.inputReviews||[]).map(r=>r.claimIds||[]);
+    for(const a of draft.claims)for(const b of draft.claims){if(a.id>=b.id)continue;const ar=refs(a);if([...refs(b)].some(id=>ar.has(id)))groups.push([a.id,b.id]);}
+    for(const link of draft.causal?.relationships||[]){
+      const [from,to]=[link.from,link.to].map(id=>events.find(e=>e.id===id));
+      if(link.kind==='context'&&from?.invocationId&&to?.invocationId&&from.invocationId!==to.invocationId&&from.transaction&&to.transaction&&from.transaction!==to.transaction)continue;
+      groups.push([from?.claimId,to?.claimId].filter(Boolean));
+    }
+    let changed=true;while(changed){changed=false;for(const ids of groups)if(ids.some(id=>linked.has(id)))for(const id of ids)if(!linked.has(id)){linked.add(id);changed=true;}}
+    if(claim?.kind==='context'&&linked.size===1)continue;
+    if(claim){for(const id of linked)withheld.add(id);}
     else for(const c of draft.claims)if(c.kind!=='context')withheld.add(c.id);
   }
   if(pending.length&&draft.claims.filter(c=>c.kind!=='context').every(c=>withheld.has(c.id))){
@@ -125,7 +131,7 @@ function project(draft,publication){
     ...a.claims.flatMap(c=>c.unknowns),...(draft.conclusion?.limitations||[]),...details.filter(d=>!presentation(d)&&d.kind!=='structural').map(d=>d.reason)])],
     evidence:decisive.filter(c=>!withheld.has(c.id)).flatMap(c=>c.evidence).filter((id,i,ids)=>ids.indexOf(id)===i).map(id=>draft.evidence.find(e=>e.id===id)).filter(Boolean).map(e=>({id:e.id,claimId:e.claimId,claimTitle:draft.claims.find(c=>c.id===e.claimId)?.allegation||e.claimId,sourceName:draft.sources.find(u=>u.id===e.sourceId)?.name,stance:e.stance,note:e.note,source:e.source,sourceId:e.sourceId})),
     identity:received(draft)?draft.technicalReview.identity:publication.digest,legacy:!received(draft)};
-  if(pending.length)base.technical.remaining.push('New execution observations require interpretation for the affected scope; unaffected checked statements are retained.');
+  if(pending.length)base.technical.remaining.unshift('New execution observations require interpretation for: '+draft.claims.filter(c=>withheld.has(c.id)).map(c=>c.allegation||c.id).join('; ')+'. Unaffected checked statements are retained.');
   base.artifact={findingId:draft.findingId,identity:base.technical.identity,revision:draft.revision,sourceDigest:draft.snapshot?.sourceDigest,reportHash:draft.snapshot?.reportHash};
   return base;
 }

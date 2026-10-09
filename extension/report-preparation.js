@@ -170,13 +170,12 @@ class ReportPreparation {
     finally { if (temporary) this.unlock(); }
     this.notifyStatus(); }
   progress() { if (!this.progressTimer) this.progressTimer = setTimeout(() => { if (!this.disposed) this.save(); }, 250); }
-  status() {
+  status(mapping) {
     if (!this.state) return this.admissionStatus ? { ...this.admissionStatus, project: this.admissionStatus.admission.project,
       reportHash: this.admissionStatus.admission.reportHash, total: 0, ready: 0, counts: {}, jobs: [], active: [], stopped: [], requests: 0, requestLimit: 0 } : null;
     const jobs = Object.values(this.state.jobs), counts = {};
-    const profiles=require('./assessment-profile');let selectedProfile=null,profileError=null;
-    try{selectedProfile=profiles.load(this.root,this.options.configuration?.().engagementProfile);}catch(error){profileError=error.message;}
-    const mapped=assessment=>!assessment?undefined:profileError?{...assessment,engagement:{state:'not-assessed',reason:profileError}}:profiles.remap(assessment,selectedProfile);
+    const profiles=require('./assessment-profile');mapping??=profiles.resolve(this.root,this.options.configuration?.().engagementProfile);
+    const mapped=assessment=>!assessment?undefined:profiles.remap(assessment,mapping);
     for (const job of jobs) counts[job.state] = (counts[job.state] || 0) + 1;
     return { version: VERSION, reportName: this.state.reportName, reportHash: this.state.reportHash, project: this.state.project,
       total: jobs.length, ready: jobs.filter(job => this.artifact(job.id)).length, counts, ambiguities: this.state.ambiguities.length,

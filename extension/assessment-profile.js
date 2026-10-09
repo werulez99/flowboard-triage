@@ -18,6 +18,13 @@ function load(root,relative){
   if(fs.statSync(file).size>16384)throw new Error('Engagement mapping exceeds 16 KiB.');
   return validate(JSON.parse(fs.readFileSync(file,'utf8')));
 }
+function resolve(root,relative){
+  if(!relative)return{state:'none-selected'};
+  try{return{state:'available',profile:load(root,relative)};}
+  catch(error){return{state:'unavailable',code:error.code==='ENOENT'?'PROFILE_MISSING':error instanceof SyntaxError?'PROFILE_JSON':'PROFILE_INVALID',
+    reason:error.code==='ENOENT'?'The selected engagement file is missing.':error instanceof SyntaxError?'The selected engagement file contains invalid JSON.':error.message,
+    action:'Repair the selected local mapping or choose another file in Flowboard Triage engagement settings.'};}
+}
 function project(draft,assessment,profile=null){
   const technical=assessment.technical,result={rubric:VERSION,severity:{state:'not-assessable',label:'Not assessed',reason:'No current reviewed severity factors are available.'},engagement:{state:'not-assessed',reason:'No engagement rules selected.'}};
   if(profile)result.engagement={state:'not-assessed',name:profile.name,revision:profile.revision,identity:profile.identity,reason:'No reviewed established-defect severity band is available for this mapping.'};
@@ -38,4 +45,4 @@ function remap(assessment,profile){
 }
 const instruction=`OPTIONAL DIMENSIONS general-audit-v1. Claim kind distinguishes defect, context and impact-qualification; null means not assessed. A true contextual fact cannot keep a refuted defect alive. property.basis may be derived-security-invariant ONLY with derivation: mechanism facts establishing rights/obligations, reason deriving the property, adopted assumptions, credible counterevidence and source evidence IDs. A slogan, suspected implementation, test reproducing behavior or imported policy alone cannot certify intended behavior. Review derivation under existing rule/conditions/counterevidence obligations, including revisions. Do not invent minimum fees, rounding up, deployment, trust or recovery promises.
 severityFactors is optional (null when unavailable). Reuse the SAME reviewed scenario; do not add a request or material question for severity-only information. General Audit v1 maps systemic-irreversible to Critical, material-loss-or-critical-function to High, bounded-harm to Medium, minor-deviation to Low, non-security to Informational; unknown is not Informational. These are qualitative anchors, not universal contest rules. Give affected party/asset, scale, duration/repetition/caps, permissions, economics and actual recovery with relevant evidence. Separate victim loss, profit, capital, fees, principal and yield; do not sum alternative scenarios or assume repetition without a reset mechanism. conditions/unknowns are severity-only qualifications, never a way to hide missing feasibility or material consequence. Conditional premises must be compatible with established guards and source facts. Existing impact/conditions/counterevidence checks review these factors and every changed/removed assertion. Refuted allegations have no established-defect severity. Known/duplicate/reportability and human decisions do not determine technical validity.`;
-module.exports={VERSION,bands,validate,load,project,remap,instruction};
+module.exports={VERSION,bands,validate,load,resolve,project,remap,instruction};

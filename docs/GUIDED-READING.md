@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.28
+# Checked finding walkthroughs — 0.19.29
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -63,11 +63,16 @@ No private candidate prose crosses the webview boundary. Historical blocked V
 responses cannot inherit this new independent-assessment meaning through replay.
 
 An admissible assessment's supporting/opposing source actions also work when the
-tutorial is blocked. The host checks the saved assessment identity and evidence
+tutorial is blocked or a Ready finding was reopened in code exploration without
+an active guide. The host checks the saved assessment identity and evidence
 reference, opens its original lines in a full native function and shows only the
 approved explanation. Return restores the inspection's previous position. This
 is evidence inspection, not an unchecked walkthrough. Historical links cannot
 silently move to a newer argument.
+Independent inspection uses the complete original function, including cited
+comments, multiline ranges and original coordinates. Comments remain source
+content, not independent proof of an intended rule. Return restores ordinary
+exploration cleanup, selection, source scroll and camera; it does not start a tour.
 
 Material regression observations participate in currentness. A test pass/failure
 needs interpretation; it does not decide a finding. Setup-only failures do not
@@ -76,6 +81,11 @@ are not discarded with a setup error. Before a recheck, the previous assessment
 and available response are archived. A timeout or old-response replay cannot
 certify observations absent from its input. The normal challenge can review the
 new observations without regenerating an unchanged argument.
+An independent root scenario's pedagogical context handoff does not expand that
+observation's technical scope. Explicit shared evidence/premises and material
+execution/data dependencies still propagate reassessment. Uncertain association
+or same-execution context remains conservative. An unaffected established defect
+retains partial coverage while the full finding tutorial is withheld.
 
 Proved unrelated source edits retain the original review identity through the
 existing source-closure compatibility proof. Relevant changes withdraw technical,
@@ -83,6 +93,12 @@ severity and eligibility projections together, even while a human field has focu
 Pure profile mappings operate on each displayed artifact's own reviewed factors;
 an older guide never receives a newer verdict. Such a retained revision is labeled
 beside the update action. Neither remapping nor navigation moves the camera.
+Selected engagement rules that are missing, invalid or oversized appear as
+unavailable, distinct from selecting no rules. The current mapping is withdrawn
+through the same ordered artifact-bound update; technical evidence, severity and
+human input are unchanged. Repair the local file or use **Repair engagement
+settings**. A valid save remaps each displayed revision's own checked factors
+without another model request or whole-source reindex.
 
 An established defect remains established beside refuted or unresolved **other**
 allegations. Rows preserve the qualifier “additional alleged scope unresolved”; a

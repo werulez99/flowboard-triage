@@ -170,12 +170,17 @@ test('a live pre-metadata owner is never removed by age and preflight prevents d
   assert.equal(fs.statSync(lock).ino, before.ino); assert.equal(running(child.pid), true);
   await killChild(child); assert.equal(health.check('codex', options).open, false);
 });
-test('a live empty slot is explicit finite unavailable, not silently absent or age-reaped', { skip: !linux }, async t => {
+test('a live empty slot is explicit finite unavailable, not silently absent or age-reaped', { skip: !linux, timeout: 5000 }, async t => {
   const root = directory(t), file = path.join(root, 'codex-0.json'), child = await owner(t, 'empty-held', file), before = fs.statSync(file);
   fs.utimesSync(file, new Date(0), new Date(0));
   await assert.rejects(slots.acquire('codex', null, { directory: root, timeoutMs: 50 }), { code: 'PROVIDER_RESOURCE_UNAVAILABLE' });
   assert.equal(fs.statSync(file).ino, before.ino); assert.equal(running(child.pid), true);
-  await killChild(child); const release = await slots.acquire('codex', null, { directory: root, timeoutMs: 200 }); release();
+  await killChild(child); assert.equal(running(child.pid), false);
+  // Empty legacy ownership requires a real /proc inode scan. Its duration is
+  // not a 200 ms capacity contract; use ordinary cancellable acquisition under
+  // this test's finite deadline, preserving every ownership assertion above.
+  const release = await slots.acquire('codex', t.signal, { directory: root }); release();
+  assert.equal(fs.existsSync(file), false);
 });
 for (const mode of ['before-publish', 'after-publish']) test(`atomic initialization survives a real ${mode} crash without publishing empty metadata`, { skip: !linux }, async t => {
   const root = directory(t), file = path.join(root, 'codex-0.json'), child = await owner(t, mode, file);

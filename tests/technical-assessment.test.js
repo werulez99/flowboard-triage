@@ -11,7 +11,7 @@ async function run(t,variant='supported'){
   invoke:async input=>{
    packets.push(input);
    if(input.phase==='generate'){
-    const value=variant==='optional-refuted'?require('../scripts/fixtures/assessment-output').response(input,{refuted:true}):require('../scripts/fixtures/teaching-output').response(input,'time');value.property.derivation=null;value.claims[0].kind='defect';value.claims[0].severityFactors=structuredClone(factors);
+    const value=['optional-refuted','scenarios','shared-scenarios'].includes(variant)?require('../scripts/fixtures/assessment-output').response(input,{refuted:variant==='optional-refuted',scenarios:variant.includes('scenarios'),shared:variant==='shared-scenarios'}):require('../scripts/fixtures/teaching-output').response(input,'time');value.property.derivation=null;value.claims[0].kind='defect';value.claims[0].severityFactors=structuredClone(factors);
     if(variant==='order')value.causal.order=[];
     if(['optional-unknown','optional-refuted'].includes(variant))value.claims[0].severityFactors={...structuredClone(factors),consequence:'unknown',evidence:[]};
     if(variant==='optional-invalid')value.claims[0].severityFactors={...structuredClone(factors),evidence:['absent-optional-reference']};
@@ -134,9 +134,42 @@ test('blocked assessment evidence uses the host-approved identity and emits no p
  const newer=engine.read(root,'I-1');newer.experiments.push({id:'new',claimId:'c1',sourceId:entry.sourceId,source:entry.source,outcome:'passed',interpretation:'Needs interpretation',tests:[{name:'testNew',status:'Success'}],command:['forge','test'],limits:[]});newer.revision++;engine.write(root,newer);
  await assert.rejects(board.inspectAssessmentEvidence(model,{assessmentIdentity:a.artifact.identity,evidenceId:entry.id}),/identity/,'A delayed webview/model cannot override the current saved observation state');
 });
-test('a claim-associated observation withholds its dependent scope, not an independent supported defect',{skip:!native},async t=>{
- const {draft}=await run(t,'mixed');draft.experiments.push({id:'scope-b-observation',claimId:'separate',sourceId:draft.sources[0].id,source:draft.sources[0].source,outcome:'test-failed',tests:[{name:'testOther',status:'Failure',reason:'Controlled result to interpret.'}],command:['forge','test'],limits:[]});
+test('a complete two-scenario tutorial retains independent support after observation, failure and reopen',{skip:!native},async t=>{
+ const {root,runner,draft,packets}=await run(t,'scenarios');assert.equal(draft.publication?.ready,true,JSON.stringify({error:draft.error,problems:draft.validationProblems}));assert.equal(draft.causal.events.length,3);
+ draft.experiments.push({id:'scope-b-observation',claimId:'separate',sourceId:draft.sources[0].id,source:draft.sources[0].source,outcome:'test-failed',interpretation:'Pending interpretation of the separate scenario.',tests:[{name:'testOther',status:'Failure',reason:'Controlled result to interpret.'}],command:['forge','test'],limits:[]});
+ for(const phase of ['experiment-recorded','blocked','cancelled']){draft.phase=phase;draft.revision++;engine.write(root,draft);
  const a=policy.expose(draft).assessmentProjection;
  assert.equal(a.technical.result,'supported');assert.equal(a.technical.coverage,'partial');assert.ok(a.technical.unresolved.includes('separate'));
  assert.ok(a.technical.evidence.every(e=>e.claimId!=='separate'));assert.match(a.technical.remaining.join(' '),/observations/);assert.equal(policy.gate(draft).ready,false);
+ assert.deepEqual(policy.expose(engine.read(root,'I-1')).assessmentProjection,a);}
+ assert.equal(packets.length,2);
+ runner.options.invoke=async input=>{packets.push(input);assert.equal(input.checkOnly,true);await runner.control('pause');throw Object.assign(new Error('Controlled recheck timeout'),{failureKind:'timeout',audit:{phase:'challenge',outcome:'timeout',cleanupConfirmed:true}});};
+ await runner.continueFinding('I-1');
+ const failed=engine.read(root,'I-1'),after=policy.expose(failed).assessmentProjection;assert.equal(packets.length,3);assert.equal(after.technical.result,'supported');assert.equal(after.technical.coverage,'partial');assert.equal(policy.gate(failed).ready,false);
+ draft.experiments[0].claimId='unknown';assert.equal(policy.expose(draft).assessmentProjection.technical.result,'not-assessed');
+});
+test('an explicit material dependency propagates despite independent reading context',{skip:!native},async t=>{
+ const {draft}=await run(t,'shared-scenarios');assert.equal(draft.publication?.ready,true,JSON.stringify({error:draft.error,problems:draft.validationProblems}));
+ draft.experiments.push({id:'shared-observation',claimId:'separate',outcome:'passed',tests:[{name:'testOther',status:'Success'}]});
+ assert.equal(policy.expose(draft).assessmentProjection.technical.result,'not-assessed');
+});
+test('profile file failures reach ordered host notifications without changing checked facts or rereading per update',{skip:!native},async t=>{
+ const {root,draft,packets}=await run(t),{TriageBoard}=require('../extension/board'),messages=[],file=path.join(root,'engagement.json');let selected='engagement.json',reads=0;
+ const commands=[],model={id:'I-1',token:'session',investigationDraft:draft},board=Object.assign(Object.create(TriageBoard.prototype),{root,activeId:'I-1',activeToken:'session',models:new Map([['I-1',model]]),callbacks:{},assertCurrent(){},post:async m=>messages.push(m),
+  vscode:{Uri:{file:fsPath=>({fsPath})},workspace:{getConfiguration:()=>({get:()=>selected})},commands:{executeCommand:async(...args)=>commands.push(args)}}});
+ const raw=fs.readFileSync;fs.readFileSync=function(name,...args){if(name===file)reads++;return raw.call(this,name,...args);};t.after(()=>{fs.readFileSync=raw;});
+ const valid={version:1,name:'Local mapping',revision:'1',labels:{Low:'Not paid'},eligibleBands:['High','Medium']};
+ fs.writeFileSync(file,JSON.stringify(valid));await board.remapProfile();const original=messages.at(-1),identity=original.artifact.identity;
+ assert.equal(reads,1);assert.equal(original.projection.engagement.state,'excluded');
+ for(const value of ['{',null,'x'.repeat(17000),JSON.stringify({...valid,trust:'new assumption'})]){
+  if(value===null)fs.unlinkSync(file);else fs.writeFileSync(file,value);
+  await board.remapProfile();const m=messages.at(-1);assert.equal(m.mapping.state,'unavailable');assert.equal(m.projection.engagement.state,'not-assessed');assert.equal(m.artifact.identity,identity);
+  assert.deepEqual(m.projection.technical,original.projection.technical);assert.deepEqual(m.projection.severity,original.projection.severity);
+ }
+ fs.writeFileSync(file,JSON.stringify(valid));await board.remapProfile();assert.equal(messages.at(-1).projection.engagement.state,'excluded');
+ selected='';await board.remapProfile();assert.equal(messages.at(-1).mapping.state,'none-selected');assert.equal(messages.at(-1).projection.engagement.availability,'none-selected');
+ selected='../outside.json';await board.remapProfile();assert.equal(messages.at(-1).mapping.state,'unavailable');
+ await board.receive({type:'triage:engagementSettings',issueId:'I-1',token:'session'});assert.deepEqual(commands,[['workbench.action.openSettings','@id:flowboardTriage.engagementProfile']]);
+ await assert.rejects(board.receive({type:'triage:engagementSettings',issueId:'I-1',token:'stale'}),/out of date/);
+ assert.ok(messages.every((m,i)=>m.profileObservation===i+1));assert.equal(packets.length,2);assert.deepEqual(engine.read(root,'I-1').technicalReview,draft.technicalReview);
 });

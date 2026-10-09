@@ -17,7 +17,7 @@ from playwright.sync_api import sync_playwright
 parser = argparse.ArgumentParser()
 parser.add_argument('--case')
 parser.add_argument('--teaching-case', choices=['time','lifecycle','accounting','scenarios'])
-parser.add_argument('--assessment-check',choices=['blocked','ready'],help='Fixed-response assessment identity, evidence, invalidation and mapping interactions.')
+parser.add_argument('--assessment-check',choices=['blocked','ready','exploration','scenarios'],help='Fixed-response assessment identity, evidence, invalidation and mapping interactions.')
 parser.add_argument('--workspace')
 parser.add_argument('--report')
 parser.add_argument('--finding', default='I-01')
@@ -63,22 +63,25 @@ if args.workspace:
     command += ['--workspace', args.workspace]
 if args.report:
     command += ['--report', args.report, '--report-finding', args.finding]
-process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+process = None
 result = {'boundary': 'Production code and renderer; real provider; simulated editor transport. No live Cursor UI control.', 'case': args.case, 'checks': []}
 if args.recorded: result['boundary'] = 'Production preparation and renderer with recorded fictional provider responses; exact matching source IDs translated for a new temporary project. Simulated editor transport; no fresh AI reasoning.'
 if args.teaching_case: result['boundary'] = 'Ordinary import/preparation/acceptance/native renderer; fixed local teaching responses only, zero external requests. Simulated editor IO.'
 if args.workspace and args.provider == 'none': result['boundary'] = 'Saved workspace artifact, current source checks, board controller and native renderer; provider disabled. Simulated editor transport, not actual Cursor activation/playback.'
 try:
-    line = process.stdout.readline()
-    if not line: raise RuntimeError(process.stderr.read())
-    host = json.loads(line)
-    result.update(version=host['productionVersion'], extension=host['productionExtension'])
     def request(route, body=None):
         call = urllib.request.Request(host['origin'] + route, data=None if body is None else json.dumps(body).encode(), headers={'X-Workflow-Token': host['secret'], 'Content-Type': 'application/json'})
         with urllib.request.urlopen(call, timeout=55) as response: return json.loads(response.read())
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, executable_path=os.environ.get('FLOWBOARD_CHROMIUM_PATH'))
         page = browser.new_page(viewport={'width': 1440, 'height': 900}, reduced_motion='reduce')
+        # Browser startup is not webview-load time. Keep the product's real
+        # ready deadline unchanged and start its panel only after Chromium exists.
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        line = process.stdout.readline()
+        if not line: raise RuntimeError(process.stderr.read())
+        host = json.loads(line)
+        result.update(version=host['productionVersion'], extension=host['productionExtension'])
         errors = []; page.on('pageerror', lambda error: errors.append(error.stack))
         page.expose_function('__send', lambda m: request('/message', m))
         page.expose_function('__poll', lambda n: request('/events?after=' + str(n)))
@@ -117,6 +120,13 @@ try:
         page.locator(finding_row).click()
         page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)', arg=args.finding, timeout=120000)
         page.screenshot(path=str(out / 'preparing.png'))
+        if args.assessment_check in ['exploration','scenarios']:
+            # Establish exploration by ordinary UI while the fixed V is held;
+            # no saved guide or verdict is fabricated for this reproduction.
+            page.keyboard.press('Alt+3')
+            page.locator('.triage-flow-item').filter(has_text='schedule').first.click()
+            page.wait_for_timeout(300)
+            request('/action',{'name':'release-assessment'})
         deadline = time.monotonic() + 900
         last_stage = None
         while time.monotonic() < deadline:
@@ -138,8 +148,8 @@ try:
         (out / 'state.json').write_text(json.dumps(state, indent=2))
         page.screenshot(path=str(out / ('initial.png' if draft and draft['phase'] == 'ready' else 'blocked.png')))
         if args.baseline:
-            result['checks'].append('Captured the installed older renderer in its normal selected-finding state.')
-            if args.assessment_check=='blocked':
+            result['checks'].append('Captured the requested baseline renderer in its normal selected-finding state; the recorded extension path identifies the tested build, not editor activation.')
+            if args.assessment_check in ['blocked','exploration']:
                 page.get_by_role('button',name='Summary',exact=True).first.click()
                 for width,height in [(1440,900),(801,600)]:
                     page.set_viewport_size({'width':width,'height':height});page.wait_for_timeout(150)
@@ -147,6 +157,120 @@ try:
                 action=page.locator('.guide-opinion').get_by_role('button',name='Supports this statement',exact=False).first
                 before=len(request('/state')['received']);action.click();page.wait_for_timeout(200)
                 result['baselineEvidence']={'label':action.inner_text(),'navigationMessages':len(request('/state')['received'])-before}
+        elif args.assessment_check in ['exploration','scenarios']:
+            assert draft['publication']['ready'], draft.get('error')
+            calls=len(state['providerCalls'])
+            request('/action',{'name':'local-playback'})
+            page.wait_for_timeout(700)
+            page.evaluate('window.closing=true;clearInterval(window.timer)')
+            request('/action',{'name':'reopen'});page.reload();page.wait_for_selector(finding_row);page.locator(finding_row).click()
+            page.wait_for_selector('.guide-opinion')
+            assert not page.locator('.guide-controls:visible').count(), 'Saved exploration must not start a tutorial'
+            samples=[]
+            for width,height,theme in [(1440,900,'dark'),(801,600,'dark'),(801,600,'light')]:
+                page.set_viewport_size({'width':width,'height':height})
+                page.evaluate('(light)=>document.body.classList.toggle("vscode-light",light)',theme=='light')
+                page.wait_for_timeout(120)
+                for label in ['Supports this statement','Challenges this statement']:
+                    action=page.locator('.guide-opinion').get_by_role('button',name=label,exact=False).first
+                    action.scroll_into_view_if_needed()
+                    before=page.evaluate('()=>({camera:{scale,panX,panY},selected:[...cards.values()].find(c=>c.el.classList.contains("triage-selected-source"))?.id,scroll:document.querySelector(".triage-drawer").scrollTop,code:[...cards.values()].map(c=>[c.id,c.codeEl.parentElement.scrollTop])})')
+                    started=time.monotonic();action.click();page.wait_for_selector('.guide-assessment-inspection:visible')
+                    focus=page.evaluate('()=>window.hostMessages.filter(m=>m.type==="triage:assessmentFocus").at(-1)')
+                    card=page.locator('[data-id='+json.dumps(focus['id'])+']')
+                    geometry=card.evaluate('''(card,source)=>{
+                      const code=card.querySelector('.card-code'), box=code.getBoundingClientRect(),board=document.getElementById('flowboard').getBoundingClientRect();
+                      const rows=[...code.querySelectorAll('[data-source-line]')].map(n=>({line:Number(n.dataset.sourceLine),text:n.textContent,rect:n.getBoundingClientRect()}));
+                      return {rows:rows.map(r=>r.line),cited:rows.filter(r=>r.line>=source.line&&r.line<=source.endLine).map(r=>({line:r.line,text:r.text,visible:r.rect.top>=Math.max(box.top,board.top)&&r.rect.bottom<=Math.min(box.bottom,board.bottom)})),width:box.width};
+                    }''',focus['source'])
+                    unit=page.evaluate('(id)=>({start:cards.get(id).data.startLine,code:cards.get(id).data.code})',focus['id'])
+                    expected=list(range(unit['start'],unit['start']+len(unit['code'].replace('\r\n','\n').split('\n'))))
+                    assert geometry['rows']==expected, geometry
+                    exact=card.evaluate('''card=>[...card.querySelectorAll("[data-source-line]")].map(row=>{const n=row.cloneNode(true);n.querySelectorAll(".triage-line-number,.triage-note-marker").forEach(x=>x.remove());return n.textContent==='\u00a0'?'':n.textContent;})''')
+                    assert exact==unit['code'].replace('\r\n','\n').split('\n'), 'Original source text must survive native highlighting'
+                    assert len(geometry['cited'])==focus['source']['endLine']-focus['source']['line']+1 and all(r['visible'] for r in geometry['cited']),geometry
+                    assert geometry['width']>250 and 'full walkthrough is available separately' in page.locator('.guide-assessment-inspection').inner_text()
+                    opened=(time.monotonic()-started)*1000
+                    page.screenshot(path=str(out/f'exploration-{width}-{theme}-{focus["entry"]["id"]}.png'))
+                    if width==801:
+                        ratios=contrast();assert all(item['ratio']>=4.5 for item in ratios),ratios[:3]
+                        page.set_viewport_size({'width':1440,'height':900});page.wait_for_timeout(80)
+                        page.set_viewport_size({'width':width,'height':height});page.wait_for_timeout(80)
+                        assert card.locator('.triage-claim-line').count()==len(geometry['cited'])
+                        assert card.locator('[data-source-line='+json.dumps(str(focus['source']['line']))+']').evaluate('(n)=>{const r=n.getBoundingClientRect(),b=n.closest(".card-code").getBoundingClientRect();return r.top>=b.top&&r.bottom<=b.bottom;}')
+                    code=card.locator('.card-code')
+                    last=code.evaluate('(c)=>{const prior=c.scrollTop;c.scrollTop=c.scrollHeight;const last=c.querySelector("[data-source-line]:last-of-type")||[...c.querySelectorAll("[data-source-line]")].at(-1),r=last.getBoundingClientRect(),b=c.getBoundingClientRect();const visible=r.bottom<=b.bottom&&r.top>=b.top;c.scrollTop=prior;return visible;}')
+                    assert last, 'Complete original function tail must be reachable'
+                    started=time.monotonic();page.get_by_role('button',name='Return to assessment',exact=True).click();page.wait_for_selector('.guide-opinion')
+                    after=page.evaluate('()=>({camera:{scale,panX,panY},selected:[...cards.values()].find(c=>c.el.classList.contains("triage-selected-source"))?.id,scroll:document.querySelector(".triage-drawer").scrollTop,code:[...cards.values()].map(c=>[c.id,c.codeEl.parentElement.scrollTop])})')
+                    assert after==before,(before,after)
+                    assert not card.locator('[data-source-line="33"]').count(),'Return restores ordinary exploration cleanup, not stale inspection styling'
+                    samples.append({'viewport':[width,height],'theme':theme,'evidence':focus['entry']['id'],'openMs':opened,'returnMs':(time.monotonic()-started)*1000,'rows':geometry['rows'],'cited':geometry['cited']})
+            assert len(request('/state')['providerCalls'])==calls
+            result['changedEvidenceSamples']=samples
+            result['checks'].append('Saved Ready exploration with no guide: comment-only and multiline late citations use complete original native rows; exact range visible, function tail reachable, Return restores camera/selection/scroll at desktop/compact dark/light; provider none.')
+            page.evaluate('document.body.classList.remove("vscode-light")')
+            page.get_by_role('button',name='Walkthrough',exact=True).click();page.wait_for_selector('.guide-annotation:visible')
+            page.locator('.guide-controls').get_by_role('button',name='Next step',exact=True).click()
+            page.locator('.guide-controls').get_by_role('button',name='Previous step',exact=True).click()
+            page.screenshot(path=str(out/'checked-walkthrough.png'))
+            if args.assessment_check=='scenarios':
+                page.locator('.guide-controls').get_by_role('button',name='Next step',exact=True).click()
+                page.locator('.guide-controls').get_by_role('button',name='Next step',exact=True).click()
+                assert 'Independent zero-start scenario' in page.locator('.guide-annotation').inner_text()
+                assert 'startedAt is 0' in page.locator('.guide-aside').inner_text()
+                page.screenshot(path=str(out/'secondary-scenario-before-observation.png'))
+                request('/action',{'name':'scenario-observation'})
+                page.wait_for_function('()=>!document.querySelector(".guide-controls:not([hidden])")')
+                current=request('/state')['exposedInvestigation']['assessmentProjection']
+                assert current['technical']['result']=='supported' and current['technical']['coverage']=='partial',current
+                assert 'separate' in current['technical']['unresolved']
+                page.get_by_role('button',name='Summary',exact=True).first.click()
+                page.locator('.triage-drawer').evaluate('(n)=>{n.scrollTop=0;}')
+                assert 'additional alleged scope unresolved' in page.locator('.guide-result').first.inner_text()
+                page.screenshot(path=str(out/'independent-scope.png'))
+                action=page.locator('.guide-opinion').get_by_role('button',name='Supports this statement',exact=False).first
+                action.click();page.wait_for_selector('.guide-assessment-inspection:visible')
+                assert 'walkthrough remains unavailable' in page.locator('.guide-assessment-inspection').inner_text()
+                page.get_by_role('button',name='Return to assessment',exact=True).click();page.wait_for_timeout(400)
+                page.evaluate('window.closing=true;clearInterval(window.timer)')
+                request('/action',{'name':'reopen'});page.reload();page.wait_for_selector(finding_row);page.locator(finding_row).click()
+                page.wait_for_selector('.guide-result')
+                assert 'additional alleged scope unresolved' in page.locator('.guide-result').first.inner_text()
+                assert len(request('/state')['providerCalls'])==calls
+                result['checks'].append('Independent secondary observation retains supported primary/partial coverage across ordinary blocked continuation and reopen; exact primary evidence remains inspectable without publishing a partial tutorial.')
+            else:
+                request('/action',{'name':'assessment-revision'})
+                page.wait_for_selector('button:text-is("New review ready · update steps")')
+                calls=len(request('/state')['providerCalls'])
+                page.keyboard.press('Alt+4')
+                human=page.locator('#triage-field-decisionReason');human.fill('Researcher owns this conclusion.')
+                human.evaluate('(n)=>{n.focus();n.setSelectionRange(2,10);window.retainedHuman=n;}')
+                position=page.evaluate('()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId})')
+                indexed=sum(x['event']=='index-start' for x in request('/state')['productionTrace'])
+                request('/action',{'name':'profile-mapping'})
+                page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:assessmentProjection")')
+                old=page.evaluate('()=>window.hostMessages.filter(m=>m.type==="triage:assessmentProjection").at(-1)')
+                started=time.monotonic();request('/action',{'name':'profile-invalid'})
+                page.wait_for_function('()=>document.querySelector(".guide-aside .guide-severity")?.textContent.includes("selected rules unavailable")')
+                result['invalidProfileMs']=(time.monotonic()-started)*1000
+                page.evaluate('m=>window.dispatchEvent(new MessageEvent("message",{data:m}))',old)
+                assert 'selected rules unavailable' in page.locator('.guide-aside .guide-severity').inner_text()
+                assert page.evaluate('document.activeElement===window.retainedHuman&&window.retainedHuman.selectionStart===2&&window.retainedHuman.selectionEnd===10')
+                assert page.evaluate('()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId})')==position
+                assert 'Defect established' in page.locator('.guide-aside .guide-result').inner_text()
+                page.locator('.guide-aside .guide-severity').scroll_into_view_if_needed()
+                page.screenshot(path=str(out/'invalid-profile-editing.png'))
+                started=time.monotonic();request('/action',{'name':'profile-mapping'})
+                page.wait_for_function('()=>!document.querySelector(".guide-aside .guide-severity")?.textContent.includes("selected rules unavailable")')
+                result['profileRepairMs']=(time.monotonic()-started)*1000
+                assert human.input_value()=='Researcher owns this conclusion.' and len(request('/state')['providerCalls'])==calls
+                assert 'Fixture H/M mapping' in page.locator('.guide-aside .guide-severity').inner_text()
+                result['profileIndexingDelta']=sum(x['event']=='index-start' for x in request('/state')['productionTrace'])-indexed
+                assert result['profileIndexingDelta']==0
+                result['checks'].append('Retained old supported guide/new refuted assessment: invalid selected rules withdraw only engagement; delayed valid message rejected; valid repair keeps each artifact, human input/caret and step/camera, with zero new callbacks.')
+            result['finalProviderCallbacks']=len(request('/state')['providerCalls'])
+            result['externalProviderRequests']=0
         elif args.assessment_check == 'blocked':
             a=state['exposedInvestigation']['assessmentProjection']
             assert a['technical']['result']=='supported' and not draft['publication']['ready']
@@ -758,8 +882,9 @@ except Exception as error:
         except Exception as diagnostic: result['diagnosticError'] = repr(diagnostic)
 finally:
     (out / 'result.json').write_text(json.dumps(result, indent=2))
-    process.terminate()
-    try: process.wait(timeout=10)
-    except subprocess.TimeoutExpired: process.kill(); process.wait()
+    if process:
+        process.terminate()
+        try: process.wait(timeout=10)
+        except subprocess.TimeoutExpired: process.kill(); process.wait()
 print(json.dumps({'output':str(out),'phase':result.get('draft',{}).get('phase') if result.get('draft') else None,'checks':result['checks'],'error':result.get('error')}))
 if result.get('error'): raise SystemExit(1)
