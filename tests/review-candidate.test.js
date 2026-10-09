@@ -69,6 +69,25 @@ function verification(input) {
     checks:[...capacity.targets(input.earlierDraft.causal).map(t=>t.key),...(input.candidateRevisionTargets||[])].map(target=>({target,reason:'The uncaught false approval reverts this invocation and its intermediate writes; branch inputs remain bounded as reported.',evidence:input.earlierDraft.claims[0].evidence,documentation:[]}))};
   return value;
 }
+test('private reading-order defect survives candidate progression and both pre-V boundaries without losing technical review',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);let count=0;
+  await engine.advance({...f,invoke:async input=>{count++;const value=proposal(input);value.updates.push({path:'/causal/order',valueJSON:'[]'});return{value,audit:{phase:'challenge',outcome:'completed',requestId:'C-order'}};}});
+  assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);const exact=structuredClone(f.draft.reviewCandidate.candidate);
+  let reservations=0;
+  await engine.advance({...f,beforeRequest:()=>{reservations++;return{id:'V-order',phase:'challenge'};},prepareRequest:input=>input,
+    invoke:async input=>{count++;assert.equal(input.checkOnly,true);assert.deepEqual(input.earlierDraft.causal.order,[]);return{value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V-order'}};}});
+  assert.equal(reservations,1);assert.equal(count,2);assert.equal(f.draft.publication.ready,false);assert.deepEqual(f.draft.candidateHistory.at(-1).candidate,exact);
+  const shown=policy.expose(f.draft);assert.equal(shown.assessmentProjection.technical.result,'refuted',JSON.stringify(shown.assessmentProjection));assert.equal(shown.causal,undefined);
+  f.draft=engine.read(f.root,f.findingId);assert.equal(policy.expose(f.draft).assessmentProjection.technical.result,'refuted');
+});
+test('a prepared-input material frame defect is caught again at the final V boundary before reservation',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'C-final'}})});
+  const frozen=structuredClone(f.draft.reviewCandidate);let reservations=0;
+  await engine.advance({...f,prepareRequest:input=>{const data=require('../extension/packet-context').expand(input),events=data.earlierDraft.causal.events;
+    events.find(e=>e.invocationId!==events[0].invocationId).invocationId=events[0].invocationId;return data;},beforeRequest:()=>{reservations++;},invoke:()=>assert.fail('No invalid V dispatch')});
+  assert.equal(reservations,0);assert.equal(f.draft.failureCode,'TUTORIAL_REPRESENTATION');assert.deepEqual(f.draft.reviewCandidate,frozen);
+});
 function capacityProposal(input,count) {
   input=require('../extension/packet-context').expand(input);
   const value={mode:format.CANDIDATE,updates:[{path:'/questions',valueJSON:'[]'}]};
@@ -143,7 +162,7 @@ for(const variant of ['refutation','missing-rule','receipt-failure'])test(`recei
       value.conclusion.limitations=[unknown];value.causal.outcome='blocked';
       value.causal.obligations.find(o=>o.kind==='rule').state='open';value.walkthrough.assessment.result='unclear';
     }
-    original=structuredClone(value);return {value,audit:{phase:'generate',outcome:'completed',requestId:'original-G'}};
+    original=structuredClone(fixtureAuthoring.encode(value,input));return {value,audit:{phase:'generate',outcome:'completed',requestId:'original-G'}};
   }});
   assert.equal(f.draft.failureCode,'REVIEW_REFERENCE_SCOPE');assert.ok(f.draft.validationProblems.length>1);
   assert.equal(f.draft.claims.length,0);f.draft=engine.read(f.root,f.findingId);

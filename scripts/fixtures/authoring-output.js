@@ -3,6 +3,9 @@
 // Fixtures still pass through the exact new enforced schema and engine path.
 function encode(value, input) {
   const contract=require('../../extension/authoring-contract');
+  // Deterministic old fixtures decline new dimensions explicitly. This is
+  // never used for paid replay or production normalization.
+  if(input.assessmentContract&&value?.claims){value=structuredClone(value);value.property.derivation??=null;for(const claim of value.claims){claim.kind??=null;claim.severityFactors??=null;}}
   if(input.authoringFormat!==contract.VERSION)return value;
   if(value?.claims&&value?.causal){const full=structuredClone(value);if(full.walkthrough)delete full.walkthrough.steps;
     value={mode:input.candidateOnly?'candidate-patch-v1':'review-patch-v1',updates:Object.entries(full).filter(([key])=>!['inputReviews','explanationReviews','bindingFormat'].includes(key)).map(([key,item])=>({path:'/'+key,valueJSON:JSON.stringify(item)})),
@@ -11,8 +14,9 @@ function encode(value, input) {
   }
   if(!['candidate-patch-v1','review-patch-v1'].includes(value?.mode))return value;
   const plain=require('../../extension/packet-context').expand(input),format=require('../../extension/challenge-format'),provider=require('../../extension/semantic-provider');
-  const full=plain.bindingFormat?require('../../extension/source-bindings').schema(provider.schema):provider.schema;
-  const after=value.mode===format.CANDIDATE?format.candidate(value,plain.earlierDraft,full):format.assemblePatch(value,plain.earlierDraft,full);
+  const canonical=plain.bindingFormat?require('../../extension/source-bindings').schema(provider.schema):provider.schema,full=provider.fullSchema(plain);
+  const after=value.mode===format.CANDIDATE?format.candidate(value,plain.earlierDraft,canonical):format.assemblePatch(value,plain.earlierDraft,canonical);
+  if(input.assessmentContract){after.property.derivation??=null;for(const claim of after.claims){claim.kind??=null;claim.severityFactors??=null;}}
   const lookup=(root,path)=>path.split('/').slice(1).reduce((v,key)=>Array.isArray(v)?v.find(i=>i.id===key):v[key],root);
   const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b),edits=[];
   const note=value=>{const{sourceId,line,endLine,quote,...rest}=value;const source=plain.sources.find(s=>s.id===sourceId);

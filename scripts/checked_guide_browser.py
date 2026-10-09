@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--case')
-parser.add_argument('--teaching-case', choices=['time','lifecycle','accounting'])
+parser.add_argument('--teaching-case', choices=['time','lifecycle','accounting','scenarios'])
 parser.add_argument('--workspace')
 parser.add_argument('--report')
 parser.add_argument('--finding', default='I-01')
@@ -27,6 +27,7 @@ parser.add_argument('--baseline', action='store_true')
 parser.add_argument('--report-preparation', action='store_true')
 parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
 parser.add_argument('--outline-check', action='store_true', help='Additional functional-only initial-list and per-function outline/detour checks; keep separate from compared timing batches.')
+parser.add_argument('--focused-viewports', action='store_true', help='Desktop and constrained-pane acceptance only (1440x900, 801x600).')
 parser.add_argument('--local-recheck', action='store_true', help='Exercise the selected local preparation action with provider none; never a model request.')
 parser.add_argument('--blocker-check', action='store_true', help='Inspect all current blocker groups, source focus/return and reopen with provider none.')
 parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
@@ -99,7 +100,8 @@ try:
         finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
         page.wait_for_selector(finding_row, timeout=30000)
         if args.outline_check:
-            assert page.locator(finding_row+' .triage-preparation-badge').inner_text() == 'Ready'
+            assert page.locator(finding_row+' .triage-preparation-badge').get_attribute('data-state') == 'ready'
+            assert page.locator(finding_row+' .triage-preparation-badge').inner_text().endswith('Ready')
             assert page.locator(finding_row+' .triage-ready-action').is_visible()
             page.get_by_label('Finding queue filter').select_option('preparation:ready')
             assert page.locator('[data-finding-id]:visible').count() == 1
@@ -223,6 +225,16 @@ try:
                 assert page.locator('.guide-anchor > path').evaluate_all('(nodes)=>nodes.every(node=>node.getAttribute("mask")==="url(#guide-outside-cards)")'), 'An overlay connection can obscure original code.'
                 visited.append({'event': identity, 'lines': spans, 'explanation': page.locator('.guide-annotation').inner_text()})
                 page.screenshot(path=str(out / f'step-{i + 1}.png'))
+                if args.teaching_case == 'scenarios' and not args.baseline:
+                    orientation=page.locator('.guide-orientation').inner_text()
+                    expected_actor='User' if i == 0 else 'Keeper'
+                    expected_condition='approved == false' if i == 0 else 'paused == true'
+                    assert expected_actor in orientation and expected_condition in orientation, orientation
+                    assert ('paused == true' if i == 0 else 'approved == false') not in orientation, orientation
+                    saved_scroll=page.locator('.guide-aside').evaluate('(n)=>n.scrollTop')
+                    page.locator('.guide-aside').evaluate('(n)=>n.scrollTop=0')
+                    page.screenshot(path=str(out / f'scenario-entry-{i+1}.png'))
+                    page.locator('.guide-aside').evaluate('(n,top)=>n.scrollTop=top',saved_scroll)
                 if i + 1 < len(steps):
                     camera_before = page.evaluate('()=>({scale,panX,panY})')
                     controls.get_by_role('button', name='Next step', exact=True).click()
@@ -285,7 +297,7 @@ try:
                 # Return deliberately restored the bottom-link reading point.
                 # The separate resize control starts by reading the intro.
                 page.evaluate('document.querySelector(".guide-aside").scrollTop=0')
-            for width, height in [(1440,900),(1280,800),(1366,768),(1051,800),(1050,800),(801,800),(800,800),(799,800),(761,800),(760,800),(759,800),(640,800)]:
+            for width, height in ([(1440,900),(801,600)] if args.focused_viewports else [(1440,900),(1280,800),(1366,768),(1051,800),(1050,800),(801,800),(800,800),(799,800),(761,800),(760,800),(759,800),(640,800)]):
                 page.set_viewport_size({'width':width,'height':height}); page.wait_for_timeout(150)
                 if args.outline_check: verify_readable(current_step)
                 code = page.locator('#flowboard').bounding_box(); aside = page.locator('.guide-aside').bounding_box()
@@ -425,6 +437,13 @@ try:
             result['sameHostPreparedOpenMs'] = (time.monotonic() - opened_at) * 1000
             assert len(request('/state')['providerCalls']) == before_calls
             result['checks'].append('Reopening a saved board missing its required first function includes the complete checked native card in the initial load before guided focus.')
+            if args.teaching_case:
+                profile_position=page.evaluate('()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId,code:document.querySelector(".guide-active-card .card-code").parentElement.scrollTop})')
+                request('/action',{'name':'profile-mapping'})
+                page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:assessmentProjection"&&m.projection?.engagement?.name==="Fixture H/M mapping")')
+                assert page.evaluate('()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId,code:document.querySelector(".guide-active-card .card-code").parentElement.scrollTop})')==profile_position
+                assert len(request('/state')['providerCalls'])==before_calls
+                result['checks'].append('A validated local engagement profile remaps the assessment without changing the active step, camera or code scroll, and without another request.')
             if args.batch:
                 page.get_by_role('button', name='Findings', exact=True).click()
                 page.locator('[data-finding-id="I-02"]').click()
@@ -516,7 +535,7 @@ try:
                 assert len(state['providerCalls']) == 0, 'Retained rejection inspection is local, never a repair request.'
                 result['checks'].append('Received rejection has a factual recovery message, no replay disguised as repair and no unaccepted tutorial.')
             if selected_job and selected_job.get('verificationCompletion'):
-                assert 'Full verification completed · publication blocked.' in status_text
+                assert 'Full verification completed · walkthrough unavailable.' in status_text
                 assert page.locator('.guide-verification-status').is_visible()
                 if selected_job.get('missingInputs'):
                     assert page.locator('.guide-current-requirement').evaluate('''node=>{

@@ -98,7 +98,7 @@ for(const receiptFault of [false,true,'followup'])test(`ordinary coordinator rep
     if(input.finding.id==='I-1'&&input.phase==='generate'){
       value.inputReviews=[];delete value.walkthrough.steps;
       value.claims.push({...structuredClone(value.claims[0]),id:'c2',allegation:'The same false call settles successfully.'});
-      value.causal.obligations.push(...value.causal.obligations.map(o=>({...o,id:o.id+'-second',claimId:'c2'})));original=structuredClone(value);
+      value.causal.obligations.push(...value.causal.obligations.map(o=>({...o,id:o.id+'-second',claimId:'c2'})));original=structuredClone(require('../scripts/fixtures/authoring-output').encode(value,input));
     } else if(['rejected-proposal-repair','rejected-proposal-followup'].includes(input.reviewPurpose)){
       const note={...input.earlierDraft.evidence[0],id:'guard-second',claimId:'c2'};
       value={mode:'candidate-patch-v1',updates:[{path:'/evidence/guard-second',valueJSON:JSON.stringify(note)},{path:'/claims/c2/evidence',valueJSON:'["guard-second"]'},
@@ -891,6 +891,7 @@ test('authorized two pairs plus generation-only observation consumes exactly fiv
   f.options.invoke = async (input, options) => {
     const receipt = guard.dispatch(input, options.requestId), value = response(input);
     const result = { value: input.phase === 'generate' ? require('../scripts/fixtures/source-bound-output').encode(value, input) : value, audit: { requestId: options.requestId, outcome: 'completed', phase: input.phase, provider: 'controlled' } };
+    result.value=require('../scripts/fixtures/authoring-output').encode(result.value,input);
     f.calls.push([input.finding.id, input.phase]); guard.result(receipt, input, result); return result;
   };
   for (const c of cases) { await f.runner.continueFinding(c.findingId); await f.runner.control('pause');
@@ -936,7 +937,7 @@ for (const selectedCount of [1, 2]) test(`runner/coordinator additive plan admit
   const changed=structuredClone(f.runner.state);changed.resources.requests=3;assert.throws(()=>guard.continuation(changed),/baseline/i);
   const callbacks=[];
   const invoke=async(input,options)=>{const receipt=guard.dispatch(input,options.requestId);callbacks.push(input.phase);
-    const result={value:response(input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local'}};guard.result(receipt,input,result);return result;};
+    const result={value:require('../scripts/fixtures/authoring-output').encode(response(input),input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local'}};guard.result(receipt,input,result);return result;};
   f.runner.dispose();await f.runner.loop;
   const runner=new ReportPreparation(f.root,executionOptions({manifest,guard,catalog:async()=>catalog,invoke}));t.after(()=>runner.dispose());
   await runCases(runner,manifest);
@@ -992,7 +993,7 @@ test('ordinary private candidate and complete verification use separate guarded 
       const value=input.candidateOnly?{mode:'candidate-patch-v1',updates:[{path:'/questions',valueJSON:'[]'},
         {path:'/evidence/guard/explanation',valueJSON:JSON.stringify('The false condition reaches require; it reverts instead of returning normally.')}]}:response(input);
       if(input.checkOnly){value.inputReviews=[];value.explanationReviews[0].result='repaired';value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The local guard supplies the previously requested explanation; the same false-input condition is retained.',evidence:['guard'],documentation:[]})));}
-      const result={value,audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local',teardown:{confirmed:true}}};
+      const result={value:require('../scripts/fixtures/authoring-output').encode(value,input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local',teardown:{confirmed:true}}};
       guard.result(receipt,input,result);return result;
     };
     owner=new ReportPreparation(f.root,executionOptions({manifest,guard,catalog:async()=>catalog,invoke}));

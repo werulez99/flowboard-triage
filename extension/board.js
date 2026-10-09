@@ -72,11 +72,19 @@ class TriageBoard {
     return this.native.panel.webview.postMessage(message);
   }
   exposed(draft) {
+    if(!draft)return null;
+    const evaluated=guidePolicy.evaluate(draft);
+    try{const profiles=require('./assessment-profile'),relative=this.vscode.workspace.getConfiguration('flowboardTriage',this.vscode.Uri.file(this.root)).get('engagementProfile','');
+      Object.assign(evaluated.assessment,profiles.project(draft,evaluated.assessment,profiles.load(this.root,relative)));
+    }catch(error){evaluated.assessment.engagement={state:'not-assessed',reason:error.message};}
     const report = this.callbacks?.reportPreparation?.();
     const status = report?.status();
-    return guidePolicy.expose(draft, status ? { findingId: draft?.findingId, findingReady: report.published(draft) } : this.callbacks?.reportPreparation ? {
-      findingId: draft?.findingId, findingReady: false } : null);
+    return guidePolicy.expose(draft, status ? { findingId: draft?.findingId, findingReady: report.published(draft,evaluated) } : this.callbacks?.reportPreparation ? {
+      findingId: draft?.findingId, findingReady: false } : null,evaluated);
   }
+  async remapProfile(){const model=this.models.get(this.activeId);if(!model?.investigationDraft)return;
+    await this.post({type:'triage:assessmentProjection',issueId:model.id,token:model.token,projection:this.exposed(model.investigationDraft).assessmentProjection});
+    const report=this.callbacks.reportPreparation?.();if(report)await this.post({type:'triage:reportPreparation',report:report.status()});}
   async reportProgress() {
     if (this.disposed) return;
     const report = this.callbacks.reportPreparation?.();
@@ -759,7 +767,9 @@ class TriageBoard {
       this.assertCurrent(model);
       const current = { ...model.request.finding, ...structuredClone(message.patch || {}) };
       if (current.triage) { review.validate(current.triage); p.evidenceSources(this.root, current.triage); }
-      await this.vscode.env.clipboard.writeText(review.brief(current, { checkoutRevision: model.request.sourceRevision || model.git.head }));
+      const projection=this.exposed(model.investigationDraft)?.assessmentProjection;
+      const summary=projection?`\n\nScoped AI assessment: ${projection.technical.label}\n${projection.technical.why}\nSuggested severity (${projection.rubric}): ${projection.severity.label}\n${(projection.severity.conditions||[]).join('; ')}\nEngagement: ${projection.engagement.reason}\nTutorial: ${projection.tutorial.state}\n`:'';
+      await this.vscode.env.clipboard.writeText(review.brief(current, { checkoutRevision: model.request.sourceRevision || model.git.head })+summary);
       return this.notify('Review brief copied. It records reviewer evidence and gaps, not a verified verdict.', false, this.scope(message));
     }
     if (message.type === 'triage:refresh' && this.activeId) return this.callbacks.refresh(this.activeId, model?.draftFingerprint);

@@ -306,7 +306,7 @@ test('fixed finding evaluation enforces identity, one generation/challenge, fini
   let guard, ledger;
   const f = await fixture(t, 2, (input, options) => {
     const receipt = guard.reserve(input, options.requestId); assert.equal(receipt.timeoutMs, 600000); assert.equal(options.timeoutMs, undefined);
-    const value = input.checkOnly ? response(input) : binding.encode(response(input), input), audit = { outcome: 'completed' }; guard.result(receipt, input, value, audit);
+    const value = require('../scripts/fixtures/authoring-output').encode(input.checkOnly ? response(input) : binding.encode(response(input), input),input), audit = { outcome: 'completed' }; guard.result(receipt, input, value, audit);
     return { value, audit };
   });
   f.options.configuration = () => ({ provider: 'none', requestLimit: 2, workers: 1 }); await f.runner.ensure();
@@ -335,7 +335,7 @@ test('inactive packet-bound evaluation admits one generation only and refuses ch
   const f=await fixture(t,2,(input,options)=>{
     const receipt=guard.dispatch(input,options.requestId);seenDeadline=receipt.timeoutMs;
     assert.throws(()=>guard.dispatch(input,options.requestId),/unused exact/);
-    const result={value:require('../scripts/fixtures/source-bound-output').encode(response(input),input),audit:{outcome:'completed',requestId:options.requestId}};
+    const result={value:require('../scripts/fixtures/authoring-output').encode(require('../scripts/fixtures/source-bound-output').encode(response(input),input),input),audit:{outcome:'completed',requestId:options.requestId}};
     guard.result(receipt,input,result);return result;
   });
   f.options.configuration=()=>({provider:'none',requestLimit:5,workers:1});await f.runner.ensure();
@@ -366,7 +366,7 @@ test('packet-bound pair challenges only the engine-accepted compiled base; consu
   const {EvaluationPlanGuard,packetIdentity}=require('../scripts/evaluation-plan-guard');let guard,ledger,manifest;
   const f=await fixture(t,1,(input,options)=>{
     const receipt=guard.dispatch(input,options.requestId);assert.equal(receipt.timeoutMs,600000);
-    const value=input.checkOnly?response(input):require('../scripts/fixtures/source-bound-output').encode(response(input),input);
+    const value=require('../scripts/fixtures/authoring-output').encode(input.checkOnly?response(input):require('../scripts/fixtures/source-bound-output').encode(response(input),input),input);
     const result={value,audit:{outcome:'completed',requestId:options.requestId}};guard.result(receipt,input,result);return result;
   });
   f.options.configuration=()=>({provider:'none',requestLimit:5,workers:1});await f.runner.ensure();

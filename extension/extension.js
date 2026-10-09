@@ -38,7 +38,7 @@ function activate(context) {
     if (!preparations.has(root)) {
       const preparation = new ReportPreparation(root, {
         configuration: () => { const config = vscode.workspace.getConfiguration('flowboardTriage', folder.uri), provider = config.get('semanticProvider', 'none');
-          return { provider, executable: config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined,
+          return { provider,engagementProfile:config.get('engagementProfile',''), executable: config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined,
             budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 0),
             findingRequestLimit: config.get('findingRequestLimit', 6), workers: config.get('preparationWorkers', 2),
             providerCapacity: config.get('providerConcurrency', 2), batchDeadlineMs: config.get('reportTimeLimitMinutes', 0) * 60000 }; },
@@ -338,6 +338,7 @@ function activate(context) {
   if (vscode.workspace.onDidChangeConfiguration) context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
     for (const folder of vscode.workspace.workspaceFolders || []) {
       if (event.affectsConfiguration('flowboardTriage.analysisMode', folder.uri) || event.affectsConfiguration('flowboardTriage.slitherPath', folder.uri)) configurationChanged(folder, 'Flowboard Triage configuration');
+      else if(event.affectsConfiguration('flowboardTriage.engagementProfile',folder.uri))boards.get(folder.uri.fsPath)?.remapProfile().catch(error=>log.appendLine(error.message));
       else if (event.affectsConfiguration('flowboardTriage', folder.uri)) {
         // Changing a display/model setting is not consent to another report
         // spending allowance. The explicit Resume action handles that.
@@ -367,6 +368,8 @@ function activate(context) {
     }
   }));
   if (vscode.workspace.onDidSaveTextDocument) context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
+    for(const folder of vscode.workspace.workspaceFolders||[]){const relative=vscode.workspace.getConfiguration('flowboardTriage',folder.uri).get('engagementProfile','');
+      if(relative&&path.resolve(folder.uri.fsPath,relative)===document.uri.fsPath)boards.get(folder.uri.fsPath)?.remapProfile().catch(error=>log.appendLine(error.message));}
     if (document.uri.fsPath?.endsWith('.sol')) dirtySources.delete(document.uri.fsPath);
     for (const folder of vscode.workspace.workspaceFolders || []) if (relevantDirty(folder.uri.fsPath, document.uri.fsPath, preparations.get(folder.uri.fsPath)?.state?.reportName)) scheduleReport(folder);
   }));

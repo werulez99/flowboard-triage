@@ -30,6 +30,13 @@ test('review queue searches source files and retains provisional assessments nee
   assert.equal(review.nextAttention([issues[0]], 'a'), null);
   assert.equal(review.nextAttention([], 'a'), null);
 });
+test('researcher engagement attributes survive persistence independently of the technical result', t => {
+  const root=workspace(t),value=finding('confirmed');value.triage.engagementAttributes=[{kind:'known',reference:'Researcher supplied acknowledgment reference'},{kind:'out-of-scope',reference:'Engagement scope section 2'}];
+  const request={...structuredClone(example),findingId:'I-01',finding:value};store.writeDraft(root,'I-01',request);
+  const saved=store.readDraft(root,'I-01');assert.deepEqual(saved.finding.triage.engagementAttributes,value.triage.engagementAttributes);
+  assert.equal(saved.finding.status,'confirmed');assert.match(review.brief(saved.finding),/not technical refutation/);
+  assert.deepEqual(review.create(saved.finding.triage).engagementAttributes,value.triage.engagementAttributes);
+});
 test('related findings distinguish identical anchors from merely sharing a file', () => {
   const anchor = { file: 'src/Demo.sol', line: 8, function: 'increment' };
   const related = review.related([

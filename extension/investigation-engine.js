@@ -774,12 +774,14 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   if (output.causal) for (const key of ['obligations', 'events', 'relationships', 'checks']) capacity.assertLength(output.causal[key], limits[key], key);
   const known = new Map(units.map(unit => [unit.id, unit])), ids = new Set();
   const claims = output.claims.map(claim => {
+    for(const key of ['kind','severityFactors'])if(Object.hasOwn(claim,key)&&!challengeFormat.valid(claim[key],reviewSchema.properties.claims.items.properties[key]))throw new Error(`Invalid claim ${key} in the versioned assessment contract.`);
     const id = text(claim.id, 100);
     if (!/^[\w-]+$/.test(id) || ids.has(id)) throw new Error('Model claim IDs are invalid or repeated.'); ids.add(id);
     return { id, allegation: text(claim.allegation), actor: text(claim.actor), entry: known.has(claim.entry) ? claim.entry : '',
       implementation: text(claim.implementation), conditions: list(claim.conditions), requiredFacts: list(claim.requiredFacts),
       supportsIf: text(claim.supportsIf), contradictsIf: text(claim.contradictsIf), status: ['supported', 'contradicted', 'narrowed'].includes(claim.status) ? claim.status : 'unresolved',
       reason: text(claim.reason), evidence: list(claim.evidence, limits.evidence), unknowns: list(claim.unknowns), nextQuestion: text(claim.nextQuestion),
+      ...Object.fromEntries(['kind','severityFactors'].filter(k=>Object.hasOwn(claim,k)).map(k=>[k,structuredClone(claim[k])])),
       origin: 'model-interpretation', reviewed: false, correctionRevision: draft.corrections.length,
       premiseIds: draft.corrections.filter(item => !item.claimId || item.claimId === id).map(item => item.id) };
   });
@@ -815,7 +817,9 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
     }
   }
   const refs = value => list(value, limits.evidence).filter(id => evidenceIds.has(id));
-  const property = { text: text(output.property.text), basis: ['source-contract', 'test-expectation', 'local-documentation','unresolved'].includes(output.property.basis) ? output.property.basis : 'report-assumption', evidence: refs(output.property.evidence),
+  if(Object.hasOwn(output.property,'derivation')&&!challengeFormat.valid(output.property.derivation,reviewSchema.properties.property.properties.derivation))throw new Error('Invalid invariant derivation.');
+  const property = { text: text(output.property.text), basis: ['source-contract', 'test-expectation', 'local-documentation','derived-security-invariant','unresolved'].includes(output.property.basis) ? output.property.basis : 'report-assumption', evidence: refs(output.property.evidence),
+    ...(Object.hasOwn(output.property,'derivation')?{derivation:structuredClone(output.property.derivation)}:{}),
     documentation: list(output.property.documentation ?? [], 6).filter(id => draft.documentation?.excerpts.some(item => item.id === id)) };
   if (!property.evidence.length && !property.documentation.length && property.basis!=='unresolved') property.basis = 'report-assumption';
   const transitions = (output.transitions || []).filter(item => ids.has(item.claimId)).map(item => ({ id: text(item.id, 100), claimId: item.claimId,
@@ -851,6 +855,7 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   return accepted;
 }
 function invalidateCandidate(draft,reason,correctionId) {
+  if(draft.technicalReview){draft.technicalReviewHistory=[...(draft.technicalReviewHistory||[]),{...draft.technicalReview,reason,correctionId}];delete draft.technicalReview;}
   if(draft.currentRejection){draft.rejectionHistory=[...(draft.rejectionHistory||[]),{...draft.currentRejection,invalidation:{reason,correctionId,at:now()}}];delete draft.currentRejection;}
   if(draft.rejectedProposal){draft.rejectedProposalHistory=[...(draft.rejectedProposalHistory||[]),{...draft.rejectedProposal,invalidation:{reason,correctionId,at:now()}}];delete draft.rejectedProposal;}
   if(draft.reviewCandidate) {
@@ -1091,6 +1096,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const obtain = async (phase, previous = null, feedback = null) => {
       if(phase==='challenge'&&draft.rejectedProposal)previous=require('./rejected-proposal').material(draft,context.units,reviewSchema);
       let data = input(phase);
+      if(!draft.pendingResponse)data.assessmentContract=require('./technical-assessment').VERSION;
       const reviewPurpose = phase === 'challenge' && !draft.pendingResponse ? candidates.purpose(draft, reviewSchema) : null;
       if (feedback) data.hostReview = feedback;
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
@@ -1318,6 +1324,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         const checked = previous ? checkExplanations(value, previous, accepted, reviewUnits, data) : accepted;
         if(data.checkOnly&&data.reviewPurpose)require('./review-content').equal(require('./review-content').fromWire(data.earlierDraft,reviewUnits),checked);
         if (candidateVerification) checked.candidateVerification = candidateVerification;
+        if(phase==='challenge'&&data.assessmentContract===require('./technical-assessment').VERSION)checked.technicalReview={version:data.assessmentContract,requestId:response.audit.requestId,inputHash:outboundHash,result:data.checkOnly?'kept':'reviewed'};
         return checked;
         } catch (error) {
           if (!previous) throw error;
@@ -1474,7 +1481,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       const progress = followups < 2 && (readQuestions(next) || unreadTail);
       // Stop if the missing fact cannot be obtained. A closed explanation with
       // invalid references/order gets one repair; open speculation does not.
-      const structural = next.causal?.outcome !== 'blocked' && next.claims.every(claim => claim.status !== 'unresolved' && !claim.unknowns.length) && !next.conclusion.limitations.length;
+      const structural = firstGate.details?.some(d=>d.kind==='structural'&&!require('./technical-assessment').presentation(d)) && next.causal?.outcome !== 'blocked' && next.claims.every(claim => claim.status !== 'unresolved' && !claim.unknowns.length) && !next.conclusion.limitations.length;
       if (!candidateState && (progress || structural && !repairUsed)) {
         if (progress) followups++; else repairUsed = true;
         const feedback = { problems: firstGate.problems, newLocalCode: progress,
@@ -1505,13 +1512,14 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     draft.publication = guidePolicy.gate(draft);
     if (draft.publication.ready) draft.publication.digest = guidePolicy.digest(draft);
     draft.phase = draft.publication.ready ? 'ready' : 'blocked';
+    if(draft.technicalReview?.version===require('./technical-assessment').VERSION&&draft.technicalReview.requestId===draft.runs.at(-1)?.requestId)require('./technical-assessment').seal(draft,draft.technicalReview);
     draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), followups, repairUsed, at: now() };
     if (!draft.publication.ready) {
       draft.failureKind = draft.publication.details?.some(item => item.kind === 'local-reading') ? 'local-reading' :
         draft.publication.details?.some(item => item.kind === 'capability') ? 'capability' :
         draft.publication.details?.some(item => item.kind === 'material-evidence') ? 'material-evidence' : 'structural';
       draft.error = draft.publication.problems[0];
-      if (draft.failureKind === 'structural') {
+      if (draft.failureKind === 'structural' && draft.publication.details?.some(d=>d.kind==='structural'&&!require('./technical-assessment').presentation(d))) {
         const noProgress = hash([draft.causal, draft.publication.problems]);
         draft.checkpoint = { ...draft.checkpoint, stage: 'challenge', feedback: { problems: draft.publication.problems, details: draft.publication.details },
           noProgress, repeated: noProgress === priorNoProgress ? priorRepeated + 1 : 0 };

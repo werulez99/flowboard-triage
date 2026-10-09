@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.19.26",
+  "version": "0.19.27",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
@@ -25,6 +25,10 @@
     "configuration": {
       "title": "Flowboard Triage",
       "properties": {
+        "flowboardTriage.engagementProfile": {
+          "type": "string", "default": "", "scope": "resource",
+          "description": "Optional workspace-relative JSON engagement mapping (version 1: name, revision, labels, eligibleBands). Empty means reportability not assessed. Uses General Audit v1 reviewed factors; changing labels never starts a model request or changes your decision. Material trust/behavior assumptions require a finding correction. See docs/GUIDED-READING.md."
+        },
         "flowboardTriage.semanticProvider": {
           "type": "string", "enum": ["none", "claude", "codex"], "default": "none", "scope": "resource",
           "description": "Opt in to background source-only review of every finding in the imported report. Sends report sections and bounded code excerpts to your configured CLI account under a shared report request limit. Claude has a per-pass USD cap; Codex has a timeout, not a USD cap. Tools/hooks/apps are disabled. 'none' keeps offline code/report exploration usable."

@@ -2,13 +2,13 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const contract=require('../extension/authoring-contract'),format=require('../extension/challenge-format'),provider=require('../extension/semantic-provider');
 function fixture(candidateOnly=true){
-  const make=s=>s.enum?s.enum[0]:s.type==='array'?[]:s.type==='object'?Object.fromEntries(Object.entries(s.properties).map(([k,v])=>[k,make(v)])):s.type==='integer'?1:'';
+  const make=s=>s.anyOf?make(s.anyOf[0]):s.type==='null'?null:s.enum?s.enum[0]:s.type==='array'?[]:s.type==='object'?Object.fromEntries(Object.entries(s.properties).map(([k,v])=>[k,make(v)])):s.type==='integer'?1:'';
   const earlierDraft=make(provider.schema),sourceHash='a'.repeat(64),code='function act() external {\n    // caf\u00e9\n    require(allowed);\n    return;\n}';
   earlierDraft.claims=[{...make(provider.schema.properties.claims.items),id:'claim-local',evidence:['note-local']}];
   earlierDraft.evidence=[{id:'note-local',claimId:'claim-local',sourceId:'source-local',line:3,endLine:3,quote:'    require(allowed);',stance:'context',explanation:'The guard checks allowed.'}];
   earlierDraft.causal.events=[{...make(provider.schema.properties.causal.properties.events.items),id:'event-local'}];
   const units=[{id:'source-local',complete:true,source:{file:'Local.sol',sourceHash,line:1,endLine:5},code}];
-  return{units,input:{phase:'challenge',authoringFormat:contract.VERSION,candidateOnly,...(!candidateOnly?{repairOnly:true}:{}),earlierDraft,sources:[{id:'source-local',file:'Local.sol',sourceHash,line:1,endLine:5,code:code.split('\n').map((l,i)=>`${i+1} | ${l}`).join('\n')}]}};
+  return{units,input:{phase:'challenge',assessmentContract:require('../extension/technical-assessment').VERSION,authoringFormat:contract.VERSION,candidateOnly,...(!candidateOnly?{repairOnly:true}:{}),earlierDraft,sources:[{id:'source-local',file:'Local.sol',sourceHash,line:1,endLine:5,code:code.split('\n').map((l,i)=>`${i+1} | ${l}`).join('\n')}]}};
 }
 const response=(input,edits)=>({mode:input.candidateOnly?contract.CANDIDATE:contract.REPAIR,edits,...(!input.candidateOnly?{inputReviews:[],explanationReviews:[],checks:[]}:{})});
 test('rejected typed edits retain independently valid scoped questions without applying edits or erasing originals',()=>{

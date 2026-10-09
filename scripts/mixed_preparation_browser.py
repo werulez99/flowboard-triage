@@ -180,7 +180,8 @@ try:
             current=wait(lambda s:s['reportPreparation']['reportHash']!=old_status['reportHash'] and job(s,'I-2')['publishable'])
             open_finding('I-2')
             page.locator('#triage-bar').get_by_role('button',name='Findings',exact=True).click()
-            assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').inner_text()=='Ready'
+            assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').get_attribute('data-state')=='ready'
+            assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').inner_text().endswith('Ready')
             page.evaluate('status=>window.dispatchEvent(new MessageEvent("message",{data:{type:"triage:reportPreparation",report:status,reportObservation:999999}}))',old_status)
             assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
             assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
@@ -209,7 +210,8 @@ try:
             if action == 'reopen':
                 # Idle coordinator -> brand new panel. No selection or later
                 # progress is allowed to repair this initial list observation.
-                assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').inner_text() == 'Ready'
+                assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').get_attribute('data-state') == 'ready'
+                assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').inner_text().endswith('Ready')
                 assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
                 assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
                 assert 'supplied remote receiver' in page.locator('[data-finding-id="I-3"]').inner_text()

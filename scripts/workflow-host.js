@@ -61,7 +61,7 @@ function boardClass(storage, invoke, trace) {
 }
 
 async function start(options = {}) {
-  if (options.teachingFixture && !['time', 'lifecycle', 'accounting'].includes(options.teachingFixture)) throw Error('Unknown controlled teaching fixture');
+  if (options.teachingFixture && !['time', 'lifecycle', 'accounting','scenarios'].includes(options.teachingFixture)) throw Error('Unknown controlled teaching fixture');
   const teachingFolder = options.teachingFixture && path.join(__dirname, 'fixtures/teaching-preparation', options.teachingFixture);
   const upstream = fs.realpathSync(options.upstream || process.env.FLOWBOARD_EXTENSION_PATH || '');
   const extension = productionExtension;
@@ -363,6 +363,10 @@ async function start(options = {}) {
         createBoard();
       } else if (message.name === 'library') {
         await board.showLibrary();
+      } else if (message.name === 'profile-mapping' && !readOnly && options.teachingFixture) {
+        fs.writeFileSync(path.join(root,'engagement.json'),JSON.stringify({version:1,name:'Fixture H/M mapping',revision:'1',labels:{Low:'Low — no payout'},eligibleBands:['High','Medium']}));
+        configuration.engagementProfile='engagement.json';
+        await board.remapProfile();
       } else if (message.name === 'source-change' && !readOnly) {
         const file = options.qualityCase || options.routeFixture || options.mixedFixture ? board.models.get(board.activeId).catalog.functions[0].file : path.join(root, options.reading ? 'src/ReservationBook.sol' : options.complex ? 'src/QuotationDemo.sol' : 'src/Demo.sol');
         fs.appendFileSync(file, '\n// Integration fixture source revision changed.\n');

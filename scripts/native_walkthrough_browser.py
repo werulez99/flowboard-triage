@@ -104,7 +104,8 @@ try:
         initial_list={'type':'triage:library','library':base['library'],'reportPreparation':initial_status,'reportObservation':1,
                       'reportContext':{'project':'controlled-project','reportHash':'controlled-report'}}
         emit(initial_list)
-        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').inner_text()=='Ready'
+        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').get_attribute('data-state')=='ready'
+        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').inner_text().endswith('Ready')
         assert page.locator('[data-finding-id="I-03"] .triage-preparation-badge').inner_text()=='Blocked'
         assert page.locator('[data-finding-id="I-04"] .triage-preparation-badge').inner_text()=='Paused'
         assert page.locator('[data-finding-id="I-01"] .triage-ready-action').is_visible()

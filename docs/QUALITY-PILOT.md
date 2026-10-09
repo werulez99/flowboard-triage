@@ -1,5 +1,63 @@
 # Bounded fresh quality pilot
 
+## Scoped assessment and native scenarios (0.19.27)
+
+**Zero live provider requests; no new real checked tutorial.** This implementation
+does not renew any historical generation, authoring or verification allowance.
+The retained real result stays blocked; its old verification is not promoted into
+the new independent technical-assessment contract.
+
+The supported canonical gate finished with **565 tests passed, zero failed**.
+The earlier run exposed eight fixture/partial-record regressions; the corrected
+paths passed 72 focused controls before the final gate. These counts establish
+tested host mechanics, not semantic correctness of real model conclusions.
+
+Production import/coordinator/storage controls use fixed fictional responses for
+supported, fully resolved mixed, supported-with-open-scope, insufficient and
+source-refuted dispositions. Complete cases keep generation -> full checkOnly;
+optional severity adds no authoring stage. A private candidate with only missing
+reading order reaches the same full verification but cannot publish a tutorial.
+An aggregate invalid/refuted verdict contradicting an established defect is
+retained and rejected before V. Material frame/source/check/revision failures are
+not excused as presentation. Human corrections and judgments remain separate.
+
+Original native 1.2.0 browser inspections cover a documented clock-rule defect,
+two alternative user/keeper refutations, a 15-event/five-function route with a
+121-line helper, and a mixed four-finding report. They exercise exact highlights,
+returns/rollback, outline, detour/Return, saved reopen and independently Ready
+siblings. Desktop 1440x900 and constrained 801x600 geometry and dark/light scenes
+were inspected. Editor I/O is simulated; this is not observed Cursor activation
+or proof of model reasoning quality. A visible orientation initially displaced
+the bottom-dock operation; the current operation now comes first. Reported
+expectations remain explicitly labeled rather than being presented as established
+rules. Active actor/conditions are scenario-specific.
+
+One small isolated local fixture (Linux, Node 20.20.1, four logical CPUs, two
+controlled callbacks) took 131.7 ms before and 119.0 ms after in idle runs; this is
+not a latency distribution or model speedup. Observed exported gate/digest calls
+changed from 9/11 to 3/2 plus three paired evaluations, each including its own
+gate/digest. Saved ensure medians (three samples) were 2.84/3.24 ms and projection
+medians (ten samples) 1.15/1.90 ms: the richer safe projection is not universally
+faster. A first overlapped measurement is retained but excluded from comparison.
+Native route saved reopen median was 490.8 ms (three samples); no p95 is inferred.
+Six supported-fixture step interactions were 9.9–32.7 ms. These are separate
+layers, not batch performance. All navigation/profile remapping used zero new
+callbacks for the selected finding and zero external requests.
+
+The complete small generation packet increased 43,458 -> 48,320 bytes (+4,862);
+full checkOnly 48,657 -> 51,743 (+3,086), including actual instructions/schema.
+A read-only comparison of an existing 52-source verification representation was
+329,790 -> 332,876 bytes (+3,086); its archived input was not modified or resent.
+Bytes are not token estimates, comprehension evidence or a context guarantee.
+
+Later separately authorized real evaluation should use independently adjudicated,
+diverse supported/refuted/mixed/unresolved cases under the same named rubric.
+Measure unsupported confirmations, wrong refutations and supported defects lost
+to abstention; completion/abstention rates; time to first usable finding,
+per-finding and whole-batch completion, with concurrency, requests and failures.
+A timeout is not a correct refutation and an unresolved case is not a confirmed
+positive. Neither that paid evaluation nor a contest corpus was run here.
+
 ## Early tutorial diagnostics and finished blocked review (0.19.26)
 
 **Zero new provider requests. No new checked real tutorial.** The retained

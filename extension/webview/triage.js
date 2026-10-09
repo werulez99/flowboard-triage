@@ -84,10 +84,11 @@
   function updatePreparationRows() {
     for (const row of drawer.querySelectorAll('[data-finding-id]')) {
       const job = preparationJob(row.dataset.findingId), badge = row.querySelector('.triage-preparation-badge'), action = row.querySelector('.triage-ready-action');
-      if (badge) { badge.textContent = jobLabel(job); badge.dataset.state = job?.publishable ? 'ready' : job?.state || 'not-started'; badge.title = job?.reason || ''; }
+      const assessment=job?.assessmentProjection,technical=assessment?.technical;
+      if (badge) { badge.textContent = technical&&technical.result!=='not-assessed'?technical.label+' · '+jobLabel(job):jobLabel(job); badge.dataset.state = job?.publishable ? 'ready' : job?.state || 'not-started'; badge.title = job?.reason || ''; }
       if (action) action.hidden = !job?.publishable;
       const reason = row.querySelector('.triage-job-reason');
-      if (reason) { reason.textContent = job?.reason || ''; reason.hidden = !job?.reason || !['blocked', 'failed', 'paused', 'stale'].includes(job.state); }
+      if (reason) { reason.textContent = (technical&&technical.result!=='not-assessed'?[technical.why,technical.remaining?.[0], 'Suggested severity: '+(assessment.severity?.label||'Not assessed')+' '+(assessment.severity?.conditions||[]).join('; ')].filter(Boolean).join(' · '):job?.reason)||''; reason.hidden = !reason.textContent; }
       if (queueMode.startsWith('preparation:')) row.hidden = queueMode === 'preparation:ready' ? !job?.publishable : job?.state !== queueMode.slice(12);
     }
     const counts = drawer.querySelector('.triage-preparation-counts');
@@ -329,12 +330,14 @@
       if(!preparing&&job?.repairAvailable&&!localAdmission()&&!sharedAllowanceExhausted())row.append(button('Repair saved analysis',()=>send('triage:repairSavedAnalysis')));
       if(!preparing&&job?.localRecheckAvailable)row.append(button('Recheck local preparation',()=>send('triage:recheckLocalPreparation')));
       row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
+      const technical=job?.assessmentProjection?.technical||investigationDraft?.assessmentProjection?.technical;
+      if(technical&&technical.result!=='not-assessed')preparationSurface.append(element('h2','guide-technical-result',technical.label),element('p','guide-technical-reason',technical.why));
       const selected = issueIdentifier() || preparing || 'No finding selected';
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code', 'preparing-local-context':'Checking local preparation (no model request)' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
       if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.published?
-        'Full verification completed · checked tutorial available.':'Full verification completed · publication blocked. The exact candidate was kept, but material or source-binding checks still prevent a tutorial.'));
+        'Full verification completed · checked tutorial available.':'Full verification completed · walkthrough unavailable. The technical assessment and the remaining evidence or presentation blockers are shown separately.'));
       if(job?.verificationCompletion&&!job.verificationCompletion.published&&job.missingInputs?.length)
         preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
       if(job?.validationProblems?.length){
@@ -615,14 +618,14 @@
     parent.append(detail);
   }
   function renderOpinion(parent, draft = investigationDraft) {
-    if (!readyDraft(draft)) return;
+    if (!readyDraft(draft)&&(!draft?.assessmentProjection||draft.assessmentProjection.technical.result==='not-assessed')) return;
     const assessment = FlowboardWalkthrough.assessment(draft, sourceStale);
     const opinion = element('div', 'guide-opinion');
     const part = (heading, key) => { const node = element('section', 'guide-ai-part'); node.dataset.part = key; node.append(element('h3', '', heading)); opinion.append(node); return node; };
-    const result = part('Preliminary assessment', 'assessment');
+    const result = part('Scoped technical assessment', 'assessment');
     result.append(element('strong', `guide-result ${assessment.result}`, assessment.label), element('small', 'triage-muted', 'AI opinion · your saved judgment is separate'));
     const why = part('Why', 'why'); why.append(element('p', '', assessment.why));
-    if (draft?.snapshot) {
+    if (draft?.snapshot&&readyDraft(draft)) {
       const scope = element('details'); scope.append(element('summary', '', 'Checked scope and code version'));
       scope.append(element('p', '', draft.claims.map(item => `${item.id}: ${item.implementation}; ${item.conditions.join('; ')}`).join('\n')),
         element('p', '', `Expected behavior: ${draft.property.text}`),
@@ -648,6 +651,10 @@
     remains.append(element('p', '', unknowns[0] || (assessment.result === 'unavailable' ? 'Finish preparing the review to see its open questions.' : 'No further material gap was listed in this scoped AI review. This is not a guarantee of correctness.')));
     if (unknowns.length > 1) { const more = element('details'); more.append(element('summary', '', `${unknowns.length - 1} more open questions`)); for (const text of unknowns.slice(1)) more.append(element('p', '', text)); remains.append(more); }
     parent.append(opinion);
+    const projection=draft.assessmentProjection;
+    if(projection?.severity){const severity=element('section','guide-severity');severity.append(element('h3','','Suggested severity · General Audit v1'),element('strong','',projection.severity.label),element('p','',projection.severity.reason));
+      for(const text of projection.severity.conditions||[])severity.append(element('p','',text));
+      severity.append(element('p','triage-muted',projection.engagement?.reason||'Engagement eligibility not assessed.'));parent.append(severity);}
   }
   function syncReadingLayout() {
     const open = !!guide && guideMode !== 'closed' && !sourceStale;
@@ -701,15 +708,16 @@
     mechanism.ontoggle = () => disclosureState.set(orientationKey, mechanism.open);
     mechanism.onscroll = () => { disclosureState.set(orientationScrollKey, mechanism.scrollTop); schedulePersist(); };
     requestAnimationFrame(() => { if (mechanism.isConnected) mechanism.scrollTop = Number(disclosureState.get(orientationScrollKey)) || 0; });
-    mechanism.append(element('summary', '', 'Mechanism and starting scenario'), element('p', '', guide.teaching.mechanism),
-      element('h3', '', 'Expected rule'), element('p', '', guide.teaching.rule), element('small', 'triage-muted', guide.teaching.basis),
-      element('p', '', `Actor: ${guide.teaching.actor}`));
-    if (guide.teaching.conditions.length) mechanism.append(element('p', '', guide.teaching.conditions.join('; ')));
-    evidenceActions(mechanism, guide.teaching.ruleEvidence, 'Read rule basis');
-    if (guideIndex === 0) {
-      const orientation = element('section', 'guide-orientation');
-      orientation.append(element('h3', '', 'Mechanism in this review'), element('p', '', guide.teaching.mechanism), mechanism);
-      guideAside.append(orientation);
+    const teaching=FlowboardWalkthrough.teaching(guide.draft,guide.steps,guideIndex);
+    mechanism.append(element('summary', '', 'Mechanism and rule evidence'),element('p','',teaching.mechanism),element('small','triage-muted',teaching.basis));
+    evidenceActions(mechanism, teaching.ruleEvidence, 'Read rule basis');
+    let orientation=null;
+    if (guideIndex === teaching.scenarioStart) {
+      orientation = element('section', 'guide-orientation');
+      orientation.append(element('h3', '', guideIndex===0?'Mechanism in this review':'Active scenario'),element('p','',guideIndex===0?teaching.mechanism:teaching.actor),
+        element('strong','',teaching.basis||'Expected rule'),element('p','',teaching.rule),element('p','',`Actor: ${teaching.actor}`));
+      if(teaching.conditions.length)orientation.append(element('p','',teaching.conditions.join('; ')));
+      orientation.append(mechanism);
     }
     const outline = element('details', 'guide-outline'); outline.open = disclosureState.get('guide-outline') === true;
     outline.append(element('summary', '', 'Step outline'));
@@ -741,6 +749,7 @@
       note.append(button(`Code line ${entry.source.line}${entry.source.endLine !== entry.source.line ? '–' + entry.source.endLine : ''}`, () => guideReveal(entry.source.line), 'guide-line-link'),
         element('h3', '', 'What happens here'),
         element('p', 'guide-explanation', step.what || entry.note));
+      if(orientation)note.append(orientation);
       if (step.why) note.append(element('h3', '', 'Why it matters'), element('p', '', step.why));
       note.append(element('p', `guide-stance ${entry.stance}`, `${entry.stance === 'supports' ? 'Supports this statement' : entry.stance === 'contradicts' ? 'Challenges this statement' : 'Code context'}`));
       if (statement) note.append(statement);
@@ -844,7 +853,7 @@
       const handoff = element('section', 'guide-handoff');
       if (nextStep?.handoff) {
         const transition = FlowboardWalkthrough.transition(step, nextStep);
-        handoff.append(element('strong', '', `Next · ${transition.title}`), element('small', 'guide-next-function', transition.functionName), element('p', '', transition.explanation));
+        handoff.append(element('strong', '', `Next · ${transition.title}`), element('small', 'guide-next-function', `${transition.label} · ${transition.functionName}`), element('p', '', transition.explanation));
         const detail = element('details'); detail.append(element('summary', '', 'Transition evidence and binding'), element('p', '', `${transition.kind} · ${transition.binding}`)); handoff.append(detail);
       } else {
         const result = FlowboardWalkthrough.assessment(guide.draft);
@@ -1226,12 +1235,13 @@
           button('Read report', () => show('report')), button('Edit your review', () => show('review')));
         drawer.append(original);
       } else preparationContent(drawer);
+      renderOpinion(drawer);
       return;
     }
     if (active && drawerTab === 'brief' && investigationDraft?.causal) {
       const overview = section('The issue'); overview.append(element('h2', '', finding.title), element('p', '', investigationDraft.causal.summary),
         element('p', 'triage-muted', `Reported severity: ${finding.reportedSeverity || 'Not supplied'} · Your result: ${statusLabel(finding.status)}`));
-      overview.append(button(guide ? 'Resume walkthrough' : 'Start walkthrough', guideStart, 'primary'), button('Read report', () => show('report')));
+      overview.append(element('strong','',FlowboardWalkthrough.assessment(investigationDraft,sourceStale).label),button(guide ? 'Resume walkthrough' : 'Start walkthrough', guideStart, 'primary'), button('Read report', () => show('report')));
       const scope = element('details'); scope.append(element('summary', '', 'Reviewed scope'), element('p', '', investigationDraft.causal.scope)); overview.append(scope); drawer.append(overview);
       renderOpinion(drawer);
       if (guideIntent === 'explore' && cards.has(selectedCard)) drawer.append(sourceInspector());
@@ -1508,6 +1518,10 @@
     control('status', 'Your assessment', ['unreviewed', 'confirmed', 'invalid', 'design-decision', 'insufficient-evidence', 'already-fixed'], false, decision);
     control('confidence', 'Reviewer confidence (not calculated by the tool)', ['low', 'medium', 'high'], false, decision);
     profileControl('decisionReason', 'Why does the evidence justify this assessment?', decision);
+    const attributes=element('details');attributes.append(element('summary','','Engagement attributes · your references, not a technical verdict'));
+    for(const kind of ['known','duplicate','acknowledged','out-of-scope','fixed-later']){const label=element('label','',kind.replaceAll('-',' ')),input=element('input');input.setAttribute('aria-label',kind+' reference');input.placeholder='Reference, or leave blank';input.maxLength=1000;input.value=profile().engagementAttributes?.find(a=>a.kind===kind)?.reference||'';
+      input.oninput=()=>editProfile(value=>{value.engagementAttributes=(value.engagementAttributes||[]).filter(a=>a.kind!==kind);if(input.value.trim())value.engagementAttributes.push({kind,reference:input.value.trim()});});label.append(input);attributes.append(label);}
+    decision.append(attributes);
     control('openQuestions', 'What is still uncertain? (one per line)', null, true, decision);
     control('impact', 'Consequence if the reported deviation holds', null, false, decision);
     control('remediation', 'Possible fix / design clarification', null, false, decision);
@@ -2067,6 +2081,9 @@
         if(blockerReturn){const v=blockerReturn.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=blockerReturn.checkedLocation;show(v.drawerTab);({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;for(const[id,scroll]of blockerReturn.scrolls){const c=cards.get(id);if(c)c.codeEl.scrollTop=scroll;}redrawEdges();blockerReturn=null;}
         back.remove();guideIntent='waiting';preparationExpanded=true;renderPreparation();const target=[...preparationSurface.querySelectorAll('[data-blocker-id]')].find(n=>n.dataset.blockerId===message.diagnosticId);target?.scrollIntoView({block:'center'});});
       back.classList.add('guide-blocker-return');drawer.prepend(back);
+    }
+    else if(message?.type==='triage:assessmentProjection'&&message.issueId===active&&message.token===token&&investigationDraft){
+      investigationDraft.assessmentProjection=message.projection;if(guide)guide.draft.assessmentProjection=message.projection;renderDrawer();
     }
     else if (message?.type === 'triage:investigation' && message.issueId === active && message.token === token && message.draft?.findingId === active) {
       if (sourceStale || message.draft.revision < (investigationDraft?.revision || 0)) return;

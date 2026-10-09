@@ -52,6 +52,9 @@
   }
   function assessment(draft, stale = false) {
     if (stale) return { result: 'unavailable', label: 'Code or report changed', why: 'Refresh the review before relying on these notes.', remaining: [] };
+    const projected=draft?.assessmentProjection?.technical;
+    if(projected&&projected.result!=='not-assessed')return {...projected,result:({supported:'valid',refuted:'invalid','insufficient-evidence':'unclear'})[projected.result],
+      supports:projected.evidence?.find(e=>e.stance==='supports'),contradicts:projected.evidence?.find(e=>e.stance==='contradicts')};
     const states = { preparing: 'Preparing review', generating: 'Reading code', 'checking-source': 'Reading related code', challenging: 'Checking explanations',
       'provider-required': 'AI review is off', blocked: 'AI review unavailable', corrected: 'Review needs updating' };
     if (!draft || draft.phase !== 'ready') return { result: 'unavailable', label: states[draft?.phase] || 'Review not available',
@@ -99,13 +102,18 @@
   // Projection only: every displayed sentence already belongs to the accepted
   // property, claim, event or conclusion covered by the publication digest.
   // No second event order, new premise, numeric evaluation or attestation.
-  function teaching(draft, steps) {
-    const first = steps[0], claim = first.claim;
+  function teaching(draft, steps, index=0) {
+    const active=steps[index],claim=active.claim;
+    // Scenario entry, not step zero. A distinct transaction or context edge
+    // cannot borrow the first route's actor, assumptions or value history.
+    let start=index;
+    while(start>0&&steps[start-1].claimId===active.claimId&&steps[start-1].transaction===active.transaction&&steps[start].handoff?.kind!=='context')start--;
+    const first=steps[start];
     return { mechanism: draft.causal.summary, rule: draft.property.text,
       basis: ({ 'report-assumption': 'Reported expectation (not independent proof)', 'source-contract': 'Source-linked rule',
-        'test-expectation': 'Supplied test expectation', 'local-documentation': 'Supplied documentation', unresolved: 'Unresolved expected rule' })[draft.property.basis],
+        'test-expectation': 'Supplied test expectation', 'local-documentation': 'Supplied documentation', 'derived-security-invariant':'Reviewed invariant derived from mechanism and rights', unresolved: 'Unresolved expected rule' })[draft.property.basis],
       ruleEvidence: draft.property.evidence || [], ruleDocumentation: draft.property.documentation || [],
-      actor: first.actor || claim.actor, conditions: [...new Set([...(claim.conditions || []), ...(first.conditions || [])])],
+      actor: first.actor || claim.actor, conditions: [...new Set([...(claim.conditions || []), ...(first.conditions || [])])],scenario:claim.allegation,scenarioStart:start,
       conclusion: draft.conclusion?.text || '', claims: draft.claims.map(({ id, status, reason }) => ({ id, status, reason })),
       limitations: draft.conclusion?.limitations || [] };
   }
@@ -122,7 +130,7 @@
   function transition(previous, next) {
     if (!next) return null;
     const link = next.handoff;
-    return { title: next.title, functionName: next.unit?.name || '',
+    return { title: next.title, functionName: next.unit?.name || '',label:({call:'Call',callback:'Callback',return:'Return',branch:'Branch',data:'Data dependency','later-transaction':'Later transaction',context:previous?.claimId!==next.claimId?'Alternative scenario':'Evidence detour'})[link?.kind]||'Next checked operation',
       explanation: link?.explanation || '', binding: link?.binding || '', kind: link?.kind || '',
       sameInvocation: !!previous && previous.invocationId === next.invocationId && previous.transaction === next.transaction };
   }
@@ -166,5 +174,5 @@
     if (argument?.span) result.argument = { unit: caller.unit, span: argument.span, text: argument.expression };
     return result;
   }
-  return { paragraphs, reportLink, originalLines, exact, assessment, build, relationship, transition, watchedChanges, inputLinks };
+  return { paragraphs, reportLink, originalLines, exact, assessment, build, teaching, relationship, transition, watchedChanges, inputLinks };
 });

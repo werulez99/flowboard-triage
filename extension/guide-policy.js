@@ -52,6 +52,8 @@ function gate(draft) {
       fail('The candidate revision verification receipt is missing or changed.');
   }
   if (!model || typeof model !== 'object') return { ready: false, problems: ['The saved analysis has no checked explanation model. Prepare it with the current review policy.'] };
+  if(!draft.property||!Array.isArray(draft.claims)||!Array.isArray(draft.evidence)||!Array.isArray(draft.sources))
+    return {ready:false,policy:POLICY,problems:['The saved analysis is missing its canonical argument fields. No checked assessment or layout remedy is available.'],details:[{kind:'structural',code:'ARGUMENT_INCOMPLETE',reason:'Canonical property, claims, evidence and source collections are required.'}]};
   const resolved = require('./event-source').resolver(draft);
   for (const problem of require('./semantic-input').problems(draft, false, resolved)) fail(problem, 'structural',null,{code:'PREMISE_REVIEW_INVALID'});
   for(const review of draft.inputReviews||[])if(review.status==='unresolved'){
@@ -93,6 +95,13 @@ function gate(draft) {
   const normalized = capacity.normalizeChecks(model), targetKeys = capacity.targets(model).map(item => item.key);
   if (new Set(targetKeys).size !== targetKeys.length || new Set(normalized.map(item => item.target)).size !== normalized.length || normalized.some(item => !targetKeys.includes(item.target))) fail('Challenge targets are duplicate, ambiguous or unknown. Use typed obligation, event and relationship identities.');
   const check = (id, ids) => normalized.some(item => item.target === id && nonempty(item.reason) && refs(item.evidence, item.documentation) && ids.every(value => item.evidence.includes(value)));
+  for(const claim of draft.claims){
+    const factors=claim.severityFactors;
+    if(factors&&(!refs(factors.evidence)||!obligations.some(o=>o.claimId===claim.id&&o.kind==='impact'&&check(capacity.target('obligation',o),factors.evidence))))
+      fail('The optional severity assertions have no complete impact review. They cannot inherit an older assessment.','structural',`claim:${claim.id}/severityFactors`,{code:'SEVERITY_REVIEW_MISSING',claimIds:[claim.id]});
+    if(draft.property.derivation&&!obligations.some(o=>o.claimId===claim.id&&o.kind==='rule'&&check(capacity.target('obligation',o),draft.property.derivation.evidence)))
+      fail('The invariant derivation lacks its source-grounded rule check.','structural',`claim:${claim.id}/rule`,{code:'DERIVATION_REVIEW_MISSING',claimIds:[claim.id]});
+  }
   for (const claim of draft.claims) for (const kind of kinds) {
     const obligationsForKind = obligations.filter(item => item.claimId === claim.id && item.kind === kind);
     if (!obligationsForKind.length) fail(`${claim.id}: ${kind} has not been checked.`);
@@ -110,7 +119,11 @@ function gate(draft) {
     if (model.outcome === 'supported' && draft.claims.find(claim => claim.id === item.claimId)?.status === 'supported' && ['rule', 'impact', 'behavior'].includes(item.kind) && item.state !== 'established') fail(`A supported violation requires an established ${item.kind}.`);
   }
   if (model.outcome === 'supported' && !draft.claims.some(claim => ['supported', 'narrowed'].includes(claim.status) && ['rule', 'impact', 'behavior'].every(kind => obligations.some(item => item.claimId === claim.id && item.kind === kind && item.state === 'established')))) fail('A supported outcome needs at least one checked claim with established behavior, rule and impact; refuted secondary claims do not establish it.');
-  if (model.outcome === 'supported' && (!['source-contract','test-expectation','local-documentation'].includes(draft.property.basis) || !(draft.property.evidence?.length || draft.property.documentation?.length))) fail('The expected rule has no independent checked basis.');
+  if (model.outcome === 'supported' && (!['source-contract','test-expectation','local-documentation','derived-security-invariant'].includes(draft.property.basis) || !(draft.property.evidence?.length || draft.property.documentation?.length))) fail('The expected rule has no independent checked basis.');
+  if(draft.property.basis==='derived-security-invariant'){
+    const derivation=draft.property.derivation;
+    if(!derivation||!['mechanism','reason','counterevidence'].every(k=>nonempty(derivation[k]))||!derivation.assumptions?.length||!refs(derivation.evidence))fail('The derived security invariant needs source-grounded rights/obligations, its derivation, explicit assumptions and contrary evidence.','structural','property/derivation',{code:'DERIVATION_INCOMPLETE'});
+  }
   if (model.outcome === 'refuted' && !draft.evidence.some(item => item.stance === 'contradicts')) fail('No decisive counterevidence refutes the allegation.');
   const eventIds = new Set();
   for (const event of events) {
@@ -129,12 +142,20 @@ function gate(draft) {
   for(const item of deterministic.details){problems.push(item.reason);details.push(item);}
   return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details, diagnosticsVersion: deterministic.version, diagnosticsIdentity: deterministic.identity };
 }
-function expose(draft, report = null) {
+function evaluate(draft) {
+  const publication=gate(draft),identity=digest(draft);
+  const checked=draft.phase==='ready'&&draft.publication?.policy===POLICY&&draft.publication.digest===identity&&publication.ready;
+  const assessment=require('./technical-assessment').project(draft,publication);
+  Object.assign(assessment,require('./assessment-profile').project(draft,assessment));
+  return {publication,digest:identity,checked,assessment};
+}
+function expose(draft, report = null, evaluation=null) {
   if (!draft) return null;
-  const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
+  const evaluated=evaluation||evaluate(draft),checked=evaluated.checked;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
     const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
-    return { ...copy, nativeSources: require('./event-source').projections(draft) };
+    delete copy.technicalReview;delete copy.technicalReviewHistory;
+    return { ...copy, assessmentProjection:evaluated.assessment, nativeSources: require('./event-source').projections(draft) };
   }
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
@@ -142,6 +163,8 @@ function expose(draft, report = null) {
   for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
   for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
+  delete copy.technicalReview;delete copy.technicalReviewHistory;
+  copy.assessmentProjection=evaluated.assessment;
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',
     reason: draft.error || draft.publication?.problems?.[0] || (draft.phase === 'provider-required' ? 'Choose an authenticated provider to prepare the explanation.' : ''),
     problems: draft.publication?.problems || [], attempted: draft.actions.slice(-5).map(action => action.result) };
@@ -151,4 +174,4 @@ function expose(draft, report = null) {
   if (copy.phase === 'ready') copy.phase = 'preparing';
   return copy;
 }
-module.exports = { POLICY, schema, gate, expose, digest };
+module.exports = { POLICY, schema, gate, expose, digest, evaluate };

@@ -21,6 +21,7 @@
     return { version: 1, actor: value?.actor || '', decisionReason: value?.decisionReason || '',
       checks: checkpoints.map(check => ({ id: check.id, state: 'unchecked', note: '', ...value?.checks?.find(item => item.id === check.id) })),
       evidence: structuredClone(value?.evidence || []), claims: structuredClone(value?.claims || []),
+      ...(value?.engagementAttributes?{engagementAttributes:structuredClone(value.engagementAttributes)}:{}),
       ruleOrigin: structuredClone(value?.ruleOrigin || { kind: 'unknown', reference: '' }) };
   }
   function validate(value) {
@@ -31,6 +32,8 @@
     };
     if (!value || Array.isArray(value) || value.version !== 1) fail('triage.version must be 1.');
     text(value.actor, 'Review actor'); text(value.decisionReason, 'Decision explanation');
+    if(value.engagementAttributes!==undefined){if(!Array.isArray(value.engagementAttributes)||value.engagementAttributes.length>5)fail('Invalid researcher engagement attributes.');const kinds=new Set();
+      for(const item of value.engagementAttributes){if(!['known','duplicate','acknowledged','out-of-scope','fixed-later'].includes(item.kind)||kinds.has(item.kind))fail('Unknown or repeated engagement attribute.');text(item.reference,'Attribute reference',true,1000);kinds.add(item.kind);}}
     if (!Array.isArray(value.checks) || value.checks.length > checkpoints.length) fail('Invalid review checkpoints.');
     const seen = new Set();
     for (const check of value.checks) {
@@ -85,6 +88,7 @@
       '## Reported claim', finding.summary || 'Not recorded.', '', '## Expected behavior', finding.expectedBehavior || 'Not established.', '',
       '## What the code does', finding.actualBehavior || 'Not established.', '', '## Actor / required state', value.actor || 'Actor/permissions not established.',
       ...(finding.preconditions || []), '', '## Evidence for and against'];
+    for(const item of value.engagementAttributes||[])lines.push(`Researcher engagement attribute (not technical refutation): ${item.kind} — ${item.reference}`);
     for (const item of value.evidence) lines.push(`- ${item.needsReview ? '[NEEDS RE-REVIEW] ' : ''}${item.stance}: ${item.source ? `${item.source.file}:${item.source.line}${item.source.endLine ? '-' + item.source.endLine : ''}` : item.reference} — ${item.note}${item.basis ? ` (${bases[item.basis]})` : ''}`);
     if (!value.evidence.length) lines.push('No structured evidence recorded.');
     if (finding.evidence?.length) lines.push('', 'Additional / legacy references (not automatically revalidated):', ...finding.evidence.map(text => `- ${text}`));

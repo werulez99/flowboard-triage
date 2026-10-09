@@ -16,8 +16,8 @@ function project(value) {
   const causal=structuredClone(value.causal||null);if(causal)delete causal.checks;
   // Legacy wire objects omitted documentation; absence means the empty list,
   // not an omitted qualification. This is the only neutral property default.
-  return {property:{...pick(value.property,['text','basis','evidence']),documentation:value.property.documentation||[]},
-    claims:value.claims.map(c=>pick(c,['id','allegation','actor','entry','implementation','conditions','requiredFacts','supportsIf','contradictsIf','status','reason','evidence','unknowns','nextQuestion'])),
+  return {property:{...pick(value.property,['text','basis','evidence','derivation']),documentation:value.property.documentation||[]},
+    claims:value.claims.map(c=>pick(c,['id','allegation','actor','entry','implementation','conditions','requiredFacts','supportsIf','contradictsIf','status','reason','evidence','unknowns','nextQuestion','kind','severityFactors'])),
     evidence:value.evidence.map(e=>({...pick(e,['id','claimId','sourceId','quote','stance']),line:e.source?.line??e.line,endLine:e.source?.endLine??e.endLine,explanation:e.note??e.explanation})),
     transitions:(value.transitions||[]).map(t=>pick(t,['id','claimId','label','before','after','timing','conditions','evidence'])),
     questions:(value.questions||[]).map(q=>pick(q,['id','claimId','text','action','target','why'])),causal,

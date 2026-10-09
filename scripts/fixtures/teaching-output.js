@@ -3,6 +3,7 @@
 // Production never branches on these names. No external request or execution.
 const capacity = require('../../extension/review-capacity');
 function response(input, name) {
+  if(name==='scenarios')return require('./scenario-output').response(input);
   const spec = {
     time: { contract: 'DeadlineWindow', functions: ['schedule', 'ready'], outcome: 'supported',
       rule: 'The documented integer-clock rule stores startedAt + duration as an absolute deadline.',

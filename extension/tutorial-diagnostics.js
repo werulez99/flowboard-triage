@@ -3,7 +3,7 @@
 // attestations, mutates a candidate, acquires code, or advances a lifecycle.
 const crypto=require('node:crypto'),bindings=require('./call-bindings'),capacity=require('./review-capacity');
 const {lexicalCode}=require('./solidity-text');
-const VERSION='tutorial-diagnostics-v1';
+const VERSION='tutorial-diagnostics-v2';
 const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const actions={structural:'Correct these exact explanation fields and their dependent checks in a private revision; do not retry an unchanged verification.',
   capability:'Inspect the linked supplied code. This operation is outside the supported local analysis; more copies of that code will not resolve it.',
@@ -61,6 +61,17 @@ function inspect(draft) {
     }
     for(const change of event.changes||[]){const problem=require('./checked-calculation').problem(change);if(problem)fail(`${event.title}: ${problem}`,'structural',target,{code:'VALUE_CALCULATION'});}
   }
+  for(const item of require('./technical-assessment').consistency(draft))fail(item.reason,item.kind,item.target,item);
+  // Only exact boolean facts on an explicit runtime edge are compared. This
+  // is not satisfiability analysis; context/alternative reading edges do not
+  // assert one execution. A cited state write may explain the transition.
+  const facts=event=>new Map((event.conditions||[]).flatMap(c=>{const m=c.trim().match(/^([A-Za-z_$][\w.$]*)\s*={1,3}\s*(true|false)$/);return m?[[m[1],m[2]]]:[];}));
+  for(const link of links.filter(l=>['call','callback','return','branch','data'].includes(l.kind))){
+    const from=events.find(e=>e.id===link.from),to=events.find(e=>e.id===link.to);if(!from||!to||from.claimId!==to.claimId||from.transaction!==to.transaction)continue;
+    const before=facts(from);
+    for(const [name,value] of facts(to))if(before.has(name)&&before.get(name)!==value&&!from.changes?.some(c=>c.name===name&&c.before===before.get(name)&&c.after===value&&refs(c.evidence)))
+      fail(`The same runtime scenario changes ${name} from ${before.get(name)} to ${value} without a cited state transition. Keep alternatives separate or establish the intervening change.`,'structural',capacity.target('relationship',link),{code:'SCENARIO_CONTRADICTION',claimIds:[from.claimId]});
+  }
   const ids=new Set(events.map(e=>e.id));
   for(const link of links){
     const target=capacity.target('relationship',link),from=events.find(e=>e.id===link.from),to=events.find(e=>e.id===link.to);
@@ -75,7 +86,7 @@ function inspect(draft) {
   bindings.validateInvocations({events,links,units,evidence,fail,resolved});
   if(!events.length||!Array.isArray(model.order)||model.order.length!==events.length||new Set(model.order).size!==events.length||model.order.some(id=>!ids.has(id)))fail('The tutorial has no complete, unique reading order.','structural','causal/order',{code:'READING_ORDER'});
   for(let i=1;i<(model.order||[]).length;i++)if(!links.some(l=>l.from===model.order[i-1]&&l.to===model.order[i]))fail('A move to the next step has no explained handoff or context detour.','structural',`causal/order/${i}`,{code:'MISSING_HANDOFF'});
-  return {version:VERSION,identity,details:[...new Map(details.map(d=>[d.id,d])).values()],admissible:!details.some(d=>d.kind==='structural')};
+  return {version:VERSION,identity,details:[...new Map(details.map(d=>[d.id,d])).values()],admissible:!details.some(d=>d.kind==='structural'&&!require('./technical-assessment').presentation(d))};
 }
 function assertVerification(draft){const result=inspect(draft);if(!result.admissible)throw Object.assign(new Error('The saved explanation has deterministic representation defects. Correct the listed fields before paid verification; the exact candidate is preserved.'),{
   code:'TUTORIAL_REPRESENTATION',diagnostics:result,validationProblems:result.details.map(d=>({...d,message:d.reason}))});return result;}

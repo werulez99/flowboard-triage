@@ -4,7 +4,7 @@ const { importReport } = require('../extension/report'), { ReportPreparation } =
 const { analyze } = require('../extension/runner-adapter'), { SourceCatalog } = require('../extension/source');
 const engine = require('../extension/investigation-engine');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
-for (const name of ['time', 'lifecycle', 'accounting']) test(`ordinary ${name} teaching packet and accepted projection`, { skip: !native }, async t => {
+for (const name of ['time', 'lifecycle', 'accounting','scenarios']) test(`ordinary ${name} teaching packet and accepted projection`, { skip: !native }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-teaching-')), base = path.join(__dirname, '../scripts/fixtures/teaching-preparation', name);
   fs.cpSync(path.join(base, 'project'), root, { recursive: true });
   await importReport(path.join(base, 'report.md'), root, native, { deferMapping: true });
@@ -20,6 +20,11 @@ for (const name of ['time', 'lifecycle', 'accounting']) test(`ordinary ${name} t
   assert.ok(packets[1].earlierDraft.causal.events.length);
   const exposed = require('../extension/guide-policy').expose(draft), route = require('../extension/webview/walkthrough-model').build(exposed, exposed.walkthrough.reportText);
   assert.ok(route?.teaching.mechanism && route.teaching.rule && route.teaching.conclusion);
+  if(name==='scenarios'){
+    const walk=require('../extension/webview/walkthrough-model'),first=walk.teaching(exposed,route.steps,0),second=walk.teaching(exposed,route.steps,1);
+    assert.equal(first.actor,'User');assert.equal(second.actor,'Keeper');assert.deepEqual(first.conditions,['approved == false']);assert.deepEqual(second.conditions,['paused == true']);
+    assert.equal(walk.transition(route.steps[0],route.steps[1]).label,'Alternative scenario');
+  }
   const changed = structuredClone(draft); changed.causal.summary = 'A new unreviewed teaching premise.';
   assert.ok(!require('../extension/guide-policy').expose(changed).causal, 'Displayed factual projections remain inside the accepted digest, not an unchecked metadata channel.');
   const before = packets.length; await runner.ensure(); assert.equal(packets.length, before);

@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.17
+# Checked finding walkthroughs — 0.19.27
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -37,7 +37,7 @@ recheck; transport failure does not create semantic repair permission. Ordinary
 per-finding/report limits still govern attempts; the private evaluator's four
 slots are not a new global product allowance.
 
-The shared capacity is 48 evidence notes, 96 old/new explanation reviews and a
+The shared capacity is 64 evidence notes, 128 old/new explanation reviews and a
 separate finite ceiling of 160 non-note revision checks (bounded claims,
 obligations, events, questions and field changes). These are ceilings, not desired
 output volume. All references survive acceptance/storage. Original causal target
@@ -50,17 +50,110 @@ Guided mode focuses an original native function card at readable scale; neighbor
 
 The original report paragraph is displayed without rewriting it. An exact unique phrase can be highlighted inside its recorded paragraph. Repeated or unavailable phrases do not get guessed. **Read full report → Linked report statements** links back to their steps. Older results without paragraph references show that limitation instead of fabricating quotations.
 
-## Preliminary AI opinion
+## Scoped technical assessment
+
+`technical-review-v1` uses the existing immutable argument and normal full
+challenge, not a separate triage request. Its host receipt binds exact semantic
+content, source/report/premises and substantive checks. An ordinary completed
+review can expose a bounded technical result even when a purely pedagogical
+`READING_ORDER` failure prevents a tutorial. Both pre-dispatch boundaries and
+candidate progression use that distinction. Material dispatch, settlement,
+source, explanation and revision failures still withhold affected approval.
+No private candidate prose crosses the webview boundary. Historical blocked V
+responses cannot inherit this new independent-assessment meaning through replay.
+
+An established defect remains established beside refuted or unresolved **other**
+allegations. Rows preserve the qualifier “additional alleged scope unresolved”; a
+whole-finding tutorial remains blocked until material scope is resolved. True
+contextual facts are not surviving defects. A narrowed label alone is not proof:
+the surviving claim still needs linked rule, behavior and consequence. Refutation
+requires decisive contrary evidence in the assessed scope, not absence of a PoC,
+profit or specification. An empty timeout is not assessed, not a completed
+inconclusive review. Contradictory aggregate verdicts are retained for recheck,
+never silently rewritten. Exact boolean scenario contradictions on runtime edges
+are diagnosed; explicit cited state changes and alternative-context edges remain
+distinct. This bounded consistency check is not a satisfiability proof.
+
+An optional `derived-security-invariant` basis records mechanism facts, derivation,
+assumptions and credible counterevidence under the existing rule/conditions checks.
+A generic slogan, suspected implementation or imported report does not establish
+entitlement. New/changed/removed assertions retain ordinary revision obligations.
+
+### Optional General Audit v1 and engagement mapping
+
+Reported severity is unchanged. Suggested severity is a deterministic mapping of
+**reviewed** consequence factors, not an additional authored verdict or numerical
+score. The named convention is the tool's rubric, not a universal judging policy:
+
+| Band | Qualitative anchor and boundary |
+| --- | --- |
+| Critical | Severe systemic compromise or broad irreversible loss; not merely hypothetical unbounded exposure. |
+| High | Material asset loss or critical-function failure under reviewed feasible conditions. |
+| Medium | Bounded functional or economic harm, with affected party and limits established. |
+| Low | Minor deviations with an established consequence, not an unknown larger loss. |
+| Informational | Reviewed non-security observation; never the fallback for missing impact evidence. |
+
+Factors retain asset/party, magnitude, duration, repetition/reset, caps,
+permissions, economics and actual recovery. Victim loss is not attacker profit;
+alternative scenarios are not summed. Compatible but unestablished sizing factors
+produce a visibly conditional label or no assessable band. Optional missing
+severity factors do not trigger acquisition or another request. A feasibility or
+normative unknown remains material, wherever it is described. Refuted allegations
+retain reported severity but have no established-defect severity.
+
+Without selected rules, engagement eligibility is **not assessed**. To apply a
+pure label/band mapping, save a workspace-local JSON file and set
+`flowboardTriage.engagementProfile` to its relative path:
+
+```json
+{
+  "version": 1,
+  "name": "Example H/M engagement",
+  "revision": "1",
+  "labels": { "Low": "Low — no payout" },
+  "eligibleBands": ["High", "Medium"]
+}
+```
+
+This intentionally limited declarative profile accepts no code, trust assumptions
+or intended-behavior overrides. It is bounded to 16 KiB, contained in the workspace
+and identified by its exact content. Changing it remaps unchanged checked factors
+locally without moving the camera, resetting progress or making a request. A
+supported Low can remain technically supported while excluded by this named rule.
+Material trust/invariant changes instead use **Correct a premise**, invalidate the
+affected review and preserve old work; they are not profile relabeling.
+Known, duplicate, acknowledged, out-of-scope and fixed-later references are separate
+researcher attributes in Edit review. They never overwrite the human decision or
+retroactively refute the original scoped defect. Unsupported legacy dimensions
+show not assessed; compatible old guides are not regenerated.
+
+### Native reading and local work
+
+The active checked scenario supplies its actor, conditions and initial state.
+Global mechanism context stays global. The current operation's explanation comes
+first; the applicable rule and entry conditions follow in the same readable pane.
+Alternative scenario, call, callback, return, later transaction and evidence detour
+labels derive from the checked sequence, not graph adjacency. Full original
+functions and line numbers remain accessible. Analytical note capacity does not
+create one compulsory step per note.
+
+Terminal preparation reuses one synchronous gate/digest/assessment evaluation for
+the same immutable revision; board exposure reuses its matching evaluation.
+There is no mutable-object or cross-revision approval cache. Source/currentness
+validation and corruption detection still run on saved opening. Pure profile
+updates do not rebuild the native guide.
+
+### Earlier teaching contract (still applicable)
 
 The opinion has four parts: **Preliminary assessment**, **Why**, **Decisive code**, and **What remains**. It is not the saved researcher judgment. A supported bookkeeping statement alone does not confirm a bug; a contradicted local route cannot invalidate another unresolved implementation. Preparation/provider failure is distinct from a completed but inconclusive assessment.
 
 Generation and evidence-grounded challenge use the bounded provider workflow. At most one response repair and two new-local-evidence checks are allowed, within the shared report allowance. A check needing unavailable information stops rather than repeating the same prompt. The host checks exact quotes, full-function identity, closed obligations, linked checks, event/transaction consistency, report identity and the matching preliminary assessment. A declaration may be a read step, not an executed operation or committed outcome. A matching location and model agreement do not prove an interpretation. Navigation never calls the provider.
 
-Exact named definitions precede lexical candidates. Missing mandatory definitions block preparation rather than substituting generic tests. Applicability and mapping share the same contained, indexed path resolver: a unique full relative case mismatch can be corrected, but an ambiguous case collision cannot. Import/remapping context narrows duplicate definitions and struct receiver types; interface declarations remain context, not concrete implementations. Questions read available local functions, declarations and explicit code locations before challenge. Helper completion reserves source slots for later questions and avoids recursive expansion of every library detail. Complete local functions (up to 1 MiB of characters each, 40 units) are stored separately from each 110,000-character model packet. Contiguous later segments can read the tail; the original complete body remains on the native card. Required unread material cannot appear in a ready guide. Exceeding a local reading limit is not reported as an absent implementation. Local documentation can support a rule only when its actual text applies; reports and proposed fixes are not independent specifications.
+Exact named definitions precede optional lexical neighbors. Missing mandatory definitions block preparation rather than substituting generic tests. Applicability and mapping share the contained, indexed resolver; ambiguous copies cannot substitute for exact versions. Interface declarations are context, not concrete implementations. The shared analytical capacity is 64 source units, separate from bounded optional discovery. Canonical full functions remain stored separately from exact supplied views; required intervals must occur in the expanded current packet, including old/removed-note evidence. The complete analytical request has a 512 KiB host limit, counting instructions, actual enforced schema and framing; this is not a model token/context guarantee. Exceeding a local boundary is not an absent implementation. Applicable local documentation can support a rule; reports and proposed fixes are not independent specifications.
 
 ## Atomic readiness within each finding
 
-`guide-policy.js` maintains the `checked-explanation-v7` gate. Each material statement needs evidence-linked applicability, entry, conditions, behavior, settlement, expected-rule, impact and counterevidence obligations. An obligation must be established, refuted, or justified as nonapplicable; an open obligation blocks the guide. A supported violation requires an independent rule and consequence. A refutation requires decisive counterevidence for the reviewed scope. A function invocation cannot silently switch to another function's source card or another transaction. Modifier steps can stay within the enclosing invocation. Shared schema, acceptance, storage and UI limits admit 8 claims, 64 obligations, 18 events, 30 relationships and the resulting 112 distinct checks. Typed check IDs prevent an event and obligation sharing an ID from accidentally covering each other.
+`guide-policy.js` maintains the `checked-explanation-v9` gate. Each material statement needs evidence-linked applicability, entry, conditions, behavior, settlement, expected-rule, impact and counterevidence obligations. An obligation must be established, refuted, or justified as nonapplicable; an open obligation blocks the guide. A supported violation requires an independently justified rule and consequence. A refutation requires decisive counterevidence for the reviewed scope. A function invocation cannot silently switch to another function's source card or another transaction. Modifier steps can stay within the enclosing invocation. Shared schema, acceptance, storage and UI limits admit 8 claims, 64 obligations, 18 events, 30 relationships and the resulting 112 distinct checks. Typed check IDs prevent an event and obligation sharing an ID from accidentally covering each other.
 
 Call transitions bind the event and handoff to one `callSiteId`, derived from the current file identity and exact occurrence span. Receiver, argument positions, named arguments and value/gas/salt options belong to that same occurrence. Two calls on one line or two calls to the same helper cannot supply each other's evidence. The host checks material caller expressions against actual callee parameters and keeps the invocation and return location distinct. Typed dispatch evidence records implementation, receiver, execution context and failure handling. An internal helper preserves the EVM caller and execution address; a return does not change them into the return recipient. Valid locations remain necessary but do not prove the explanation.
 
