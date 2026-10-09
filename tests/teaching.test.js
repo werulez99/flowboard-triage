@@ -24,6 +24,7 @@ for (const name of ['time', 'lifecycle', 'accounting','scenarios']) test(`ordina
     const walk=require('../extension/webview/walkthrough-model'),first=walk.teaching(exposed,route.steps,0),second=walk.teaching(exposed,route.steps,1);
     assert.equal(first.actor,'User');assert.equal(second.actor,'Keeper');assert.deepEqual(first.conditions,['approved == false']);assert.deepEqual(second.conditions,['paused == true']);
     assert.equal(walk.transition(route.steps[0],route.steps[1]).label,'Alternative scenario');
+    assert.equal(exposed.property.basis,'source-contract');assert.deepEqual(exposed.property.evidence,['withdrawal-guard','rebalance-guard']);assert.equal(second.basis,'Source-linked rule');
   }
   const changed = structuredClone(draft); changed.causal.summary = 'A new unreviewed teaching premise.';
   assert.ok(!require('../extension/guide-policy').expose(changed).causal, 'Displayed factual projections remain inside the accepted digest, not an unchecked metadata channel.');

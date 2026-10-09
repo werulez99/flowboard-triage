@@ -31,6 +31,9 @@ or proof of model reasoning quality. A visible orientation initially displaced
 the bottom-dock operation; the current operation now comes first. Reported
 expectations remain explicitly labeled rather than being presented as established
 rules. Active actor/conditions are scenario-specific.
+The two-scenario fixture's language-rule basis was separately corrected from
+report-assumption to its exact guard evidence; this is synthetic content plus
+presentation evidence, not a rewritten paid interpretation.
 
 One small isolated local fixture (Linux, Node 20.20.1, four logical CPUs, two
 controlled callbacks) took 131.7 ms before and 119.0 ms after in idle runs; this is
