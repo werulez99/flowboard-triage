@@ -28,11 +28,14 @@ parser.add_argument('--report-preparation', action='store_true')
 parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
 parser.add_argument('--outline-check', action='store_true', help='Additional functional-only initial-list and per-function outline/detour checks; keep separate from compared timing batches.')
 parser.add_argument('--local-recheck', action='store_true', help='Exercise the selected local preparation action with provider none; never a model request.')
+parser.add_argument('--blocker-check', action='store_true', help='Inspect all current blocker groups, source focus/return and reopen with provider none.')
 parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
 parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
 parser.add_argument('--output', required=True)
 args = parser.parse_args()
+if args.blocker_check and (args.provider != 'none' or not args.workspace):
+    parser.error('--blocker-check requires a saved workspace and provider none')
 repo = Path(__file__).resolve().parent.parent
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
 command = ['node', str(repo / 'scripts/workflow-host.js'), '--provider', args.provider]
@@ -503,7 +506,7 @@ try:
                 assert 'Shared report allowance exhausted' in status_text
                 result['checks'].append('Exhausted shared allowance does not offer an ineffective finding continuation; retained work remains available.')
             if selected_job and selected_job.get('reason'):
-                if not selected_job.get('retainedRejection') or selected_job.get('failureKind') not in ['structural', 'validation']:
+                if not selected_job.get('verificationCompletion') and (not selected_job.get('retainedRejection') or selected_job.get('failureKind') not in ['structural', 'validation']):
                     assert selected_job['reason'] in status_text
             if selected_job and selected_job.get('retainedRejection'):
                 assert 'Analysis received · correction required.' in status_text
@@ -536,7 +539,8 @@ try:
             if (selected_job or {}).get('verificationCompletion'):
                 if not questions:
                     page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
-                assert page.get_by_text('Publication checks still blocking this tutorial', exact=True).count() == int(bool(selected_job.get('validationProblems')))
+                assert page.get_by_text('Current walkthrough blockers', exact=True).count() == int(bool(selected_job.get('validationProblems')))
+                assert selected_job['reason'] in page.locator('.guide-preparation').inner_text(), 'Full current reason remains accessible beside grouped diagnostics.'
                 history = page.locator('details').filter(has=page.get_by_text('Earlier response history', exact=True))
                 assert history.count() == int(bool(selected_job.get('rejectionHistory')))
                 if history.count():
@@ -549,8 +553,7 @@ try:
             if (selected_job or {}).get('currentAttempt'):
                 if not questions:
                     page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
-                details = page.locator('details').filter(has=page.get_by_text('Current received response: correction details', exact=True))
-                details.locator('summary').click()
+                details = page.locator('.guide-blockers')
                 details.scroll_into_view_if_needed()
                 assert details.is_visible()
                 text = details.inner_text()
@@ -560,7 +563,7 @@ try:
                     if problem.get('target'):
                         assert problem['target'] in text
                     if problem.get('file'):
-                        action = details.get_by_role('button', name=f"Read source lines {problem['line']}-{problem['endLine']}", exact=True)
+                        action = details.locator('[data-blocker-id='+json.dumps(problem['id'])+']').get_by_role('button', name='Open source in editor', exact=True)
                         assert action.is_visible() and action.is_enabled()
                         action.click()
                         until = time.monotonic() + 10
@@ -576,6 +579,51 @@ try:
                 assert not request('/state')['providerCalls']
                 page.screenshot(path=str(out / 'current-rejection.png'))
                 result['checks'].append('Expanded current-attempt diagnostics name this received request and every affected field; earlier failures are separate history, with no provider call.')
+            if args.blocker_check:
+                problems=selected_job['validationProblems']
+                assert len(problems)==page.locator('.guide-blocker').count(), 'No current host failures may disappear from projection.'
+                groups=sorted(set(p['group'] for p in problems))
+                samples=[]
+                for group in groups:
+                    begin=time.monotonic()
+                    page.locator('.guide-blocker-groups').get_by_role('button', name=group+' · ', exact=False).click()
+                    section=page.locator('[data-blocker-group='+json.dumps(group)+']')
+                    assert section.evaluate('n=>document.activeElement===n')
+                    assert section.locator('h4').evaluate('n=>{const a=n.getBoundingClientRect(),p=n.closest(".guide-preparation").getBoundingClientRect();return a.top>=p.top&&a.bottom<=p.bottom;}')
+                    samples.append((time.monotonic()-begin)*1000)
+                    page.screenshot(path=str(out / ('group-'+group.lower().replace(' ','-')+'.png')))
+                source_problem=next(p for p in problems if p.get('source') and p['kind']=='capability')
+                return_position=page.evaluate('()=>({selectedCard:document.querySelector(".triage-selected-source")?.dataset.id||null,scale,panX,panY})')
+                card=page.locator('[data-blocker-id='+json.dumps(source_problem['id'])+']')
+                card.get_by_role('button',name='Inspect code',exact=False).click()
+                page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:blockerFocus"&&m.diagnosticId===id)',arg=source_problem['id'])
+                page.wait_for_timeout(300)
+                assert page.locator('.guide-blocker-return').is_visible()
+                assert not page.locator('.guide-annotation:visible').count()
+                focused=page.evaluate('id=>window.hostMessages.filter(m=>m.type==="triage:blockerFocus"&&m.diagnosticId===id).at(-1)',source_problem['id'])
+                active_card=page.locator('[data-id='+json.dumps(focused['id'])+']')
+                # Use the native card identity; its source focus must be visible,
+                # not merely present behind the status overlay.
+                assert active_card.count()==1
+                geometry=active_card.evaluate('''(card,line)=>{const h=card.querySelector('.card-header').getBoundingClientRect(),row=card.querySelector('[data-source-line="'+line+'"]').getBoundingClientRect(),code=card.querySelector('.card-code').getBoundingClientRect(),board=document.getElementById('flowboard').getBoundingClientRect();return {headerVisible:h.top>=board.top&&h.bottom<=board.bottom,lineVisible:row.top>=Math.max(code.top,board.top)&&row.bottom<=Math.min(code.bottom,board.bottom),headerTop:h.top,lineTop:row.top};}''',source_problem['line'])
+                assert geometry['headerVisible'] and geometry['lineVisible'], geometry
+                result['sourceInspectionGeometry']=geometry
+                page.screenshot(path=str(out/'blocker-source.png'))
+                page.get_by_role('button',name='Return to blockers',exact=True).click()
+                assert page.evaluate('()=>({selectedCard:document.querySelector(".triage-selected-source")?.dataset.id||null,scale,panX,panY})')==return_position, 'Inspection Return must restore the original source selection and camera.'
+                assert page.locator('.guide-preparation.expanded').is_visible()
+                page.set_viewport_size({'width':801,'height':600})
+                page.locator('.guide-blocker-groups button').first.click()
+                page.screenshot(path=str(out/'blockers-801x600.png'))
+                page.set_viewport_size({'width':1440,'height':900})
+                page.evaluate('window.closing=true;clearInterval(window.timer)');request('/action',{'name':'reopen'})
+                page.reload();page.wait_for_selector(finding_row,timeout=30000);page.locator(finding_row).click()
+                page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)',arg=args.finding,timeout=120000)
+                page.get_by_role('button',name='Walkthrough',exact=True).click()
+                page.wait_for_function('()=>document.querySelector(".guide-blocker-groups")',timeout=120000)
+                assert not request('/state')['providerCalls']
+                result['localInteractions']={'scope':'group navigation, native blocked saved result, simulated editor IO','samplesMs':samples,'count':len(samples)}
+                result['checks'].append('Every current blocker group is visible/focusable; source inspection and Return preserve blocked status; 801x600 and saved reopen make zero provider calls.')
             result['checks'].append('Incomplete explanation is withheld, with an explicit preparation status.')
         result['pageErrors'] = errors
         assert not errors, errors

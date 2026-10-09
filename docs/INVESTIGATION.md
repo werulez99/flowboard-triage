@@ -1,5 +1,31 @@
 # Source investigation runtime — 0.19.2
 
+## Staged tutorial diagnostics (0.19.26)
+
+`tutorial-diagnostics` is a pure, source/premise/candidate-bound inspection shared
+by authoring feedback, candidate assembly, pre-verification admission and final
+publication. Structural frame, parameter, call-anchor, transaction and ordering
+defects stop before reservation; the response and private candidate remain saved.
+Capability limitations and unresolved premises are explicit diagnostics, not
+invented attestations or automatic declarations of invalidity. An honest
+incomplete explanation remains reviewable. Full publication still checks every
+premise, current/removed explanation, revision and causal target independently.
+
+The local modifier subset supports one exact local definition with a single
+top-level placeholder, bound arguments and supported guards. A rejecting prefix
+blocks body reachability. A failing postlude does not make the body unreachable,
+but it prevents transaction commitment. Writes, unhandled effects, composition,
+ambiguous inheritance and absent exact guard predicates remain distinct unknowns.
+Free-text unit labels are retained; differing wording is not proof of a currency
+or scale change, and renaming labels cannot excuse a changed source expression.
+
+Local re-evaluation of a sealed completed review records a new diagnostic event
+with the original result, semantic identity and prior publication preserved. It
+does not run on a corrected/unverified draft or transfer old approvals. Current
+blocker groups include material evidence and local reading as well as structural
+and capability failures. Inspection opens exact original source without exposing
+unchecked tutorial annotations; Return restores the source/camera position.
+
 ## Checked content and corrections (0.19.18)
 
 `review-content` defines the lossless semantic projection shared by acceptance,

@@ -102,7 +102,8 @@ function measureRequest(input) {
   const payload = JSON.stringify(input), system = instruction + '\n' + responseInstruction(input) + (input.bindingFormat === require('./source-bindings').VERSION ? '\n' + require('./source-bindings').instruction : '') +
     (input.sourceContextFormat ? '\n' + require('./packet-context').instructionFor(input) : '') +
     (input.provisionalWorkNotes ? '\n' + require('./provisional-work-note').instruction : '') +
-    (input.reviewPurpose ? '\n' + require('./review-candidate').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
+    (input.reviewPurpose ? '\n' + require('./review-candidate').instruction : '') +
+    (input.tutorialDiagnostics ? '\n' + require('./tutorial-diagnostics').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));
   const sections = { report: 0, source: 0, previousDraft: 0, metadata: 0 };
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue;

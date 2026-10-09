@@ -209,6 +209,27 @@ class TriageBoard {
     await this.post({ type: 'triage:investigationLinks', ...scope, connections: relationships });
     if (this.isActive(scope)) await this.post({ type: 'triage:contextAdded', ...scope, id, source: checked });
   }
+  async inspectBlocker(model,message){
+    const scope=this.scope(message);if(!this.isActive(scope)||!this.vscode.workspace.isTrusted)return;
+    this.assertCurrent(model);
+    const draft=investigationEngine.read(this.root,model.id);
+    if(!draft||!investigationEngine.compatible(draft,model.catalog,model.request,model.issue))throw new Error('The diagnostic source changed. Reopen the finding.');
+    const diagnostic=guidePolicy.gate(draft).details?.find(d=>d.id===message.diagnosticId);
+    const source=diagnostic?.source;if(!source)throw new Error('This current blocker has no unambiguous source location. Inspect its named premise or field.');
+    p.sources(this.root,{cards:[source]});
+    let fn;try{fn=model.catalog.resolveCard({file:source.file,line:source.line});}catch{
+      return this.receive({...message,type:'triage:openReference',file:source.file,line:source.line});
+    }
+    const document=await this.vscode.workspace.openTextDocument(this.vscode.Uri.file(fn.file));
+    if(!this.isActive(scope)||this.models.get(model.id)!==model)return;
+    if(document.isDirty)throw new Error('Save changed code before inspecting this source-bound blocker.');
+    this.assertCurrent(model);
+    let id=[...model.sourceById].find(([,u])=>u.file===fn.file&&u.startLine===fn.startLine&&u.endLine===fn.endLine)?.[0];
+    if(!id){if(model.expandedIds.size>=200)throw new Error('The source-card limit is reached; use the source editor link.');
+      id=`finding:${model.id}:diagnostic-${crypto.randomUUID()}`;model.expandedIds.add(id);model.sourceById.set(id,fn);this.native.addFunction(fn,model.catalog.code(fn),null,id);}
+    await this.post({type:'triage:hint',...scope,id,hint:model.catalog.hints(fn)});
+    await this.post({type:'triage:blockerFocus',...scope,id,source,diagnosticId:diagnostic.id});
+  }
   async open(request, catalog, diagnostics, git, issue = null, canPublish = () => true) {
     await this.ready;
     if (!canPublish()) throw Object.assign(new Error('Delivery superseded by a newer user selection.'), { code: 'FLOWBOARD_SUPERSEDED' });
@@ -702,7 +723,8 @@ class TriageBoard {
       if (message.type === 'triage:investigationCorrect') return this.correctInvestigation(model, message);
       if (message.type === 'triage:investigationTest') return this.runInvestigationTest(model, message);
     }
-    if (['triage:save', 'triage:reload', 'triage:prompt', 'triage:refresh', 'triage:openReference', 'triage:copyReport', 'triage:bindEvidence', 'triage:inspectEvidence', 'triage:copyBrief', 'triage:addContext'].includes(message.type) && message.token !== this.activeToken) throw new Error('This view is out of date. Reload the finding before continuing.');
+    if (['triage:save', 'triage:reload', 'triage:prompt', 'triage:refresh', 'triage:openReference', 'triage:copyReport', 'triage:bindEvidence', 'triage:inspectEvidence', 'triage:copyBrief', 'triage:addContext','triage:inspectBlocker'].includes(message.type) && message.token !== this.activeToken) throw new Error('This view is out of date. Reload the finding before continuing.');
+    if(message.type==='triage:inspectBlocker'&&model)return this.inspectBlocker(model,message);
     if (model?.reviewStale && ['triage:save', 'triage:bindEvidence', 'triage:copyBrief'].includes(message.type)) throw new Error('The saved review belongs to a different source, configuration or index version. Refresh and re-review it before binding evidence or saving an assessment.');
     if (message.type === 'triage:addContext' && model) return this.addContext(model, message);
     if (['triage:bindEvidence', 'triage:inspectEvidence'].includes(message.type)) {

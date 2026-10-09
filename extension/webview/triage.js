@@ -19,7 +19,7 @@
   let checkedLocation = null;
   let guide = null, guideIndex = 0, guideMode = 'closed', guideReturn = null, guideNavigation = null, guidePending = false, guideOpinion = window.innerWidth > 800;
   let guideDetour = null, guideError = null, guideRequest = null;
-  let guideIntent = 'waiting', preparationState = null, guideWrap = true;
+  let guideIntent = 'waiting', preparationState = null, guideWrap = true, blockerReturn = null;
   let guidePane = { width: null, height: null, collapsed: false };
   let guideHiddenScroll = 0;
   let reportPreparation = null;
@@ -77,6 +77,7 @@
   };
   const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
+    job?.verificationCompletion ? 'Review completed · walkthrough blocked' :
     job?.retainedRejection ? 'Received analysis needs correction' : job?.failureKind==='storage' ? 'Response storage needs recovery' : job?.hasPrivateCandidate ? 'Private candidate needs verification' : job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
   const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
@@ -249,11 +250,20 @@
         parent.append(needed);
       }
       if (selectedJob?.validationProblems?.length) {
-        const invalid = element('details'); invalid.append(element('summary', '', selectedJob.verificationCompletion?'Publication checks still blocking this tutorial':'Current received response: correction details'));
+        const invalid = element('section','guide-blockers'); invalid.append(element('h3', '', selectedJob.verificationCompletion?'Current walkthrough blockers':'Current received response: correction details'));
         if(selectedJob.currentAttempt)invalid.append(element('small','triage-muted',`${selectedJob.currentAttempt.reviewPurpose} · ${selectedJob.currentAttempt.requestId || 'retained response'} · ${selectedJob.currentAttempt.verificationStarted?'Verification attempted':'Verification not started'}`));
-        for (const item of selectedJob.validationProblems) {
-          invalid.append(element('p', '', `${item.code}${item.target ? ` (${item.target})` : ''}: ${item.message}`), ...(item.sourceId?[element('small','triage-muted',`${item.file||item.sourceId}:${item.line}-${item.endLine}`)]:[]), ...(item.action ? [element('small', 'triage-muted', item.action)] : []));
-          if(item.file)invalid.append(button(`Read source lines ${item.line}-${item.endLine}`,()=>send('triage:openReference',{file:item.file,line:item.line})));
+        for(const group of [...new Set(selectedJob.validationProblems.map(p=>p.group||'Explanation correction'))]){
+          const section=element('section','guide-blocker-group');section.dataset.blockerGroup=group;section.tabIndex=-1;
+          const items=selectedJob.validationProblems.filter(p=>(p.group||'Explanation correction')===group);section.append(element('h4','',`${group} · ${items.length}`));
+          for (const item of items) {
+            const card=element('article','guide-blocker');card.dataset.blockerId=item.id||'';
+            card.append(element('p','',item.message),...(item.action?[element('p','triage-muted',item.action)]:[]));
+            const technical=element('details');technical.append(element('summary','','Exact field and diagnostic'),element('small','triage-muted',`${item.code}${item.target?' · '+item.target:''}`));
+            if(item.file)technical.append(element('small','triage-muted',`${item.file}:${item.line}-${item.endLine}`));card.append(technical);
+            if(item.source)card.append(button(`Inspect code · L${item.line}–${item.endLine}`,()=>{rememberLocation();blockerReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),scrolls:[...cards].map(([id,c])=>[id,c.codeEl.scrollTop])};send('triage:inspectBlocker',{diagnosticId:item.id});}));
+            if(item.file)card.append(button('Open source in editor',()=>send('triage:openReference',{file:item.file,line:item.line})));
+            section.append(card);
+          }invalid.append(section);
         }
         parent.append(invalid);
       }
@@ -327,13 +337,19 @@
         'Full verification completed · checked tutorial available.':'Full verification completed · publication blocked. The exact candidate was kept, but material or source-binding checks still prevent a tutorial.'));
       if(job?.verificationCompletion&&!job.verificationCompletion.published&&job.missingInputs?.length)
         preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
+      if(job?.validationProblems?.length){
+        const groups=element('nav','guide-blocker-groups');groups.setAttribute('aria-label','Current blocker groups');
+        for(const group of [...new Set(job.validationProblems.map(p=>p.group||'Explanation correction'))])groups.append(button(`${group} · ${job.validationProblems.filter(p=>(p.group||'Explanation correction')===group).length}`,()=>{
+          preparationExpanded=true;renderPreparation();const target=[...preparationSurface.querySelectorAll('[data-blocker-group]')].find(n=>n.dataset.blockerGroup===group);target?.scrollIntoView({block:'start'});target?.focus({preventScroll:true});
+        }));preparationSurface.append(groups);
+      }
       const stopped = progress?.stopped?.find(job => job.id === active);
       const reason = cardBlocked ? guideAvailability.reason : job?.reason || stopped?.reason || state?.reason || progress?.reason;
       if(job?.retainedRejection){
         preparationSurface.append(element('p','guide-status-reason','Analysis received · correction required. The retained response has not produced a checked tutorial. Verification has not started for this proposal.'),
           element('small','triage-muted',job.repairAvailable?'Repair saved analysis starts a model request using the retained proposal; a separate full verification is still required.':job.failureKind==='local-reading'?'Complete local context and fit the whole review packet before a repair request. No new review has been sent; source and manual review remain available.':'No eligible repair request is available in the current provider/allowance or stage. Source and manual review remain available; local replay cannot correct the model’s links.'));
         if(reason&&job.failureKind!=='structural'&&job.failureKind!=='validation')preparationSurface.append(element('p','guide-status-reason',reason));
-      }else if (reason) preparationSurface.append(element('p', 'guide-status-reason', reason));
+      }else if (reason&&!job?.verificationCompletion) preparationSurface.append(element('p', 'guide-status-reason', reason));
       if (sharedAllowanceExhausted()) preparationSurface.append(element('p', 'triage-warning', 'Shared report allowance exhausted. Continue this finding cannot add requests. Further provider work needs explicit additional allowance; saved work remains available.'));
       appendAdmission(preparationSurface);
       if (preparationExpanded && !preparing) {
@@ -2041,6 +2057,16 @@
     }
     else if (message?.type === 'triage:contextAdded' && message.issueId === active && message.token === token) {
       const card = cards.get(message.id); if (card) inspectCard(card);
+    }
+    else if(message?.type==='triage:blockerFocus'&&message.issueId===active&&message.token===token&&!sourceStale){
+      const card=cards.get(message.id);if(!card)return;
+      for(const c of cards.values())c.el.classList.remove('triage-blocker-card');card.el.classList.add('triage-blocker-card');
+      guideIntent='explore';renderPreparation();inspectCard(card);checkedLocation=message.source;focusReadable(card);redrawEdges();
+      const row=card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`);if(row)card.codeEl.scrollTop+=row.getBoundingClientRect().top-card.codeEl.getBoundingClientRect().top-32;
+      const back=button('Return to blockers',()=>{card.el.classList.remove('triage-blocker-card');
+        if(blockerReturn){const v=blockerReturn.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=blockerReturn.checkedLocation;show(v.drawerTab);({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;for(const[id,scroll]of blockerReturn.scrolls){const c=cards.get(id);if(c)c.codeEl.scrollTop=scroll;}redrawEdges();blockerReturn=null;}
+        back.remove();guideIntent='waiting';preparationExpanded=true;renderPreparation();const target=[...preparationSurface.querySelectorAll('[data-blocker-id]')].find(n=>n.dataset.blockerId===message.diagnosticId);target?.scrollIntoView({block:'center'});});
+      back.classList.add('guide-blocker-return');drawer.prepend(back);
     }
     else if (message?.type === 'triage:investigation' && message.issueId === active && message.token === token && message.draft?.findingId === active) {
       if (sourceStale || message.draft.revision < (investigationDraft?.revision || 0)) return;

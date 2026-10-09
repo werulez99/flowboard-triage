@@ -741,9 +741,13 @@ class ReportPreparation {
     job.repairAvailable=!!repairPending&&!draft.recoveryRequired&&!['local-reading','storage'].includes(draft.failureKind)&&!job.correctionHold&&['codex','claude'].includes(this.options.configuration().provider)&&
       this.state.resources.requests<this.state.resources.limit&&job.requests<job.requestLimit&&this.options.phaseRemaining?.(job.id)!==false;
     const validation = draft.currentRejection ? draft.currentRejection.validationProblems : draft.validationProblems?.length ? draft.validationProblems : draft.lastRejected?.validationProblems?.length ? draft.lastRejected.validationProblems : draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
-      (draft.publication?.details || []).filter(item => ['structural', 'capability'].includes(item.kind)).map(item => ({ code: item.kind === 'capability' ? 'ANALYSIS_CAPABILITY' : 'CAUSAL_BINDING_OR_COVERAGE', target: item.target, message: item.reason, action: item.action }));
-    job.validationProblems = validation.map(({ code, target, evidenceId, sourceId, line, endLine, oldClaimId, proposedClaimId, actualOwner,allowedOwners,message, action }) => ({ code, target, evidenceId, sourceId, line, endLine,
-      ...(sourceId&&Number.isSafeInteger(line)?{file:draft.sources.find(s=>s.id===sourceId)?.source.file}:{}),oldClaimId, proposedClaimId,actualOwner,allowedOwners,message, action }));
+      (draft.publication?.details || []).map(item => ({...item, message:item.reason}));
+    job.validationProblems = [...new Map(validation.map(item=>{
+      const {code,target,evidenceId,sourceId,line,endLine,oldClaimId,proposedClaimId,actualOwner,allowedOwners,message,action,kind,group,source,id,missingEvidence}=item;
+      const value={code,target,evidenceId,sourceId,line,endLine,file:item.file||source?.file||(sourceId?draft.sources.find(s=>s.id===sourceId)?.source.file:undefined),source,
+        id:id||hash([code,target,message]),kind:kind||'structural',group:group||require('./tutorial-diagnostics').groups[kind||'structural'],oldClaimId,proposedClaimId,actualOwner,allowedOwners,message,action,missingEvidence};
+      return[value.id,value];
+    })).values()];
     job.currentAttempt=draft.currentRejection?{requestId:draft.currentRejection.requestId,reviewPurpose:draft.currentRejection.reviewPurpose,phase:draft.currentRejection.phase,verificationStarted:!!draft.reviewCandidate?.verification}:null;
     const verified=(draft.candidateHistory||[]).findLast(item=>item.verification&&item.candidateHash===draft.candidateVerification?.candidateHash);
     job.verificationCompletion=verified?{requestId:verified.verification.requestId,result:verified.verification.result,at:verified.verification.at,published:draft.publication?.ready===true}:null;

@@ -2,7 +2,7 @@
 // Execute production status rendering, not a duplicate status formatter.
 module.exports = function render(reportPreparation, active) {
   const source = require('node:fs').readFileSync(require.resolve('../../extension/webview/triage.js'), 'utf8');
-  const node = (tag, cls, text = '') => ({ tag, text, children: [], disabled: false, scrollTop: 0, classList: { toggle() {} },
+  const node = (tag, cls, text = '') => ({ tag, text, children: [], dataset:{}, disabled: false, scrollTop: 0, classList: { toggle() {} },
     append(...items) { this.children.push(...items); }, replaceChildren() { this.children = []; }, setAttribute() {}, querySelectorAll() { return []; } });
   const surface = node('div'), context = { active, reportPreparation, report: '', element: node, button: text => node('button', '', text),
     preparationLabel: s => s, guideAvailability: null, preparing: null, guideIntent: 'waiting', preparationState: null, investigationDraft: null,

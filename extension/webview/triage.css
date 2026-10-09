@@ -548,7 +548,19 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-preparation[hidden] { display:none; }
 .guide-preparation { position:fixed; top:64px; right:12px; width:min(650px, calc(100vw - 24px)); max-height:160px; overflow:auto; padding:12px; box-sizing:border-box; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; z-index:1000; font:14px/1.5 var(--vscode-font-family,system-ui,sans-serif); color:var(--fg); }
 .guide-preparation.retained-rejection:not(.expanded) { max-height:min(270px,42vh); }
-.guide-preparation.verification-completed:not(.expanded) { max-height:min(340px,50vh); }
+.guide-preparation.verification-completed:not(.expanded) { max-height:min(440px,60vh); }
+.guide-blocker-groups { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.guide-blocker-group { margin:20px 0; scroll-margin:12px; }
+.guide-blocker-group h4 { font-size:16px; margin:12px 0; }
+.guide-blocker { background:var(--triage-note-bg); border:1px solid var(--border); border-radius:5px; padding:12px; margin:12px 0; }
+.guide-blocker p:first-child { margin-top:0; }
+.guide-blocker details { margin:8px 0; }
+.guide-blocker button { margin:4px 8px 4px 0; }
+.guide-blocker-group:focus { outline:2px solid var(--triage-focus); outline-offset:3px; }
+.triage-blocker-card { display:flex; flex-direction:column; max-height:calc(100vh - 110px); }
+.triage-blocker-card .card-header { flex-shrink:0; }
+.triage-blocker-card .card-title { white-space:normal; overflow-wrap:anywhere; }
+.triage-blocker-card .card-code { overflow:auto; min-height:100px; flex:1 1 auto; }
 .guide-preparation.expanded { max-height:calc(100vh - 88px); resize:vertical; }
 .guide-preparing:not(.guide-open) #flowboard { top:236px; }
 .guide-status-row { display:flex; gap:8px; align-items:center; }

@@ -35,6 +35,8 @@ test('a provisional diagnostic note cannot supply missing whole-review checks or
   draft.causal.checks=[];
   draft.provisionalWorkNotes=[{status:'MODEL-PROPOSED, UNTRUSTED',proposal:{checks:prior,conclusion:'Definitely ready (deliberately incorrect fixture note)'}}];
   const result=policy.gate(draft);assert.equal(result.ready,false);
+  const omitted=result.details.find(d=>d.code==='OBLIGATION_CHECK_COVERAGE');
+  assert.deepEqual(omitted.missingEvidence,['guard']);assert.match(omitted.action,/Fresh verification/);assert.match(omitted.action,/Do not edit the received check/);
   draft.publication=result;draft.publication.digest=policy.digest(draft);
   assert.equal(policy.expose(draft).causal,undefined,'No note attestation crosses the existing exposure gate.');
 });

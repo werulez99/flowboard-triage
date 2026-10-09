@@ -31,11 +31,11 @@ function contains(outer, inner) {
   return outer?.complete && inner?.complete && sameFile(outer.source, inner.source) && outer.source.line <= inner.source.line && outer.source.endLine >= inner.source.endLine &&
     outer.code.split('\n').slice(inner.source.line - outer.source.line, inner.source.endLine - outer.source.line + 1).join('\n') === inner.code;
 }
-function read(unit, end) { return !Number.isInteger(unit.readThrough) || unit.readThrough >= end; }
+function read(unit, end) { return !Number.isInteger(unit.readThrough) || require('./source-coverage').read(unit,unit.source.line,end); }
 function covers(note, frame, range) {
   if (!note || !frame || !range || !sameFile(note.source, frame.source) || note.source.line > range.line || note.source.endLine < range.endLine) return false;
   const origin = origins.get(frame)?.get(note.sourceId) || (note.sourceId === frame.id ? frame : null);
-  if (!origin || (!contains(origin, frame) && origin.id !== frame.id) || !read(origin, Math.max(note.source.endLine, range.endLine))) return false;
+  if (!origin || (!contains(origin, frame) && origin.id !== frame.id) || Number.isInteger(origin.readThrough)&&!require('./source-coverage').read(origin,Math.min(note.source.line,range.line),Math.max(note.source.endLine,range.endLine))) return false;
   return note.source.line >= origin.source.line && note.source.endLine <= origin.source.endLine &&
     origin.code.split('\n').slice(note.source.line - origin.source.line, note.source.endLine - origin.source.line + 1).join('\n') === note.quote;
 }
@@ -79,4 +79,13 @@ function resolver(draft) {
 function eventSource(draft, event) { return resolver(draft).event(event); }
 function units(draft) { const r = resolver(draft); return [...new Map((draft.causal?.events || []).map(event => { const unit = r.event(event); return [unit?.id, unit]; })).values()].filter(Boolean); }
 function projections(draft) { const r = resolver(draft); return Object.fromEntries((draft.causal?.events || []).map(event => [event.id, r.event(event)]).filter(([, unit]) => unit?.projectedFrom)); }
-module.exports = { eventSource, units, projections, resolver, covers, indexStats: () => ({ builds: indexBuilds, retained: indexes.size }) };
+function suppliedDefinition(units,target){
+  for(const unit of units.values())if(unit.complete&&unit.source.file===target.file){
+    for(const fn of index(unit.code)){
+      const line=unit.source.line+fn.line,endLine=unit.source.line+fn.endLine;
+      if(line===target.line&&fn.signature===target.signature&&(!fn.contract||fn.contract===target.contract)&&
+        require('./source-coverage').read(unit,line,endLine)&&(!unit.modelRanges||require('./source-coverage').covers(unit.modelRanges,line,endLine)))return {sourceId:unit.id,source:{...unit.source,line,endLine}};
+    }
+  }return null;
+}
+module.exports = { eventSource, units, projections, resolver, covers, suppliedDefinition, indexStats: () => ({ builds: indexBuilds, retained: indexes.size }) };

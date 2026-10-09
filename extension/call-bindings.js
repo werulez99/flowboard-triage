@@ -269,12 +269,16 @@ function callerConstraints(event, unit) {
   for (const condition of event.conditions || []) {
     const range = /^(\w+) is an integer from (\d+) through (\d+)$/.exec(condition);
     if (range && parameterNames(body.header).includes(range[1]) && BigInt(range[2]) <= BigInt(range[3])) values.set(range[1], { range: [range[2], range[3]] });
+    // Narrow exact entry premise for the immutable EVM caller. Do not parse
+    // prose such as "authorized" into an address/role proof.
+    if (/^\s*msg\.sender\s*(?:==|!=)\s*address\(\w+\)\s*$/.test(condition)) values.set(expression(condition),true);
   }
   return values;
 }
 function callTimeConstraints(event, unit, evidence) {
   const values = callerConstraints(event, unit);
   for (const [name, initial] of values) {
+    if(name.startsWith('msg.sender'))continue;
     const state = parameterValue(unit, name, initial, event, evidence);
     // A root input describes entry. The first displayed event may occur only
     // after a write. Never treat that entry premise as the call-time value.
@@ -346,16 +350,16 @@ function validateInvocations({ events, links, units, evidence, fail, resolved })
     if (!site || !body || !to) continue;
     entered.add(to.invocationId);
     const entering = links.filter(link => ['call', 'callback'].includes(link.kind) && events.find(event => event.id === link.to)?.invocationId === to.invocationId);
-    if (entering.length !== 1) { fail(`${to.title}: invocation ${to.invocationId} has multiple entering call occurrences. Split repeated invocations instead of sharing their inputs.`); continue; }
+    if (entering.length !== 1) { fail(`${to.title}: invocation ${to.invocationId} has multiple entering call occurrences. Split repeated invocations instead of sharing their inputs.`,'structural','event:'+to.id,{code:'INVOCATION_MULTIPLE_ENTRIES'}); continue; }
     for (const event of events.filter(event => event.invocationId === to.invocationId)) for (const input of invocationInputs(event, body)) {
       if (event.id === to.id && !input.condition) continue; // Entry parameters were matched to the exact call above.
       if (!parameterNames(body.header).includes(input.name) && input.name !== 'msg.value') continue;
       const initial = boundArgument(site, input.name, body.header), first = (to.inputs || []).find(item => item.name === input.name);
       const state = input.name === 'msg.value' ? { known: true, value: initial } : parameterValue(unit, input.name, initial, event, evidence);
       if (!state.writes?.length) state.literal = booleanValue(state.value || '', callTimeConstraints(from, source, evidence));
-      if (initial == null || !coherent(event, input, state)) fail(`${event.title}: invocation ${to.invocationId} changes input ${input.name} without an ordered, exact source derivation from its own entering call. ${state.reason || 'Another invocation, context link or repeated call cannot supply this value.'}`);
-      if (!input.condition && !state.writes?.length && !(input.evidence || []).some(id => covers(evidence.get(id), source, site.span))) fail(`${event.title}: input ${input.name} must retain the exact origin from this invocation's own entering call.`);
-      if (first && !input.condition && (input.type !== first.type || input.units !== first.units)) fail(`${event.title}: invocation ${to.invocationId} changes the type or units of ${input.name}; a source assignment does not change its declaration.`);
+      if (initial == null || !coherent(event, input, state)) fail(`${event.title}: invocation ${to.invocationId} changes input ${input.name} without an ordered, exact source derivation from its own entering call. ${state.reason || 'Another invocation, context link or repeated call cannot supply this value.'}`,'structural','event:'+event.id,{code:'PARAMETER_ORIGIN'});
+      if (!input.condition && !state.writes?.length && !(input.evidence || []).some(id => covers(evidence.get(id), source, site.span))) fail(`${event.title}: input ${input.name} must retain the exact origin from this invocation's own entering call.`,'structural','event:'+event.id,{code:'PARAMETER_ORIGIN_EVIDENCE'});
+      if(first&&!input.condition)compareInputIdentity(first,input,event,fail);
     }
   }
   // Root invocations have no caller statement in the acquired route. Their
@@ -363,15 +367,24 @@ function validateInvocations({ events, links, units, evidence, fail, resolved })
   const initial = new Map();
   for (const event of events.filter(event => !entered.has(event.invocationId))) {
     const unit = frame(event), body = unit && functionParts(unit.code, unit.name.split('::').at(-1));
-    if (!body) { if (event.effect !== 'read') fail(`${event.title}: no exact callable frame can be resolved for this executable event.`); continue; }
+    if (!body) { if (event.effect !== 'read') fail(`${event.title}: no exact callable frame can be resolved for this executable event.`,'structural','event:'+event.id,{code:'INVOCATION_FRAME_MISSING'}); continue; }
     for (const input of invocationInputs(event, body)) {
       if (!parameterNames(body.header).includes(input.name)) continue;
       const key = `${event.invocationId}:${input.name}`, first = initial.get(key);
       if (!first) initial.set(key, input.condition ? { expression: input.name, condition: true } : input);
       const baseline = initial.get(key), state = parameterValue(unit, input.name, baseline.expression, event, evidence);
-      if (!coherent(event, input, state) || !input.condition && !baseline.condition && (input.type !== baseline.type || input.units !== baseline.units)) fail(`${event.title}: root invocation ${event.invocationId} changes its parameter premise ${input.name} without a checked source assignment.`);
+      if (!coherent(event, input, state)) fail(`${event.title}: root invocation ${event.invocationId} changes its parameter premise ${input.name} without a checked source assignment.`,'structural','event:'+event.id,{code:'PARAMETER_ORIGIN'});
+      if(!input.condition&&!baseline.condition)compareInputIdentity(baseline,input,event,fail);
     }
   }
+}
+function compareInputIdentity(first,input,event,fail){
+  if(input.type!==first.type)fail(`${event.title}: invocation ${event.invocationId} changes the type of ${input.name}; a source assignment does not change its declaration.`,'structural','event:'+event.id,{code:'PARAMETER_TYPE'});
+  // Free text is a display label, not a dimensional proof. A mismatch is not
+  // itself a currency/scale error; neither a synonym table nor relabelling can
+  // establish equivalence. Keep the exact expressions/labels for assessment.
+  if(input.units!==first.units)fail(`${event.title}: unit identity of ${input.name} is not established by its differing labels (${first.units} / ${input.units}). Check the expression, currency/component and scale; no physical-unit change is proved by this text comparison.`,'material-evidence','event:'+event.id,
+    {code:'UNIT_IDENTITY_UNESTABLISHED',fields:{name:input.name,first:{expression:first.expression,type:first.type,units:first.units},current:{expression:input.expression,type:input.type,units:input.units}}});
 }
 function booleanValue(value, values) {
   return execution.boolean(value, values);
@@ -389,15 +402,17 @@ function unitFailure(unit, kind, args, absolute, custom = false) {
   });
 }
 function sourcePath(unit, offset, values, units, options = {}, stack = []) {
-  if (stack.includes(unit.id) || stack.length >= 12) return { reachable: null, reason: 'A recursive or over-budget helper path needs a separate checked effect.' };
+  if(unit.modelRanges&&!require('./source-coverage').covers(unit.modelRanges,unit.source.line,unit.source.endLine))return {reachable:null,code:'FUNCTION_VIEW_MISSING',kind:'local-reading',source:unit.source,reason:'The complete callable source view needed for this path is not supplied in the current packet. Canonical storage or an earlier read cannot establish its current coverage.'};
+  if (stack.includes(unit.id) || stack.length >= 12) return { reachable: null,code:'PATH_RECURSION_UNSUPPORTED',kind:'capability', reason: 'A recursive or over-budget helper path needs a separate checked effect.' };
   const body = functionParts(unit.code, unit.name.split('::').at(-1));
-  if (!body) return { reachable: null, reason: 'The complete function body is unavailable.' };
+  if (!body) return { reachable: null,code:'FUNCTION_SOURCE_MISSING',kind:'local-reading', reason: 'The complete function body is unavailable.' };
   const suffix = body.header.slice(body.parametersEnd - body.start + 1)
     .replace(/\breturns\s*\([^)]*\)|\boverride\s*(?:\([^)]*\))?/g, '')
     .replace(/\b(?:public|external|internal|private|pure|view|payable|virtual)\b/g, '').trim();
-  if (suffix) return { reachable: null, reason: `The function modifier path (${suffix}) needs a checked effect before entering this body.` };
+  const modifier=suffix?require('./modifier-path').inspect(unit,suffix,values,units):null;
+  if(modifier&&modifier.reachable!==true)return modifier;
   if (offset >= body.start && offset < body.bodyStart) return { reachable: true, values: new Map(values), guards: [] };
-  return execution.pathTo(unit, offset, values, { ...options,
+  const result = execution.pathTo(unit, offset, values, { ...options,
     failureClass: (kind, args, absolute, custom) => unitFailure(unit, kind, args, absolute, custom), operation(node, current) {
     const provided = options.operation?.(node, current); if (provided) return provided;
     const sites = unitSites(unit).filter(site => site.span.start >= node.start && site.span.end <= node.end);
@@ -420,10 +435,14 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
     const target = targets[0], matches = [...units.values()].filter(candidate => candidate.complete && !candidate.contextKind &&
       candidate.source.file === target.file && candidate.source.line === target.line && owner(candidate) === target.contract &&
       require('./report-content').functionSignature(candidate.code, candidate.name.split('::').at(-1)) === target.signature);
-    if (matches.length !== 1) return { outcome: 'unknown', reason: `Read the complete local ${site.name} implementation before continuing past this invocation.` };
+    if (matches.length !== 1) {
+      const supplied=require('./event-source').suppliedDefinition(units,target);
+      return {outcome:'unknown',code:supplied?'HELPER_FRAME_UNSUPPORTED':'HELPER_SOURCE_MISSING',kind:supplied?'capability':'local-reading',source:supplied?.source,reason:supplied?
+        `The complete local ${site.name} is supplied inside an enclosing source view, but its exact callable frame/effect is not resolved.`:`Read the complete local ${site.name} implementation before continuing past this invocation.`};
+    }
     const helper = matches[0], parsed = functionParts(helper.code, helper.name.split('::').at(-1));
     if (!parsed || !/\b(internal|private)\b/.test(parsed.header) || /\bvirtual\b/.test(parsed.header))
-      return { outcome: 'unknown', reason: `The preceding ${helper.name} needs a checked dispatch effect; it is not a non-virtual internal helper.` };
+      return { outcome: 'unknown',code:'HELPER_DISPATCH_UNSUPPORTED',kind:'capability', reason: `The preceding ${helper.name} needs a checked dispatch effect; it is not a non-virtual internal helper.` };
     const bound = new Map(parameterNames(parsed.header).map(name => {
       const argument = boundArgument(site, name, parsed.header);
       return [name, current.get(argument)?.range ? current.get(argument) : booleanValue(argument, current)];
@@ -431,8 +450,11 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
     const result = sourcePath(helper, parsed.bodyStart + parsed.body.length, bound, units, { complete: true, localWritesOnly: true, noOverflow: options.noOverflow }, [...stack, unit.id]);
     if (result.outcome === 'return' || result.reachable === true) return { outcome: 'continue' };
     return { outcome: result.outcome || 'unknown', failure: result.failure,
-      reason: `${helper.name}: ${result.reason || 'The helper effect remains unresolved.'}` };
+      code:result.code,kind:result.kind,source:result.source,reason: `${helper.name}: ${result.reason || 'The helper effect remains unresolved.'}` };
   } });
+  if(modifier){result.modifier=modifier;result.commitment=modifier.postlude.reachable===false?'reverts':modifier.postlude.reachable===null?'unknown':'postlude-passes';
+    if(options.complete&&(result.reachable===true||result.outcome==='return')&&modifier.postlude.reachable!==true)return {...modifier.postlude,code:modifier.code,kind:modifier.postlude.reachable===false?'structural':'material-evidence',source:modifier.source,bodyReached:true};}
+  return result;
 }
 function failedClass(unit, event, evidence, site, callerValues = new Map(), unresolved = () => {}, units = new Map()) {
   const anchor = evidence.get(event.evidenceId); if (!unit || !covers(anchor, unit, anchor?.source)) return null;
@@ -537,7 +559,8 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   const anchor = from.anchor || evidence.get(from.evidenceId);
   const path = sourcePath(source, site.span.start, callerConstraints(from, source), units,
     { noOverflow: (from.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
-  if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`, 'material-evidence');
+  if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`,path.kind||'capability',{code:path.code||'CALL_PATH_UNKNOWN',source:path.source||source.source});
+  if(path.commitment==='reverts'&&events.some(e=>e.transaction===from.transaction&&e.effect==='committed'))fail(`${from.title}: the body is reached, but its modifier postlude reverts; this transaction cannot commit.`,'structural',{code:'MODIFIER_COMMITMENT',source:path.modifier.source});
   if (!covers(anchor, source, site.span) || anchor.source.line !== site.span.line || anchor.source.endLine !== site.span.endLine) fail(`${from.title}: its checked code must cover exactly this call's lines, not another call or a whole function.`);
   if (from.invocationId === to.invocationId) fail(`${from.title}: entering another function needs a distinct invocation, even when internal msg.sender is unchanged.`);
   const dispatch = link.dispatch;
@@ -551,9 +574,12 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   if (destinationParts) {
     const actual = callTimeConstraints(from, source, evidence);
     const entryValues = new Map(parameterNames(destinationParts.header).map(name => [name, booleanValue(boundArgument(site, name, destinationParts.header), actual)]));
-    const anchor = evidence.get(to.evidenceId), start = lineOffset(destination, anchor?.source.line);
-    const first = sourcePath(destination, start + destination.code.slice(start).search(/\S/), entryValues, units);
-    if (first.reachable !== true) fail(`${to.title}: cannot establish the path to the displayed callee operation. ${first.reason}`, 'material-evidence');
+    const anchor = to.anchor||evidence.get(to.evidenceId), start = lineOffset(destination, anchor?.source.line);
+    // A note may start with a comment. Reach the first actual source token in
+    // the selected interval, not whitespace/comment text before the statement.
+    const end=lineOffset(destination,anchor?.source.endLine+1),token=lexicalCode(destination.code.slice(start,end)).search(/\S/);
+    const first = sourcePath(destination, token<0?start:start+token, entryValues, units);
+    if (first.reachable !== true) fail(`${to.title}: cannot establish the path to the displayed callee operation. ${first.reason}`,first.kind||'capability',{code:first.code||'CALLEE_PATH_UNKNOWN',source:first.source||anchor?.source});
   }
   if (dispatch.failure !== handling) fail(`${from.title}: the call's failure handling is ${handling}, not ${dispatch.failure}.`);
   const destinationSignature = destinationParts && require('./report-content').functionSignature(destinationParts.header, destination.name.split('::').at(-1));
@@ -563,7 +589,8 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   const internal = dispatch.kind === 'internal' || dispatch.kind === 'internal-library';
   if (!destinationParts || destination.contextKind) fail(`${to.title}: a callable concrete function body is required, not a declaration or interface.`);
   if (dispatch.kind === 'internal') {
-    if (site.recv && site.recv !== 'super' || site.isNew || site.relationship !== 'call' || !matchesCandidate || /\bexternal\b|\bvirtual\b/.test(header)) fail(`${from.title}: no unique checked non-virtual internal target matches this call.`);
+    if (site.recv && site.recv !== 'super' || site.isNew || /\bexternal\b/.test(header))fail(`${from.title}: the claimed internal call has an incompatible source calling convention.`,'structural',{code:'INTERNAL_CALL_CONVENTION'});
+    else if(site.relationship!=='call'||!matchesCandidate||/\bvirtual\b/.test(header))fail(`${from.title}: no unique checked non-virtual internal target matches this call. Exact inherited receiver/override resolution is not established by the current call metadata; an override keyword alone is not a contradiction.`,'capability',{code:'INTERNAL_TARGET_UNRESOLVED',source:{...source.source,line:site.span.line,endLine:site.span.endLine}});
   } else if (dispatch.kind === 'internal-library') {
     if (!matchesCandidate || !site.internalLibrary || !/\b(internal|private)\b/.test(header)) fail(`${from.title}: the library implementation or internal calling convention is not established.`);
   } else if (dispatch.kind === 'self') {
@@ -612,4 +639,4 @@ function validateTransition({ draft, link, from, to, source, destination, units,
       evidence.get(event.evidenceId)?.source.line > site.tryContext.span.endLine && ['committed', 'intermediate', 'return'].includes(event.effect)))
     fail(`${from.title}: the matching catch returns from this invocation; operations after try cannot execute on that path.`);
 }
-module.exports = { parts, expression, parameterNames, parameterSpans, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise };
+module.exports = { parts, expression, parameterNames, parameterSpans, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise, sourcePath };

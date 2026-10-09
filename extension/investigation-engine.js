@@ -52,6 +52,19 @@ function revalidate(draft, catalog, request, issue) {
   // pause interrupted final publication. Re-run the current gate locally;
   // never request the same paid challenge merely to finish host validation.
   const last = draft.runs.at(-1);
+  if(draft.checkedContentHash&&!draft.pendingResponse&&!draft.reviewCandidate&&last?.phase==='challenge'&&last.resultAccepted&&last.outcome==='completed'){
+    const publication=guidePolicy.gate(draft);
+    if(publication.diagnosticsIdentity&&(publication.diagnosticsIdentity!==draft.publication?.diagnosticsIdentity||hash(publication.details)!==hash(draft.publication?.details))){
+      draft.localDiagnosticHistory ||= [];
+      draft.localDiagnosticHistory.push({at:now(),version:publication.diagnosticsVersion,hostVersion:require('./package.json').version,identity:publication.diagnosticsIdentity,resultHash:hash(publication.details),
+        checkedContentHash:draft.checkedContentHash,candidateHash:draft.candidateVerification?.candidateHash,requestId:last.requestId,
+        previousPublication:structuredClone(draft.publication),publication:structuredClone(publication),providerRequests:0});
+      draft.publication=publication;
+      if(!publication.ready){draft.phase='blocked';draft.failureKind=publication.details.some(d=>d.kind==='material-evidence')?'material-evidence':'structural';draft.error=publication.problems[0];}
+      else{draft.phase='ready';draft.publication.digest=guidePolicy.digest(draft);delete draft.error;delete draft.failureKind;delete draft.failureCode;}
+      draft.revision++;write(catalog.root,draft);
+    }
+  }
   if (draft.phase === 'ready') {
     const publication = guidePolicy.gate(draft);
     if (!publication.ready) {
@@ -1093,6 +1106,12 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         }
       }
       if (!draft.pendingResponse && (data.candidateOnly || data.repairOnly)) data.authoringFormat = require('./authoring-contract').VERSION;
+      if(!draft.pendingResponse&&data.earlierDraft){
+        const diagnostics=require('./tutorial-diagnostics'),subject=diagnostics.packetSubject(data,context.units,draft);
+        draft.tutorialDiagnostics=diagnostics.inspect(subject);
+        data.tutorialDiagnostics=draft.tutorialDiagnostics;
+        if(data.checkOnly)diagnostics.assertVerification(subject);
+      }
       data = require('./packet-context').compact(data);
       if(!draft.pendingResponse)require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
       if(preparationOnly&&!draft.pendingResponse){
@@ -1145,6 +1164,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         // Recovery is unpaid local validation, not authority to obtain a new
         // answer. Never acquire a slot, reserve a request, or reset health here.
         if (localOnly) throw Object.assign(new Error('Saved response recovery needs a new checked answer. The compatible stage is preserved; no request was dispatched.'), { code: 'LOCAL_RECOVERY_PENDING' });
+        // Recompute at the final boundary (including a lawful prepared-input
+        // transform), before capacity, reservation or process creation.
+        const expanded=require('./packet-context').expand(input);
+        if(expanded.checkOnly&&expanded.earlierDraft)require('./tutorial-diagnostics').assertVerification(require('./tutorial-diagnostics').packetSubject(expanded,context.units,draft));
         // Include metadata, instructions and schema in the bounded transport
         // preflight. Oversized local input must not spend a reservation.
         if (transport) require('./semantic-provider').requestMetrics(input);
@@ -1434,6 +1457,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       readQuestions(next.candidateMaterial);
       const completion = context.complete(next.candidateMaterial, { finishQuestions: true }); draft.actions.push(completion);
       draft.sources = context.units; draft.phase = 'candidate-awaiting-verification';
+      draft.tutorialDiagnostics=require('./tutorial-diagnostics').inspect({...draft,...next.candidateMaterial,sources:context.units});
+      if(!draft.tutorialDiagnostics.admissible){draft.phase='blocked';draft.failureKind='structural';draft.failureCode='TUTORIAL_REPRESENTATION';
+        draft.validationProblems=draft.tutorialDiagnostics.details.map(d=>({...d,message:d.reason}));draft.error='Private candidate retained. Correct deterministic representation defects before verification.';}
       draft.publication = { ready: false, policy: guidePolicy.POLICY, problems: ['A private candidate is saved; complete fresh verification is still required.'] };
       draft.checkpoint = { ...draft.checkpoint, candidateHash: state.candidateHash };
       draft.yielded = true; await save(); return true;

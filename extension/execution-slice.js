@@ -11,6 +11,10 @@ function boolean(value, values, depth = 0) {
   let text = lexicalCode(String(value)).replace(/\s+/g, '');
   while (text.startsWith('(') && matching(text, 0) === text.length - 1) text = text.slice(1, -1);
   if (text === 'true' || text === 'false') return text === 'true';
+  // Exact symbolic guard premises, not natural-language synonym matching.
+  if (values.has(text) && typeof values.get(text)==='boolean') return values.get(text);
+  const equality=/^(.*?)(==|!=)(.*)$/.exec(text);
+  if(equality){const inverse=equality[1]+(equality[2]==='=='?'!=':'==')+equality[3];if(typeof values.get(inverse)==='boolean')return !values.get(inverse);}
   for (const op of ['||', '&&']) {
     let depth = 0;
     for (let at = 0; at < text.length - 1; at++) {
@@ -87,12 +91,12 @@ function parse(unit) {
 function pathTo(unit, offset, initial, options = {}) {
   const tree = parse(unit); if (!tree) return { reachable: null, reason: 'Function structure unavailable.' };
   const values = new Map(initial), guards = [], locals = new Set();
-  const unknown = reason => ({ reachable: null, reason, values, guards });
-  const stopped = (reason, outcome, failure) => ({ reachable: false, reason, outcome, failure, values, guards });
+  const unknown = (reason, code='PATH_EFFECT_UNSUPPORTED',kind='capability') => ({ reachable: null, reason, code,kind, values, guards });
+  const stopped = (reason, outcome, failure) => ({ reachable: false, reason, code:'PATH_TERMINATED',kind:'structural',outcome, failure, values, guards });
   const classify = (kind, args, offset, custom = false) => options.failureClass ? options.failureClass(kind, args, offset, custom) : failureClass(kind, args, custom);
   function operation(node) {
     const result = options.operation?.(node, values);
-    if (!result || result.outcome === 'unknown') return unknown(result?.reason || 'A preceding invocation needs its exact implementation and a checked effect before this statement.');
+    if (!result || result.outcome === 'unknown') return {...unknown(result?.reason || 'A preceding invocation needs its exact implementation and a checked effect before this statement.',result?.code,result?.kind),...(result?.source?{source:result.source}:{})};
     if (result.outcome !== 'continue') return stopped(result.reason, result.outcome, result.failure);
     return null;
   }
@@ -100,13 +104,13 @@ function pathTo(unit, offset, initial, options = {}) {
     for (const node of nodes) {
       if (options.through != null && node.start > options.through) break;
       if (options.after != null && node.end <= options.after) continue;
-      if (offset < node.start) return unknown('The selected statement is not in the parsed path.');
+      if (offset < node.start) return unknown('The selected statement is not in the parsed path.','PATH_ANCHOR_INVALID','structural');
       const contains = node.start <= offset && offset < node.end;
       if (node.kind === 'if') {
         if (contains && offset < node.yes.start) return { reachable: true, values, guards };
         const choice = boolean(node.condition, values);
         if (choice == null) {
-          if (contains) return unknown('The enclosing branch condition is not established at this statement.');
+          if (contains) return unknown('The enclosing branch condition is not established at this statement.','BRANCH_PREMISE_UNKNOWN','material-evidence');
           // Both branches must independently continue. A return/failure in
           // either branch is not dismissed because its condition is unknown.
           const before = new Map(values), yes = walk([node.yes]);
@@ -119,7 +123,7 @@ function pathTo(unit, offset, initial, options = {}) {
         }
         guards.push({ start: node.start, end: node.yes.start, expression: node.condition, value: choice });
         const selected = choice ? node.yes : node.no;
-        if (contains && (!selected || !(selected.start <= offset && offset < selected.end))) return { reachable: false, values, guards, reason: 'The checked condition chooses the other branch.' };
+        if (contains && (!selected || !(selected.start <= offset && offset < selected.end))) return { reachable: false,code:'BRANCH_EXCLUDED',kind:'structural', values, guards, reason: 'The checked condition chooses the other branch.' };
         if (selected) { const result = walk([selected]); if (result) return result; }
         continue;
       }
@@ -170,7 +174,7 @@ function pathTo(unit, offset, initial, options = {}) {
         const open = clean.indexOf('('), close = matching(clean, open), args = parts(text.slice(open + 1, close));
         const value = boolean(args[0], values);
         if (value === false) return stopped('An earlier guard rejects this path.', 'failure', classify(/^assert\b/.test(clean) ? 'assert' : 'require', args, node.start));
-        if (value == null) return unknown('An earlier guard has not been established for this path.');
+        if (value == null) return unknown('An earlier guard has not been established for this path.','GUARD_PREMISE_UNKNOWN','material-evidence');
       } else if (/\bassembly\b|\b(?:delete|break|continue)\b|\+\+|--|[+*/%&|^]=/.test(clean)) return unknown('A preceding mutation or control operation needs a checked derivation.');
       else if (!calls.length && clean !== ';') return unknown('A preceding statement has no established effect in the supported source-path subset.');
     }

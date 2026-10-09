@@ -17,6 +17,29 @@ async function fixture(t,kind='route',index=0,extra=0) {
   return {root,catalog,request,issue,findingId:issue.id,current:()=>true,publish:async()=>{},provider:'codex',yieldAfterStage:true};
 }
 const fixed=input=>require('../scripts/fixtures/route-ready-output').response(input);
+for(const variant of ['frame','parameter'])test(`ordinary candidate recovery detects ${variant} defects before V reservation without changing retained content`,{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);let authoring,reservations=0;
+  await engine.advance({...f,invoke:async input=>{
+    authoring=input;const edits=proposal(input),events=structuredClone(input.earlierDraft.causal.events);
+    if(variant==='frame'){const different=events.find(e=>e.invocationId!==events[0].invocationId);different.invocationId=events[0].invocationId;}
+    else {
+      // Entry selectors deliberately omit their derived name/type on the wire.
+      // Change an ordinary later value against the exact compiled entry, not
+      // the selector itself or the host's read-only assembled fields.
+      const later=events.find(e=>e.inputs.some(i=>i.name)&&f.draft.causal.events.some(a=>a.id!==e.id&&a.invocationId===e.invocationId&&a.inputs.some(i=>e.inputs.some(j=>j.name===i.name))));
+      assert.ok(later,'The fixture needs a later parameter in a repeated invocation');
+      const value=later.inputs.find(i=>i.name);value.type=value.type==='uint128'?'uint256':'uint128';}
+    edits.updates.push({path:'/causal/events',valueJSON:JSON.stringify(events)});
+    return{value:edits,audit:{phase:'challenge',outcome:'completed',requestId:'bad-C'}};
+  }});
+  assert.ok(authoring.tutorialDiagnostics);assert.match(provider.measureRequest(authoring).system,/deterministic host observations/);
+  assert.equal(f.draft.phase,'blocked');assert.ok(f.draft.tutorialDiagnostics.details.some(d=>d.code===(variant==='frame'?'INVOCATION_FRAME':'PARAMETER_TYPE')),JSON.stringify({error:f.draft.error,details:f.draft.tutorialDiagnostics.details}));
+  for(const detail of f.draft.tutorialDiagnostics.details)assert.ok(detail.target,'Each actionable representation defect keeps its exact event/relationship target');
+  const frozen=structuredClone(f.draft.reviewCandidate),calls=f.draft.runs.length;f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,beforeRequest:()=>{reservations++;},invoke:()=>assert.fail('Invalid representation must not dispatch V')});
+  assert.equal(reservations,0);assert.equal(f.draft.failureCode,'TUTORIAL_REPRESENTATION');assert.deepEqual(f.draft.reviewCandidate,frozen);assert.equal(f.draft.runs.length,calls);
+  assert.equal(policy.gate(f.draft).ready,false);assert.equal(f.draft.reviewCandidate.verification,null);
+});
 async function generation(f) {
   f.draft=engine.create(f);
   await engine.advance({...f,invoke:async input=>{
@@ -67,6 +90,15 @@ test('64-note candidate survives the ordinary checked route and 128 original/cur
   assert.equal(f.draft.phase,'ready',f.draft.error);assert.equal(f.draft.evidence.length,64);assert.equal(f.draft.explanationReviews.length,64);
   f.draft=engine.read(f.root,f.findingId);assert.equal(require('../extension/webview/walkthrough-model').build(f.draft,f.issue.reportText).steps.length,15);
   await engine.advance({...f,provider:'none',invoke:()=>assert.fail('Compatible playback is local')});assert.equal(calls,2);
+  const semantic=require('../extension/review-content').project(f.draft),runs=structuredClone(f.draft.runs);
+  // An older host publication has no staged diagnostic identity. Re-evaluate
+  // locally once, preserving its exact receipt and checked content as history.
+  delete f.draft.publication.diagnosticsIdentity;const prior=structuredClone(f.draft.publication);
+  engine.revalidate(f.draft,f.catalog,f.request,f.issue);
+  assert.deepEqual(f.draft.localDiagnosticHistory.at(-1).previousPublication,prior);
+  const history=f.draft.localDiagnosticHistory.length;engine.revalidate(f.draft,f.catalog,f.request,f.issue);
+  assert.equal(f.draft.localDiagnosticHistory.length,history);assert.deepEqual(f.draft.runs,runs);
+  assert.deepEqual(require('../extension/review-content').project(f.draft),semantic);assert.equal(calls,2);
   const old=structuredClone(f.draft),ids=new Map(old.evidence.map(e=>[e.id,'revised-'+e.id]));
   const rename=x=>typeof x==='string'?(ids.get(x)||x):Array.isArray(x)?x.map(rename):x&&typeof x==='object'?Object.fromEntries(Object.entries(x).map(([k,v])=>[k,rename(v)])):x;
   const next=rename(old),reviews=[...old.evidence.map(e=>({evidenceId:e.id,result:'removed',reason:'The scoped observation is retained under its explicitly revised identity, with dependent references migrated.',checkedSourceIds:[e.sourceId]})),

@@ -1,5 +1,60 @@
 # Bounded fresh quality pilot
 
+## Early tutorial diagnostics and finished blocked review (0.19.26)
+
+**Zero new provider requests. No new checked real tutorial.** The retained
+49-note, two-claim explanation and completed verifier response remain unchanged.
+The earlier kept result is still not publication approval. Historical generation,
+authoring and verification receipts retain their original outcomes and usage.
+
+One pure staged validator now shares invocation, parameter, call-anchor, path,
+transaction and ordering checks between authoring feedback, private assembly,
+pre-verification admission and publication. Mechanically invalid representations
+stop before a reservation. Unresolved semantic premises and capability limits
+remain distinct; an honest incomplete explanation may still require verification.
+No preflight supplies a missing attestation. The checked semantic policy and the
+64-note/128-review, 64-source and 512 KiB policies remain unchanged.
+
+The small modifier capability distinguishes a pass-through, a proven rejecting
+prefix, an unknown guard premise, an unsupported effect and a reverting postlude.
+Reaching a body does not imply transaction commitment. Same-name inherited
+dispatch is not guessed. Comments before a selected operation no longer count as
+an unreachable statement. A complete helper supplied inside an enclosing view is
+reported as an unresolved frame/effect, not falsely as missing source. Differing
+unit labels retain their exact text and an unresolved identity diagnostic; they
+do not by themselves establish a physical-unit error or a conversion.
+
+The real re-evaluation exposes 19 current detail records across missing
+specification/premise, explanation correction and unsupported-analysis groups.
+Distinct remaining causes include the independent rounding rule and completed
+scenario, two verifier evidence-coverage omissions, inherited dispatch, a guard
+predicate expressed only in prose, the supplied observation helper's effect and
+unit-label identity. Missing verifier references explicitly require fresh
+eligible checking, not unnecessary candidate authorship or edits to a paid
+check. Some detail records share a material cause while referring
+to different claims/obligations; none is dropped by a summary cap. The model's
+kept answer does not override the omitted coverage. No paid response was edited.
+
+Original native 1.2.0 inspection with simulated editor IO verifies all groups,
+exact code focus, readable header/active line, Return restoring selection/camera,
+801x600 access and saved reopen with provider none. Inspection stays separate
+from tutorial annotations. Three group-navigation automation samples were
+54.46, 56.11 and 69.14 ms, not a percentile or provider throughput measurement.
+Initial harness runs exposed stale diagnostic projection, a clipped inspection
+header and an inadequate Return restoration; the final controls cover these
+boundaries. An old saved review was incompatible/blocked, so no independent real
+Ready tutorial playback is claimed. Installation is not observed Cursor activation.
+
+Validation: **99 focused controls passed**, followed by the final supported
+canonical gate: **552 passed, zero failed/skipped**. The added
+ordinary candidate controls stop frame and parameter defects before V
+reservation; valid, qualified and materially blocked review paths retain their
+required checks, with stable affected event/relationship targets. Local
+diagnostic refresh is idempotent and preserves checked
+content and paid receipts. Modifier argument/message effects are not ignored.
+Deterministic callbacks are not fresh security reviews. Release artifacts and
+installed files are compared separately from observed editor activation.
+
 ## Lossless capacity revalidation and the existing full check (0.19.25)
 
 **The unchanged retained authoring response became a private 49-note candidate.

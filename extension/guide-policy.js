@@ -3,8 +3,7 @@
 // host checked. Interpretations also need an evidence-grounded challenge.
 const capacity = require('./review-capacity'), { limits, kinds, POLICY } = capacity;
 const crypto = require('node:crypto');
-const { lexicalCode } = require('./solidity-text');
-const bindings = require('./call-bindings');
+const diagnostics = require('./tutorial-diagnostics');
 function digest(draft) {
   return crypto.createHash('sha256').update(JSON.stringify({ findingId: draft.findingId, snapshot: draft.snapshot,
     property: draft.property, claims: draft.claims, evidence: draft.evidence, sources: draft.sources,
@@ -44,8 +43,7 @@ function gate(draft) {
   if (draft.reviewCandidate) return { ready: false, policy: POLICY, problems: ['A private candidate is saved; complete fresh verification is still required.'], details: [] };
   if (draft.rejectedProposal) return {ready:false,policy:POLICY,problems:['Received analysis remains an unaccepted proposal. Repair and full fresh verification are required.'],details:[]};
   const problems = [], details = [], model = draft.causal;
-  const fail = (reason, kind = 'structural', target = null) => { problems.push(reason); details.push({ kind, target, reason,
-    action: kind === 'capability' ? 'This material route needs a supported analysis capability or independently verified versioned input; unchanged retries cannot establish it.' : kind === 'material-evidence' ? 'Obtain the named evidence; do not regenerate unchanged claims.' : kind === 'local-reading' ? 'Read the remaining local segments and challenge the affected claim.' : 'Repair the affected references or coverage, retaining accepted source and claims.' }); };
+  const fail = (reason, kind = 'structural', target = null, meta = {}) => { problems.push(reason); details.push(diagnostics.detail(draft,reason,kind,target,meta)); };
   if (draft.candidateHistory?.length) {
     const lifecycle = require('./review-candidate'), state = draft.candidateHistory.at(-1), receipt = draft.candidateVerification;
     if (!receipt || state.verification?.result !== 'kept' || receipt.candidateHash !== state.candidateHash ||
@@ -55,7 +53,11 @@ function gate(draft) {
   }
   if (!model || typeof model !== 'object') return { ready: false, problems: ['The saved analysis has no checked explanation model. Prepare it with the current review policy.'] };
   const resolved = require('./event-source').resolver(draft);
-  for (const problem of require('./semantic-input').problems(draft, true, resolved)) fail(problem, 'structural');
+  for (const problem of require('./semantic-input').problems(draft, false, resolved)) fail(problem, 'structural',null,{code:'PREMISE_REVIEW_INVALID'});
+  for(const review of draft.inputReviews||[])if(review.status==='unresolved'){
+    const premise=draft.semanticInput?.premises.find(p=>p.id===review.id);
+    if(premise)fail(`The saved ${premise.field} is still unresolved: ${premise.text}\n${review.reason}`,'material-evidence','premise:'+review.id,{code:'PREMISE_UNRESOLVED',eventIds:review.eventIds,claimIds:review.claimIds});
+  }
   for (const problem of require('./source-bindings').integrity(draft)) fail(problem, 'structural');
   const nonempty = value => typeof value === 'string' && !!value.trim();
   const list = value => Array.isArray(value) ? value : [];
@@ -68,8 +70,8 @@ function gate(draft) {
         item.quote === unit.code.split('\n').slice(s.line - unit.source.line, s.endLine - unit.source.line + 1).join('\n');
     }) && documentation.every(id => docs.has(id));
   // Lead with the concrete missing fact, not a generic schema/readiness label.
-  for (const claim of draft.claims) if (claim.status === 'unresolved' || claim.needsReassessment || claim.unknowns?.length) fail(`${claim.id}: ${claim.unknowns?.[0] || claim.nextQuestion || 'A material statement is unresolved.'}`, 'material-evidence', claim.id);
-  if (draft.conclusion?.limitations?.length) fail(draft.conclusion.limitations[0], 'material-evidence');
+  for (const claim of draft.claims) if (claim.status === 'unresolved' || claim.needsReassessment || claim.unknowns?.length) for(const unknown of claim.unknowns?.length ? claim.unknowns : [claim.nextQuestion || 'A material statement is unresolved.']) fail(`${claim.id}: ${unknown}`, 'material-evidence', claim.id);
+  for (const [index, limitation] of (draft.conclusion?.limitations || []).entries()) fail(limitation, 'material-evidence', `conclusion/limitations/${index}`);
   const required = new Set([...draft.evidence.map(item => item.sourceId), ...draft.claims.map(item => item.entry)]);
   for (const unit of units.values()) if (required.has(unit.id) && Number.isInteger(unit.readThrough) && unit.readThrough < unit.source.endLine) {
     const contextNotes=unit.contextKind==='excerpt'&&unit.modelRanges&&!draft.claims.some(c=>c.entry===unit.id)&&
@@ -98,7 +100,11 @@ function gate(draft) {
   const identities = new Set();
   for (const item of obligations) {
     if (!nonempty(item.id) || identities.has(item.id) || !claims.has(item.claimId) || !nonempty(item.question) || !nonempty(item.reason) ||
-      !['established', 'refuted', 'not-applicable','open'].includes(item.state) || !refs(item.evidence, item.documentation) || !check(capacity.target('obligation', item), item.evidence)) fail(`${item.claimId || 'Report'}: ${item.question || 'An evidence requirement'} remains open or unchecked.`);
+      !['established', 'refuted', 'not-applicable','open'].includes(item.state) || !refs(item.evidence, item.documentation) || !check(capacity.target('obligation', item), item.evidence)) {
+      const reviewed=normalized.find(c=>c.target===capacity.target('obligation',item)),missing=(item.evidence||[]).filter(id=>!reviewed?.evidence?.includes(id));
+      fail(`${item.claimId || 'Report'}: ${item.question || 'An evidence requirement'} remains open or unchecked.${missing.length?' Fresh check omits evidence: '+missing.join(', ')+'.':''}`,'structural',capacity.target('obligation',item),{code:'OBLIGATION_CHECK_COVERAGE',missingEvidence:missing,
+        ...(missing.length?{action:'Fresh verification must assess these evidence references under explicit eligible authority. Do not edit the received check, inherit approval, or author an unnecessary candidate revision.'}:{})});
+    }
     else if(item.state==='open') fail(`${item.claimId}: ${item.question} remains materially open after checking.`,'material-evidence',item.id);
     identities.add(item.id);
     if (model.outcome === 'supported' && draft.claims.find(claim => claim.id === item.claimId)?.status === 'supported' && ['rule', 'impact', 'behavior'].includes(item.kind) && item.state !== 'established') fail(`A supported violation requires an established ${item.kind}.`);
@@ -106,68 +112,34 @@ function gate(draft) {
   if (model.outcome === 'supported' && !draft.claims.some(claim => ['supported', 'narrowed'].includes(claim.status) && ['rule', 'impact', 'behavior'].every(kind => obligations.some(item => item.claimId === claim.id && item.kind === kind && item.state === 'established')))) fail('A supported outcome needs at least one checked claim with established behavior, rule and impact; refuted secondary claims do not establish it.');
   if (model.outcome === 'supported' && (!['source-contract','test-expectation','local-documentation'].includes(draft.property.basis) || !(draft.property.evidence?.length || draft.property.documentation?.length))) fail('The expected rule has no independent checked basis.');
   if (model.outcome === 'refuted' && !draft.evidence.some(item => item.stance === 'contradicts')) fail('No decisive counterevidence refutes the allegation.');
-  const eventIds = new Set(), frames = new Map(), transactions = new Map(), participants = new Map();
+  const eventIds = new Set();
   for (const event of events) {
     if (eventIds.has(event.id) || !['id', 'invocationId', 'transaction', 'title', 'role', 'what', 'why'].every(key => nonempty(event[key])) || !claims.has(event.claimId) || evidence.get(event.evidenceId)?.claimId !== event.claimId || !refs([event.evidenceId]) || !check(capacity.target('event', event), [event.evidenceId]) || !['read', 'condition', 'intermediate', 'committed', 'rolled-back', 'return'].includes(event.effect)) fail(`The step ${event.title || event.id || '(unnamed)'} is incomplete or lacks checked code.`);
     eventIds.add(event.id);
-    const eventUnit = resolved.event(event);
-    if (event.callSiteId) {
-      const site = bindings.exactSite(eventUnit, event.callSiteId), anchor = (event.anchor || evidence.get(event.evidenceId))?.source;
-      if (event.anchor && (!draft.bindingPlan || event.anchor.sourceId !== eventUnit?.id || event.anchor.source.sourceHash !== eventUnit?.source.sourceHash)) fail(`${event.title}: the derived visual anchor has no current binding identity.`);
-      if (!site || anchor?.line !== site.span.line || anchor?.endLine !== site.span.endLine) fail(`${event.title}: the highlighted call occurrence does not match this event's exact checked lines.`, 'structural', capacity.target('event', event));
-    }
-    if (transactions.has(event.invocationId) && transactions.get(event.invocationId) !== event.transaction) fail(`${event.title}: one invocation cannot belong to different transactions.`);
-    transactions.set(event.invocationId, event.transaction);
-    // Modifiers execute within their enclosing function invocation. Context
-    // reads may visit declarations. Neither is a different function frame.
-    if (eventUnit && !eventUnit.contextKind && /^\s*(?:function|constructor|receive|fallback)\b/.test(lexicalCode(eventUnit.code))) {
-      const frame = frames.get(event.invocationId);
-      if (frame && frame.id !== eventUnit.id) fail(`${event.title}: invocation ${event.invocationId} was anchored to ${frame.name}, but this step points to ${eventUnit.name}. Anchor a return/outcome to the correct function, or use the actual helper invocation with an explained context relationship.`);
-      else frames.set(event.invocationId, eventUnit);
-      // The receiver is the function's execution context, not the recipient
-      // of a later return or transfer. A read of a call site still belongs to
-      // that frame. Reuse stable labels instead of silently changing actors.
-      const current = { caller: String(event.caller || '').trim(), receiver: String(event.receiver || '').trim() };
-      const previous = participants.get(event.invocationId);
-      if (previous && ['caller', 'receiver'].some(key => previous[key] !== current[key])) fail(`${event.title}: invocation ${event.invocationId} changes its caller or receiver. Reuse the same frame labels; explain return or transfer recipients in the relationship, not as a different execution receiver.`, 'structural', capacity.target('event', event));
-      else participants.set(event.invocationId, current);
-    }
-    if (eventUnit?.contextKind && event.effect !== 'read') fail(`${event.title}: a declaration is context, not evidence of an executed operation or committed change. Anchor the operation in its function and keep the declaration as a read step.`);
     if (event.effect !== 'read' && (!nonempty(event.actor) || !nonempty(event.caller) || !nonempty(event.receiver))) fail(`${event.title}: the relevant caller and receiver are missing.`);
     for (const input of list(event.inputs)) if (!['name', 'expression', 'type', 'units', 'origin'].every(key => nonempty(input[key])) || !refs(input.evidence)) fail(`${event.title}: an input has no checked origin or units.`);
     for (const change of list(event.changes)) {
       if (!['name', 'before', 'operation', 'after', 'units'].every(key => nonempty(change[key])) || !refs(change.evidence)) fail(`${event.title}: a displayed value change lacks evidence.`);
-      const calculation = require('./checked-calculation').problem(change);
-      if (calculation) fail(`${event.title}: ${calculation}`, 'structural', capacity.target('event', event));
     }
   }
   for (const link of links) {
     if (!eventIds.has(link.from) || !eventIds.has(link.to) || !nonempty(link.explanation) || !refs(link.evidence) || !check(capacity.target('relationship', link), link.evidence) || !['call', 'callback', 'return', 'branch', 'data', 'later-transaction', 'context'].includes(link.kind)) fail('An explanation handoff is missing, unchecked or points outside this scenario.');
-    const from = events.find(event => event.id === link.from), to = events.find(event => event.id === link.to);
-    if (from && to && ['call', 'callback', 'return', 'branch'].includes(link.kind) && from.transaction !== to.transaction) fail('A call or return was incorrectly joined across transactions.');
-    if (from && to && ['call', 'callback', 'return'].includes(link.kind)) {
-      const source = resolved.event(from), destination = resolved.event(to);
-      if (!nonempty(link.binding)) fail(`${from.title}: the ${link.kind} handoff has no checked value binding or reason it needs none.`, 'structural', capacity.target('relationship', link));
-      bindings.validateTransition({ draft, link, from, to, source, destination, units: resolved.units, evidence: resolved.evidence, refs, events, links,
-        fail: (reason, kind = 'structural') => fail(reason, kind, capacity.target('relationship', link)) });
-    }
   }
-  bindings.validateInvocations({ events, links, units: resolved.units, evidence: resolved.evidence, fail, resolved });
-  if (!events.length || !Array.isArray(model.order) || model.order.length !== events.length || new Set(model.order).size !== events.length || model.order.some(id => !eventIds.has(id))) fail('The tutorial has no complete, unique reading order.');
-  for (let i = 1; i < list(model.order).length; i++) if (!links.some(link => link.from === model.order[i - 1] && link.to === model.order[i])) fail('A move to the next step has no explained handoff or context detour.');
-  return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details };
+  const deterministic = diagnostics.inspect(draft);
+  for(const item of deterministic.details){problems.push(item.reason);details.push(item);}
+  return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details, diagnosticsVersion: deterministic.version, diagnosticsIdentity: deterministic.identity };
 }
 function expose(draft, report = null) {
   if (!draft) return null;
   const checked = draft.phase === 'ready' && draft.publication?.policy === POLICY && draft.publication.digest === digest(draft) && gate(draft).ready;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
-    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations'])delete copy[key];
+    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
     return { ...copy, nativeSources: require('./event-source').projections(draft) };
   }
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations'])delete copy[key];
+  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
   for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   copy.preparation = { state: draft.phase === 'blocked' ? (draft.failureKind === 'provider' ? 'failed' : 'blocked') : draft.phase === 'provider-required' ? 'not-started' : ['challenging', 'checking-source'].includes(draft.phase) ? 'checking' : 'preparing',
