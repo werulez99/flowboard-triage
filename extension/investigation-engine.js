@@ -43,8 +43,10 @@ function revalidate(draft, catalog, request, issue) {
   validateCurrent(catalog, draft);
   const next = snapshot(catalog, request, issue);
   if (!sameSnapshot(draft.snapshot, next)) {
+    const before=structuredClone(draft);
     draft.previousSourceDigest = draft.snapshot.sourceDigest; draft.snapshot = next;
     draft.revalidatedAt = now(); draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
+    require('./technical-assessment').rebindCompatible(draft,before);
     if (draft.publication?.ready) draft.publication.digest = guidePolicy.digest(draft);
     draft.revision++; write(catalog.root, draft);
   }
@@ -973,14 +975,15 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       await save(); return draft;
     }
     const lastAccepted = [...draft.runs].reverse().find(run => run.resultAccepted);
-    const resumeQuestions = draft.phase !== 'corrected' && !draft.claims.some(claim=>claim.needsReassessment) && draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' || draft.failureKind === 'local-reading');
+    const resumeObservations = !draft.reviewCandidate && require('./technical-assessment').pendingObservations(draft).length > 0;
+    const resumeQuestions = !resumeObservations && draft.phase !== 'corrected' && !draft.claims.some(claim=>claim.needsReassessment) && draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' || draft.failureKind === 'local-reading');
     // An accepted incomplete generation can honestly have no evidence yet,
     // for example when its decisive statement lies in an unread local tail.
     // Requiring an existing quote here restarts that prefix forever instead
     // of restoring the reading cursor and challenging the saved question.
     const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && (draft.rejectedProposal || draft.claims.length &&
-      (!draft.claims.some(claim => claim.needsReassessment)||draft.phase==='corrected') && (draft.phase==='corrected'||draft.checkpoint?.stage === 'challenge' ||
-        resumeQuestions ||
+      (!draft.claims.some(claim => claim.needsReassessment)||draft.phase==='corrected'||draft.reviewCandidate) && (draft.phase==='corrected'||draft.checkpoint?.stage === 'challenge' ||
+        resumeQuestions || resumeObservations ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate'));
     if (resumeChallenge || draft.pendingResponse) { validateCurrent(catalog, draft); context.restore(draft.sources, draft, {exactResponse:!!draft.rejectedProposal}); }
     else {
@@ -1324,7 +1327,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         const checked = previous ? checkExplanations(value, previous, accepted, reviewUnits, data) : accepted;
         if(data.checkOnly&&data.reviewPurpose)require('./review-content').equal(require('./review-content').fromWire(data.earlierDraft,reviewUnits),checked);
         if (candidateVerification) checked.candidateVerification = candidateVerification;
-        if(phase==='challenge'&&data.assessmentContract===require('./technical-assessment').VERSION)checked.technicalReview={version:data.assessmentContract,requestId:response.audit.requestId,inputHash:outboundHash,result:data.checkOnly?'kept':'reviewed'};
+        if(phase==='challenge'&&data.assessmentContract===require('./technical-assessment').VERSION)checked.technicalReview={version:data.assessmentContract,requestId:response.audit.requestId,inputHash:outboundHash,result:data.checkOnly?'kept':'reviewed',
+          observations:require('./technical-assessment').observations({experiments:data.experiments})};
         return checked;
         } catch (error) {
           if (!previous) throw error;
@@ -1509,10 +1513,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if(draft.rejectedProposal){draft.rejectedProposalHistory=[...(draft.rejectedProposalHistory||[]),{...draft.rejectedProposal,state:'verified-candidate',candidateHash:candidateState.candidateHash}];delete draft.rejectedProposal;}
     }
     draft.dependencies = workspaceSnapshot.dependencies(catalog, draft);
+    if(draft.technicalReview?.version===require('./technical-assessment').VERSION&&draft.technicalReview.requestId===draft.runs.at(-1)?.requestId)require('./technical-assessment').seal(draft,draft.technicalReview);
     draft.publication = guidePolicy.gate(draft);
     if (draft.publication.ready) draft.publication.digest = guidePolicy.digest(draft);
     draft.phase = draft.publication.ready ? 'ready' : 'blocked';
-    if(draft.technicalReview?.version===require('./technical-assessment').VERSION&&draft.technicalReview.requestId===draft.runs.at(-1)?.requestId)require('./technical-assessment').seal(draft,draft.technicalReview);
     draft.checkpoint = { stage: 'complete', snapshot: hash(draft.snapshot), followups, repairUsed, at: now() };
     if (!draft.publication.ready) {
       draft.failureKind = draft.publication.details?.some(item => item.kind === 'local-reading') ? 'local-reading' :

@@ -3,6 +3,28 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { TriageBoard } = require('../extension/board');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
 
+test('profile notifications remap each retained artifact without mixing verdicts, resetting inputs or accepting delayed messages',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+ const start=source.indexOf("else if(message?.type==='triage:assessmentProjection'"),end=source.indexOf("    else if (message?.type === 'triage:investigation'",start);
+ const body='(function(){if(false){} '+source.slice(start,end)+'})()';
+ const profile=require('../extension/assessment-profile').validate({version:1,name:'Local H/M',revision:'1',labels:{Low:'Not paid'},eligibleBands:['High','Medium']});
+ const dto=(identity,result)=>({artifact:{identity,findingId:'F',sourceDigest:'source',reportHash:'report'},technical:{identity,result,evidence:[{id:identity}]},severity:{state:'assessed',band:'Low',identity}});
+ const older=dto('first','supported'),newer=dto('second','refuted');let refreshes=0;
+ const context={active:'F',token:'T',sourceStale:false,profileObservation:0,investigationDraft:{revision:2,assessmentProjection:newer},guide:{draft:{revision:1,assessmentProjection:older}},
+   FlowboardWalkthrough:require('../extension/webview/walkthrough-model'),structuredClone,
+   selectedProjection:()=>newer,
+   refreshSeverity(){refreshes++;},renderPreparation(){},updatePreparationRows(){},renderDrawer(){assert.fail('Mapping must not replace human input nodes');},
+   message:{type:'triage:assessmentProjection',issueId:'F',token:'T',artifact:newer.artifact,projection:newer,profile,profileObservation:1}};
+ const vm=require('node:vm');vm.runInNewContext(body,context);
+ assert.equal(context.guide.draft.revision,1);assert.equal(context.guide.draft.assessmentProjection.technical.result,'supported');
+ assert.deepEqual(context.guide.draft.assessmentProjection.technical.evidence,older.technical.evidence);
+ assert.equal(context.guide.draft.assessmentProjection.engagement.state,'excluded');assert.equal(context.investigationDraft.assessmentProjection.technical.result,'refuted');assert.equal(refreshes,1);
+ for(const change of [{artifact:older.artifact,profileObservation:2},{profileObservation:0},{issueId:'other',profileObservation:3},{token:'old',profileObservation:4}]){
+   context.message={...context.message,artifact:newer.artifact,issueId:'F',token:'T',...change};vm.runInNewContext(body,context);assert.equal(refreshes,1);
+ }
+ context.sourceStale=true;context.message={...context.message,issueId:'F',token:'T',profileObservation:9};vm.runInNewContext(body,context);assert.equal(refreshes,1);
+});
+
 test('board final revision check rejects a Git change during its ready await before any view publication', async t => {
   const fs=require('node:fs'), path=require('node:path'), cp=require('node:child_process');
   const root=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'board-final-revision-'));

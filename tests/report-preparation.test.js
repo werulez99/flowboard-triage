@@ -32,9 +32,10 @@ function response(input) {
         actor: 'Caller', caller: 'msg.sender', receiver: 'Gate', conditions: ['accepted is false'], what: note, why: 'The reported normal completion is prevented by this guard.', inputs: [], changes: [], effect: 'rolled-back', paragraphId: '', phrase: '' }], relationships: [], order: ['event'], checks: input.phase === 'challenge' ? checks : [] }
   };
 }
-async function fixture(t, count = 3, invoke, report = reportText(count), source = code) {
+async function fixture(t, count = 3, invoke, report = reportText(count), source = code, extraFiles={}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-report-jobs-'));
   fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/Gate.sol'), source); fs.writeFileSync(path.join(root, 'report.md'), report);
+  for(const [file,text]of Object.entries(extraFiles)){fs.mkdirSync(path.dirname(path.join(root,file)),{recursive:true});fs.writeFileSync(path.join(root,file),text);}
   await importReport(path.join(root, 'report.md'), root, native, { deferMapping: true });
   const result = await analyze(native, root, { mode: 'source' }); let catalog = new SourceCatalog(root, result.runner, result.result);
   const calls = [], updates = [];
@@ -42,8 +43,35 @@ async function fixture(t, count = 3, invoke, report = reportText(count), source 
     changed: status => updates.push(status), invoke: async input => { calls.push([input.finding.id, input.phase, input.checkOnly]); return { value: invoke ? await invoke(input, calls) : response(input), audit: { phase: input.phase, outcome: 'completed', provider: 'controlled-fixture' } }; } };
   const runner = new ReportPreparation(root, options);
   t.after(async () => { runner.dispose(); await runner.loop; fs.rmSync(root, { recursive: true, force: true }); });
-  return { root, options, runner, calls, updates, replaceCatalog: value => catalog = value };
+  return { root, options, runner, calls, updates, getCatalog:()=>catalog, replaceCatalog: value => catalog = value };
 }
+for(const outcome of ['timeout','completed','setup-failure'])test(`supported regression handler handles ${outcome} with exact currentness and saved reopen`,{skip:!native},async t=>{
+ const file='test/Observation.t.sol',source='pragma solidity ^0.8.20;\nimport {Gate} from "../src/Gate.sol";\ncontract Observation {\n // I-1: existing Gate regression setup\n function testGate() external pure {\n  assert(true);\n }\n}\n';
+ const f=await fixture(t,1,undefined,reportText(1)+'\nExisting local test context: `test/Observation.t.sol:3-5` (`Observation.testGate`).\n',code,{[file]:source});
+ await f.runner.ensure();const draft=engine.read(f.root,'I-1'),technical=require('../extension/technical-assessment');assert.equal(technical.current(draft),true);
+ const unit=draft.sources.find(u=>u.source.file===file);assert.ok(unit,'The actual initial packet acquired the referenced existing test');
+ const oldReview=structuredClone(draft.technicalReview),projections=[],{TriageBoard}=require('../extension/board'),issue=require('../extension/store').readIssue(f.root,'I-1');
+ const {report,entries}=reconcile(f.root),entry=entries.find(i=>i.id==='I-1');
+ const model={id:'I-1',investigationDraft:draft,catalog:f.getCatalog(),request:f.runner.request(entry,f.getCatalog(),report),issue:f.runner.issue(entry)};
+ const board=Object.assign(Object.create(TriageBoard.prototype),{root:f.root,callbacks:{},investigationCurrent:()=>true,assertCurrent:()=>f.getCatalog().assertFresh(),
+  vscode:{window:{showWarningMessage:async()=> 'Run existing regression'}},
+  publishInvestigation:async(m,d)=>{m.investigationDraft=d;projections.push(policy.expose(d).assessmentProjection);},startInvestigation:async()=>f.runner.continueFinding('I-1')});
+ const experiment=require('../extension/experiment');
+ t.mock.method(experiment,'run',async(u,options)=>({id:'observed',sourceId:u.id,source:u.source,claimId:options.claimId,origin:'executed-observation',outcome:outcome==='setup-failure'?'setup-failure':'passed',interpretation:'Controlled existing assertion result, not proof of a finding.',tests:[outcome==='setup-failure'?{name:'setUp()',status:'Failure'}:{name:'testGate()',status:'Success'}],command:['forge',...experiment.command(u)],limits:['Fictional controlled setup']}));
+ f.options.invoke=async input=>{f.calls.push([input.finding.id,input.phase,input.checkOnly]);assert.equal(input.experiments.at(-1).id,'observed');assert.equal(input.checkOnly,true);
+  if(outcome==='completed')return{value:response(input),audit:{phase:'challenge',outcome:'completed',provider:'controlled-fixture'}};
+  await f.runner.control('pause');throw Object.assign(Error('Controlled timeout after observation'),{audit:{outcome:'timeout',phase:'challenge',cleanupConfirmed:true}});};
+ await board.runInvestigationTest(model,{sourceId:unit.id,claimId:'c1'});
+ assert.equal(projections.at(-1).technical.result,outcome==='setup-failure'?'refuted':'not-assessed');if(outcome!=='setup-failure')assert.match(projections.at(-1).technical.why,/interpretation/);
+ const reopened=engine.read(f.root,'I-1');assert.equal(reopened.experiments.at(-1).id,'observed');assert.equal(technical.current(reopened),outcome!=='timeout');
+ assert.equal(policy.expose(reopened).assessmentProjection.technical.result,outcome!=='timeout'?'refuted':'not-assessed');
+ if(outcome!=='completed')assert.deepEqual(reopened.technicalReview,oldReview);else assert.notEqual(reopened.technicalReview.identity,oldReview.identity);
+ assert.equal(f.calls.length,outcome==='setup-failure'?2:3,JSON.stringify({phase:reopened.phase,error:reopened.error}));
+ const prior=reopened.runs[1].retainedResponse;assert.ok(prior.archive);
+ const retained=JSON.parse(fs.readFileSync(path.join(f.root,prior.archive),'utf8'));
+ assert.equal(retained.hash,prior.hash);assert.deepEqual(retained.input.experiments,[],'The old paid-equivalent response is retained against its own observation set');
+ const calls=f.calls.length;engine.read(f.root,'I-1');assert.equal(f.calls.length,calls,'Opening cannot repeat the timed-out check');
+});
 function candidatePatch(value) {
   value=structuredClone(value);delete value.walkthrough.steps;
   return {mode:'candidate-patch-v1',updates:Object.entries(value).filter(([key])=>!['inputReviews','explanationReviews'].includes(key)).map(([key,item])=>({path:'/'+key,valueJSON:JSON.stringify(item)}))};
@@ -1235,9 +1263,17 @@ test('source-only unrelated change keeps checked work; a new named caller invali
   fs.writeFileSync(extra, 'pragma solidity ^0.8.20;\ncontract Unrelated { function color() external pure returns(uint) { return 1; } }\n');
   const reindex = async () => { const indexed = await analyze(native, f.root, { mode: 'source' }); f.replaceCatalog(new SourceCatalog(f.root, indexed.runner, indexed.result)); };
   await reindex(); await f.runner.ensure(); assert.equal(f.calls.length, 2);
+  const technical=require('../extension/technical-assessment'),original=engine.read(f.root,'I-1'),projection=policy.expose(original).assessmentProjection;
+  assert.equal(technical.current(original),true);assert.equal(projection.technical.result,'refuted');
   fs.writeFileSync(extra, fs.readFileSync(extra, 'utf8').replace('return 1', 'return 2'));
-  f.runner.invalidate('unrelated change'); await reindex(); await f.runner.ensure();
+  const start=performance.now();f.runner.invalidate('unrelated change'); await reindex();const indexedAt=performance.now();await f.runner.ensure();const ensuredAt=performance.now();
   assert.equal(f.calls.length, 2); assert.equal(f.runner.status().published, true);
+  const compatible=engine.read(f.root,'I-1'),again=policy.expose(compatible).assessmentProjection;
+  assert.equal(technical.current(compatible),true);assert.equal(again.technical.result,'refuted');assert.equal(again.technical.identity,projection.technical.identity);
+  assert.deepEqual(again.severity,projection.severity);assert.equal(compatible.technicalReview.identity,original.technicalReview.identity);
+  assert.equal(compatible.technicalReview.compatibility.proof,'workspace-snapshot-compatible');
+  t.diagnostic(JSON.stringify({scope:'one two-file fixture, unrelated source reindex/ensure/saved read+projection',samples:1,reindexMs:indexedAt-start,ensureMs:ensuredAt-indexedAt,reopenProjectionMs:performance.now()-ensuredAt,additionalCallbacks:f.calls.length-2}));
+  const changed=structuredClone(compatible);changed.claims[0].conditions.push('New material premise');assert.equal(technical.current(changed),false);
   fs.appendFileSync(extra, '\ncontract Caller { function callGate(Gate g) external { g.finish(false); } }\n');
   f.runner.invalidate('new caller'); await reindex(); await f.runner.ensure();
   assert.equal(f.calls.length, 4);

@@ -52,6 +52,9 @@ function referenceProblems(value) {
     if(Array.isArray(item)){item.forEach((v,i)=>walk(v,`${path}/${v?.id||i}`,owners));return;}
     const scoped=path.startsWith('/claims/')&&item.id?[item.id]:typeof item.claimId==='string'&&item.claimId?[item.claimId]:Array.isArray(item.claimIds)?item.claimIds:owners;
     for(const [key,v]of Object.entries(item)){
+      // Optional factors are independently withheld by the projection gate.
+      // They cannot supply a core claim/obligation or inherit its references.
+      if(key==='severityFactors'&&path.startsWith('/claims/'))continue;
       if(key==='evidence'&&Array.isArray(v))v.forEach((id,i)=>check(id,`${path}/${key}/${i}`,scoped));
       else if(['evidenceId','supportingEvidence','opposingEvidence'].includes(key))check(v,`${path}/${key}`,scoped,path.startsWith('/causal/events/'));
       else if(v&&typeof v==='object')walk(v,`${path}/${key}`,scoped);

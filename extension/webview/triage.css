@@ -316,8 +316,8 @@ body.vscode-light,body.vscode-high-contrast-light {
 .triage-drawer summary:focus-visible { outline:2px solid var(--triage-focus); outline-offset:3px; border-radius:2px; }
 .triage-card-add-evidence:focus-visible,.triage-card-inspect:focus-visible,.triage-evidence-badge:focus-visible,.triage-inline-actions button:focus-visible,.triage-story-evidence button:focus-visible { outline:2px solid var(--triage-focus); outline-offset:2px; }
 .card-code .triage-line-number { color:var(--triage-muted); }
-.guide-reading .tok-keyword { color:#80b9f1; }
-.guide-reading .tok-string { color:#e2a98b; }
+.guide-reading .tok-keyword,.triage-assessment-card .tok-keyword { color:#80b9f1; }
+.guide-reading .tok-string,.triage-assessment-card .tok-string { color:#e2a98b; }
 .guide-reading .tok-comment { color:#b2c9a5; }
 body.vscode-light .tok-comment,body.vscode-high-contrast-light .tok-comment { color:#426c31; }
 body.vscode-light .tok-string,body.vscode-high-contrast-light .tok-string { color:#8c401f; }
@@ -563,6 +563,19 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .triage-blocker-card .card-code { overflow:auto; min-height:100px; flex:1 1 auto; }
 .guide-preparation.expanded { max-height:calc(100vh - 88px); resize:vertical; }
 .guide-preparing:not(.guide-open) #flowboard { top:236px; }
+.guide-assessment-actions { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+.guide-assessment-actions button { text-align:left; white-space:normal; }
+.guide-assessment-inspection { padding:12px; margin:10px 0; border-left:3px solid var(--accent); background:var(--bg); color:var(--fg); }
+.guide-assessment-inspection p { line-height:1.5; overflow-wrap:anywhere; }
+.guide-assessment-inspection h2 { font-size:17px; line-height:1.4; overflow-wrap:anywhere; }
+.guide-currentness { position:sticky; top:var(--triage-tabs-bottom,58px); z-index:2; padding:8px; background:var(--card-bg); border:1px solid var(--triage-warn); font-size:12px; }
+.triage-assessment-card { width:var(--assessment-card-width,640px)!important; min-width:0!important; max-height:calc(100vh - 110px); display:flex; flex-direction:column; box-sizing:border-box; }
+.triage-assessment-card .card-header { display:flex; flex-wrap:wrap; gap:8px; flex:none; }
+.triage-assessment-card .card-header > :has(> .card-title) { flex:1 1 100%; min-width:0; }
+.triage-assessment-card .card-title { white-space:normal; overflow-wrap:anywhere; overflow:visible; }
+.triage-assessment-card .triage-card-inspect { display:none; }
+.triage-assessment-card .card-code { min-height:100px; flex:1 1 auto; overflow:auto; font-size:14px; }
+.triage-assessment-card .card-code,.triage-assessment-card .code-line { white-space:pre-wrap; overflow-wrap:anywhere; width:auto; }
 .guide-status-row { display:flex; gap:8px; align-items:center; }
 .guide-status-row > strong { flex:1; min-width:0; }
 .guide-status-row button { flex-shrink:0; }

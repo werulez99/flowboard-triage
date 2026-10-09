@@ -9,6 +9,7 @@ function digest(draft) {
     property: draft.property, claims: draft.claims, evidence: draft.evidence, sources: draft.sources,
     causal: draft.causal, walkthrough: draft.walkthrough, conclusion: draft.conclusion, dependencies: draft.dependencies,
     semanticInput: draft.semanticInput, inputReviews: draft.inputReviews, ...(draft.bindingPlan ? { bindingPlan: draft.bindingPlan } : {}),
+    ...(require('./technical-assessment').observations(draft).length?{observations:require('./technical-assessment').observations(draft)}:{}),
     ...(draft.candidateVerification ? { candidateVerification: draft.candidateVerification } : {}) })).digest('hex');
 }
 const str = require('./review-content').string, strings = { type: 'array', items: str };
@@ -54,6 +55,8 @@ function gate(draft) {
   if (!model || typeof model !== 'object') return { ready: false, problems: ['The saved analysis has no checked explanation model. Prepare it with the current review policy.'] };
   if(!draft.property||!Array.isArray(draft.claims)||!Array.isArray(draft.evidence)||!Array.isArray(draft.sources))
     return {ready:false,policy:POLICY,problems:['The saved analysis is missing its canonical argument fields. No checked assessment or layout remedy is available.'],details:[{kind:'structural',code:'ARGUMENT_INCOMPLETE',reason:'Canonical property, claims, evidence and source collections are required.'}]};
+  const technical=require('./technical-assessment'),optionalDetails=[];
+  if(technical.pendingObservations(draft).length&&!technical.current(draft))fail('Execution observations have changed since the retained substantive review. Interpret their assertions and setup before publishing a current walkthrough.','material-evidence','experiments',{code:'OBSERVATION_REVIEW_REQUIRED'});
   const resolved = require('./event-source').resolver(draft);
   for (const problem of require('./semantic-input').problems(draft, false, resolved)) fail(problem, 'structural',null,{code:'PREMISE_REVIEW_INVALID'});
   for(const review of draft.inputReviews||[])if(review.status==='unresolved'){
@@ -97,8 +100,8 @@ function gate(draft) {
   const check = (id, ids) => normalized.some(item => item.target === id && nonempty(item.reason) && refs(item.evidence, item.documentation) && ids.every(value => item.evidence.includes(value)));
   for(const claim of draft.claims){
     const factors=claim.severityFactors;
-    if(factors&&(!refs(factors.evidence)||!obligations.some(o=>o.claimId===claim.id&&o.kind==='impact'&&check(capacity.target('obligation',o),factors.evidence))))
-      fail('The optional severity assertions have no complete impact review. They cannot inherit an older assessment.','structural',`claim:${claim.id}/severityFactors`,{code:'SEVERITY_REVIEW_MISSING',claimIds:[claim.id]});
+    if(factors&&(!refs(factors.evidence)||factors.evidence.some(id=>evidence.get(id)?.claimId!==claim.id&&evidence.get(id)?.claimId!=='')||!obligations.some(o=>o.claimId===claim.id&&o.kind==='impact'&&check(capacity.target('obligation',o),factors.evidence))))
+      optionalDetails.push({kind:'optional',target:`claim:${claim.id}/severityFactors`,code:'SEVERITY_REVIEW_MISSING',claimIds:[claim.id],reason:'Optional severity is unavailable: its factors have no complete source-grounded impact review. The independently checked core is assessed separately.'});
     if(draft.property.derivation&&!obligations.some(o=>o.claimId===claim.id&&o.kind==='rule'&&check(capacity.target('obligation',o),draft.property.derivation.evidence)))
       fail('The invariant derivation lacks its source-grounded rule check.','structural',`claim:${claim.id}/rule`,{code:'DERIVATION_REVIEW_MISSING',claimIds:[claim.id]});
   }
@@ -140,7 +143,7 @@ function gate(draft) {
   }
   const deterministic = diagnostics.inspect(draft);
   for(const item of deterministic.details){problems.push(item.reason);details.push(item);}
-  return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details, diagnosticsVersion: deterministic.version, diagnosticsIdentity: deterministic.identity };
+  return { ready: !problems.length, policy: POLICY, problems: [...new Set(problems)].slice(0, 12), details, optionalDetails, diagnosticsVersion: deterministic.version, diagnosticsIdentity: deterministic.identity };
 }
 function evaluate(draft) {
   const publication=gate(draft),identity=digest(draft);
@@ -155,6 +158,9 @@ function expose(draft, report = null, evaluation=null) {
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
     const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
     delete copy.technicalReview;delete copy.technicalReviewHistory;
+    // Withheld optional assertions stay in the immutable private response,
+    // not in the native/copy/export semantic DTO. This grants no new checks.
+    for(const claim of copy.claims)if(evaluated.publication.optionalDetails?.some(d=>d.claimIds.includes(claim.id)))claim.severityFactors=null;
     return { ...copy, assessmentProjection:evaluated.assessment, nativeSources: require('./event-source').projections(draft) };
   }
   // Partial model prose never crosses the host boundary. It stays in the

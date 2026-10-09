@@ -639,4 +639,37 @@ function validateTransition({ draft, link, from, to, source, destination, units,
       evidence.get(event.evidenceId)?.source.line > site.tryContext.span.endLine && ['committed', 'intermediate', 'return'].includes(event.effect)))
     fail(`${from.title}: the matching catch returns from this invocation; operations after try cannot execute on that path.`);
 }
-module.exports = { parts, expression, parameterNames, parameterSpans, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise, sourcePath };
+// Resolve only exact scalar boolean facts. A free-text name is never a
+// declaration or storage identity. Reuse the same lexical shadow/write index
+// used for receiver binding; unsupported alias/layout remains explicit.
+function scenarioBinding(unit,event,name,units,until){
+  if(!unit)return null;
+  const qualified=name.split('.'),symbol=qualified.at(-1),body=functionParts(unit.code,unit.name.split('::').at(-1));
+  if(!body||qualified.length>2||qualified.length===2&&![owner(unit),'this'].includes(qualified[0]))return null;
+  const at=Math.max(body.bodyStart,until??body.bodyStart),scan=bindingWrites(body,symbol,at);
+  if(scan.unsafe)return null;
+  if(qualified.length===1&&!scan.active.id.startsWith('state:')){
+    const parameter=parameterSpans(unit.code,unit.name.split('::').at(-1)).find(p=>p.name===symbol);
+    if(scan.active.type!=='bool'&&!/^bool\s/.test(parameter?.declaration||''))return null;
+    return{kind:'lexical',declaration:`${unit.source.file}:${unit.source.sourceHash}:${unit.source.line}:${scan.active.id}`,context:event.invocationId,body,scan,symbol};
+  }
+  const declarations=[];
+  const scopes=unit.initialization?.complete?unit.initialization.scopes:[{contract:owner(unit),file:unit.source.file,sourceHash:unit.source.sourceHash}];
+  for(const u of units.values()){
+    if(!u.complete||!scopes.some(s=>s.file===u.source.file&&s.sourceHash===u.source.sourceHash))continue;
+    const code=lexicalCode(u.code),pattern=new RegExp(`^\\s*bool\\s+(?:(?:public|private|internal|constant|immutable|override)\\s+)*${escaped(symbol)}\\s*(?:=[^;]*)?;\\s*$`);
+    if(u.contextKind==='state'&&scopes.some(s=>s.contract===owner(u)&&s.file===u.source.file)&&pattern.test(code)&&(!u.modelRanges||require('./source-coverage').covers(u.modelRanges,u.source.line,u.source.endLine)))
+      declarations.push(`${u.source.file}:${u.source.sourceHash}:${u.source.line}:${u.source.endLine}:${symbol}`);
+    if(u.contextKind==='excerpt')for(const match of code.matchAll(/\b(?:contract|library)\s+(\w+)[^{;]*\{/g)){
+      if(!scopes.some(s=>s.contract===match[1]&&s.file===u.source.file))continue;
+      const end=matching(code,code.indexOf('{',match.index),'{','}');if(end<0)continue;
+      for(const statement of require('./solidity-text').stateStatements(code,{start:match.index,end},true))if(pattern.test(statement.text)){
+        const line=u.source.line+code.slice(0,statement.start).split('\n').length-1,endLine=u.source.line+code.slice(0,statement.end-1).split('\n').length-1;
+        if(!u.modelRanges||require('./source-coverage').covers(u.modelRanges,line,endLine))declarations.push(`${u.source.file}:${u.source.sourceHash}:${line}:${endLine}:${symbol}`);
+      }
+    }
+  }
+  if(new Set(declarations).size!==1)return null;
+  return{kind:'state',declaration:declarations[0],context:event.invocationId,body,scan,symbol};
+}
+module.exports = { parts, expression, parameterNames, parameterSpans, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise, sourcePath, scenarioBinding, bindingWrites };

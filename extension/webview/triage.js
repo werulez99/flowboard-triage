@@ -20,6 +20,7 @@
   let guide = null, guideIndex = 0, guideMode = 'closed', guideReturn = null, guideNavigation = null, guidePending = false, guideOpinion = window.innerWidth > 800;
   let guideDetour = null, guideError = null, guideRequest = null;
   let guideIntent = 'waiting', preparationState = null, guideWrap = true, blockerReturn = null;
+  let assessmentReturn = null, profileObservation = 0;
   let guidePane = { width: null, height: null, collapsed: false };
   let guideHiddenScroll = 0;
   let reportPreparation = null;
@@ -80,15 +81,22 @@
     job?.verificationCompletion ? 'Review completed · walkthrough blocked' :
     job?.retainedRejection ? 'Received analysis needs correction' : job?.failureKind==='storage' ? 'Response storage needs recovery' : job?.hasPrivateCandidate ? 'Private candidate needs verification' : job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
+  function selectedProjection(job=preparationJob(active)){
+    if(sourceStale)return null;
+    // A current job's withdrawal must not fall back to an older blocked
+    // assessment. A deliberately retained guide owns a separate artifact.
+    return job?job.assessmentProjection||null:investigationDraft?.assessmentProjection;
+  }
   const readyDraft = draft => !!(draft?.phase === 'ready' && draft.publication?.ready && !draft.preparation);
   function updatePreparationRows() {
     for (const row of drawer.querySelectorAll('[data-finding-id]')) {
       const job = preparationJob(row.dataset.findingId), badge = row.querySelector('.triage-preparation-badge'), action = row.querySelector('.triage-ready-action');
-      const assessment=job?.assessmentProjection,technical=assessment?.technical;
-      if (badge) { badge.textContent = technical&&technical.result!=='not-assessed'?technical.label+' · '+jobLabel(job):jobLabel(job); badge.dataset.state = job?.publishable ? 'ready' : job?.state || 'not-started'; badge.title = job?.reason || ''; }
-      if (action) action.hidden = !job?.publishable;
+      const selected=row.dataset.findingId===active,stale=sourceStale&&selected;
+      const assessment=selected?selectedProjection(job):job?.assessmentProjection,technical=assessment?.technical;
+      if (badge) { badge.textContent = stale?'Needs recheck':technical&&technical.result!=='not-assessed'?technical.label+' · '+jobLabel(job):jobLabel(job); badge.dataset.state = stale?'stale':job?.publishable ? 'ready' : job?.state || 'not-started'; badge.title = job?.reason || ''; }
+      if (action) action.hidden = stale||!job?.publishable;
       const reason = row.querySelector('.triage-job-reason');
-      if (reason) { reason.textContent = (technical&&technical.result!=='not-assessed'?[technical.why,technical.remaining?.[0], 'Suggested severity: '+(assessment.severity?.label||'Not assessed')+' '+(assessment.severity?.conditions||[]).join('; ')].filter(Boolean).join(' · '):job?.reason)||''; reason.hidden = !reason.textContent; }
+      if (reason) { reason.textContent = stale?'Code or report changed. Previous AI projections are historical.':(technical&&technical.result!=='not-assessed'?[technical.why,technical.remaining?.[0], 'Suggested severity: '+(assessment.severity?.label||'Not assessed')+' '+(assessment.severity?.conditions||[]).join('; ')].filter(Boolean).join(' · '):technical?.why||job?.reason)||''; reason.hidden = !reason.textContent; }
       if (queueMode.startsWith('preparation:')) row.hidden = queueMode === 'preparation:ready' ? !job?.publishable : job?.state !== queueMode.slice(12);
     }
     const counts = drawer.querySelector('.triage-preparation-counts');
@@ -205,6 +213,7 @@
     document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(960, flowboard.clientWidth - 48))}px`);
     requestAnimationFrame(() => {
       const card = cards.get(selectedCard);
+      if(assessmentReturn&&card&&!sourceStale)card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);
       if (guideMode === 'guided' && card && !sourceStale) {
         // Keep the same node, scale and line when a smaller viewport would
         // otherwise clip the entire long card. Never fit the whole graph.
@@ -261,8 +270,8 @@
             card.append(element('p','',item.message),...(item.action?[element('p','triage-muted',item.action)]:[]));
             const technical=element('details');technical.append(element('summary','','Exact field and diagnostic'),element('small','triage-muted',`${item.code}${item.target?' · '+item.target:''}`));
             if(item.file)technical.append(element('small','triage-muted',`${item.file}:${item.line}-${item.endLine}`));card.append(technical);
-            if(item.source)card.append(button(`Inspect code · L${item.line}–${item.endLine}`,()=>{rememberLocation();blockerReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),scrolls:[...cards].map(([id,c])=>[id,c.codeEl.scrollTop])};send('triage:inspectBlocker',{diagnosticId:item.id});}));
-            if(item.file)card.append(button('Open source in editor',()=>send('triage:openReference',{file:item.file,line:item.line})));
+            if(item.source&&!sourceStale)card.append(button(`Inspect code · L${item.line}–${item.endLine}`,()=>{rememberLocation();blockerReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),scrolls:[...cards].map(([id,c])=>[id,c.codeEl.scrollTop])};send('triage:inspectBlocker',{diagnosticId:item.id});}));
+            if(item.file&&!sourceStale)card.append(button('Open source in editor',()=>send('triage:openReference',{file:item.file,line:item.line})));
             section.append(card);
           }invalid.append(section);
         }
@@ -322,16 +331,23 @@
       const job = preparationJob(active);
       preparationSurface.classList.toggle('retained-rejection',!!job?.retainedRejection);
       preparationSurface.classList.toggle('verification-completed',!!job?.verificationCompletion&&!job.verificationCompletion.published);
-      const title = preparing ? 'Opening finding' : cardBlocked ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
+      const title = sourceStale?'Needs recheck · code or report changed':preparing ? 'Opening finding' : cardBlocked ? 'Make room for the walkthrough' : job ? `${jobLabel(job)} · ${progress.ready}/${progress.total} ready` : state?.state === 'failed' ? 'Review could not finish' : state?.state === 'blocked' ? 'Walkthrough blocked' : 'Preparing walkthrough';
       const row = element('div', 'guide-status-row'), heading = element('strong', '', title); heading.setAttribute('role', 'status');
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
       row.append(heading, expand);
-      if (!preparing && canContinueFinding()) row.append(button('Continue this finding', () => send('triage:investigationRetry')));
+      if (!preparing && !sourceStale && canContinueFinding()) row.append(button('Continue this finding', () => send('triage:investigationRetry')));
       if(!preparing&&job?.repairAvailable&&!localAdmission()&&!sharedAllowanceExhausted())row.append(button('Repair saved analysis',()=>send('triage:repairSavedAnalysis')));
       if(!preparing&&job?.localRecheckAvailable)row.append(button('Recheck local preparation',()=>send('triage:recheckLocalPreparation')));
       row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
-      const technical=job?.assessmentProjection?.technical||investigationDraft?.assessmentProjection?.technical;
+      const technical=selectedProjection(job)?.technical;
       if(technical&&technical.result!=='not-assessed')preparationSurface.append(element('h2','guide-technical-result',technical.label),element('p','guide-technical-reason',technical.why));
+      else if(sourceStale||technical?.why)preparationSurface.append(element('p','guide-technical-reason',sourceStale?'Needs recheck · code or report changed. Previous AI conclusions, severity and evidence actions are withdrawn.':technical.why));
+      if(!sourceStale&&technical?.evidence?.length){const actions=element('nav','guide-assessment-actions');
+        const decisive=['supports','contradicts'].map(stance=>technical.evidence.find(e=>e.stance===stance)).filter(Boolean);
+        const action=entry=>{const node=button(`${entry.stance==='contradicts'?'Opposing':entry.stance==='supports'?'Supporting':'Context'} evidence · ${entry.sourceName||entry.claimId} · L${entry.source.line}`,()=>assessmentEvidence(entry));node.title=entry.claimTitle||entry.claimId;return node;};
+        for(const entry of decisive)actions.append(action(entry));
+        preparationSurface.append(actions);
+        const rest=technical.evidence.filter(e=>!decisive.includes(e));if(rest.length){const notes=element('details');notes.append(element('summary','',`Other checked source notes · ${rest.length}`));for(const entry of rest)notes.append(action(entry));preparationSurface.append(notes);}}
       const selected = issueIdentifier() || preparing || 'No finding selected';
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code', 'preparing-local-context':'Checking local preparation (no model request)' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
@@ -592,6 +608,15 @@
     send('triage:investigationFocus', { evidenceId: entry.id, claimId: entry.claimId, navigationId: guideNavigation, editor, materialize: !!unit && !guideCard(unit) });
     renderGuide(); schedulePersist();
   }
+  function assessmentEvidence(entry){
+    const projection=investigationDraft?.assessmentProjection;
+    if(sourceStale||!projection?.artifact||!projection.technical.evidence?.some(e=>e.id===entry.id))return;
+    if(guide&&FlowboardWalkthrough.sameArtifact(guide.draft.assessmentProjection?.artifact,projection.artifact))return guideEvidence(entry);
+    assessmentReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),intent:guideIntent,expanded:preparationExpanded,
+      preparationScroll:preparationSurface.scrollTop,scrolls:[...cards].map(([id,c])=>[id,c.codeEl.scrollTop])};
+    guideNavigation=crypto.randomUUID();
+    send('triage:investigationEvidence',{assessmentIdentity:projection.artifact.identity,evidenceId:entry.id,navigationId:guideNavigation});
+  }
   function evidenceActions(parent, ids, label = 'Where this comes from') {
     for (const id of [...new Set(ids || [])]) {
       const entry = guide?.draft.evidence.find(item => item.id === id);
@@ -618,6 +643,8 @@
     parent.append(detail);
   }
   function renderOpinion(parent, draft = investigationDraft) {
+    if(sourceStale)return;
+    if(draft===investigationDraft){const projection=selectedProjection();if(!projection?.technical.identity)return;draft={...draft,assessmentProjection:projection};}
     if (!readyDraft(draft)&&(!draft?.assessmentProjection||draft.assessmentProjection.technical.result==='not-assessed')) return;
     const assessment = FlowboardWalkthrough.assessment(draft, sourceStale);
     const opinion = element('div', 'guide-opinion');
@@ -645,17 +672,28 @@
       const entry = assessment[key];
       if (!entry) { decisive.append(element('p', 'triage-muted', key === 'supports' ? 'No supporting code established.' : 'No opposing code established.')); continue; }
       const index = guide?.steps.findIndex(step => step.evidence?.id === entry.id) ?? -1;
-      decisive.append(button(`${label} ${entry.claimId}${index >= 0 ? ` · Step ${index + 1}` : ''}`, () => guideEvidence(entry)), element('p', '', entry.note));
+      const action=button(`${label} · ${entry.sourceName||entry.claimId}${index >= 0 ? ` · Step ${index + 1}` : ''}`, () => readyDraft(draft)?guideEvidence(entry):assessmentEvidence(entry));action.title=entry.claimTitle||entry.claimId;
+      decisive.append(action, element('p', '', entry.note));
     }
     const remains = part('What remains', 'remains'), unknowns = assessment.remaining;
     remains.append(element('p', '', unknowns[0] || (assessment.result === 'unavailable' ? 'Finish preparing the review to see its open questions.' : 'No further material gap was listed in this scoped AI review. This is not a guarantee of correctness.')));
     if (unknowns.length > 1) { const more = element('details'); more.append(element('summary', '', `${unknowns.length - 1} more open questions`)); for (const text of unknowns.slice(1)) more.append(element('p', '', text)); remains.append(more); }
     parent.append(opinion);
-    const projection=draft.assessmentProjection;
+    renderSeverity(parent,draft);
+  }
+  function renderSeverity(parent,draft){
+    if(sourceStale)return;
+    const projection=draft===investigationDraft?selectedProjection():draft.assessmentProjection;
     if(projection?.severity){const severity=element('section','guide-severity');severity.append(element('h3','','Suggested severity · General Audit v1'),element('strong','',projection.severity.label),element('p','',projection.severity.reason));
+      severity.dataset.artifact=projection.artifact?.identity||'';
       for(const text of projection.severity.conditions||[])severity.append(element('p','',text));
       severity.append(element('p','triage-muted',projection.engagement?.reason||'Engagement eligibility not assessed.'));parent.append(severity);}
   }
+  function refreshSeverity(){for(const node of document.querySelectorAll('.guide-severity')){
+    const draft=guideAside.contains(node)?guide?.draft:investigationDraft;
+    if(!draft||node.dataset.artifact!==draft.assessmentProjection?.artifact?.identity)continue;
+    const holder=element('div');renderSeverity(holder,draft);node.replaceWith(...holder.childNodes);
+  }}
   function syncReadingLayout() {
     const open = !!guide && guideMode !== 'closed' && !sourceStale;
     document.body.classList.toggle('guide-open', open); guideControls.hidden = guideAside.hidden = !open;
@@ -731,7 +769,9 @@
     if (sourceStale) {
       guideAside.append(element('p', 'triage-warning', 'Code or report changed. Refresh before using these steps.'), button('Refresh code', () => { persistNow(); send('triage:refresh'); })); return;
     }
-    if (guide.key !== FlowboardWalkthrough.build(investigationDraft, report)?.key && investigationDraft?.phase === 'ready') guideAside.append(button('New review ready · update steps', () => { guide = null; guideStart(); }));
+    if (guide.key !== FlowboardWalkthrough.build(investigationDraft, report)?.key && investigationDraft?.phase === 'ready') guideAside.append(
+      element('p','guide-retained-revision',`Reading retained checked revision ${guide.draft.revision}. The newer assessment describes different reviewed content.`),
+      button('New review ready · update steps', () => { guide = null; guideStart(); }));
     if (guideMode !== 'guided') guideAside.append(element('p', 'guide-paused', guideMode === 'detour' ? 'Evidence detour. Return restores your step and reading position.' : 'Exploring freely. Your step is saved.'));
     const note = element('section', 'guide-annotation'); note.dataset.stepId = step.id;
     note.append(element('h2', '', step.title));
@@ -1924,9 +1964,11 @@
     scale = Math.min(1, Math.max(MIN_SCALE, Math.min((rect.width - 60) / (right - left), (rect.height - 60) / (bottom - top))));
     panX = 30 - left * scale; panY = 30 - top * scale; applyTransform(); schedulePersist();
   }
-  function revokeGeneratedGuidance() {
+  function revokeGeneratedGuidance(withdrawAssessment = true) {
     guide = null; guideMode = 'closed'; guideReturn = null; checkedLocation = null;
-    if (investigationDraft?.phase === 'ready') investigationDraft = null;
+    if (withdrawAssessment) investigationDraft = null;
+    assessmentReturn=null;
+    for(const card of cards.values())card.el.classList.remove('triage-assessment-card');
     visibleInvestigation = null;
     for (const workbench of drawer.querySelectorAll('.inv-workbench')) {
       const adjustment = workbench.querySelector('.inv-correction')?.closest('details');
@@ -1939,7 +1981,13 @@
         adjustment.querySelectorAll('button').forEach(node => node.disabled = true);
       } else workbench.remove();
     }
-    drawer.querySelectorAll('.guide-opinion,.guide-report-links').forEach(node => node.remove());
+    document.querySelectorAll('.guide-opinion,.guide-severity,.guide-report-links,.guide-assessment-inspection').forEach(node => node.remove());
+    if(sourceStale&&!drawer.querySelector('.guide-currentness')){
+      const focused=drawer.querySelector('input:focus,textarea:focus,select:focus'),top=focused?.getBoundingClientRect().top;
+      const notice=element('p','guide-currentness triage-warning','Needs recheck · Code or report changed. Current AI assessment, severity and eligibility are withdrawn; your edits are retained.');
+      drawer.querySelector('.triage-tabs')?.after(notice);
+      if(focused)drawer.scrollTop+=focused.getBoundingClientRect().top-top;
+    }
   }
   window.addEventListener('message', event => {
     const message = event.data;
@@ -1949,6 +1997,7 @@
       // Its host-validated investigation event owns that atomic transition.
       // Update small row badges only, preserving note nodes/caret and camera.
       renderPreparation(); updatePreparationRows();
+      if(!selectedProjection()?.technical.identity)document.querySelectorAll('.guide-opinion,.guide-severity,.guide-assessment-inspection').forEach(node=>node.remove());
       return;
     }
     if (message?.type === 'triage:load') {
@@ -2061,6 +2110,7 @@
       dirtyReview = true; editVersion++;
       // Leave the camera and cards exactly where the researcher was reading.
       guideNavigation = null; revokeGeneratedGuidance(); renderGuide(); renderPreparation(); renderBar();
+      updatePreparationRows();
       if (!drawer.querySelector('input:focus,textarea:focus,select:focus')) renderDrawer();
       else {
         // Other manual review forms also retain their text. Stale controls must
@@ -2082,14 +2132,25 @@
         back.remove();guideIntent='waiting';preparationExpanded=true;renderPreparation();const target=[...preparationSurface.querySelectorAll('[data-blocker-id]')].find(n=>n.dataset.blockerId===message.diagnosticId);target?.scrollIntoView({block:'center'});});
       back.classList.add('guide-blocker-return');drawer.prepend(back);
     }
-    else if(message?.type==='triage:assessmentProjection'&&message.issueId===active&&message.token===token&&investigationDraft){
-      investigationDraft.assessmentProjection=message.projection;if(guide)guide.draft.assessmentProjection=message.projection;renderDrawer();
+    else if(message?.type==='triage:assessmentProjection'&&message.issueId===active&&message.token===token&&investigationDraft&&!sourceStale){
+      if(!Number.isSafeInteger(message.profileObservation)||message.profileObservation<=profileObservation||
+        !FlowboardWalkthrough.sameArtifact(investigationDraft.assessmentProjection?.artifact,message.artifact)||
+        !FlowboardWalkthrough.sameArtifact(selectedProjection()?.artifact,message.artifact))return;
+      profileObservation=message.profileObservation;
+      investigationDraft.assessmentProjection=FlowboardWalkthrough.remap(investigationDraft.assessmentProjection,message.profile);
+      const old=guide?.draft.assessmentProjection;
+      if(old?.artifact&&old.artifact.findingId===message.artifact.findingId&&old.artifact.sourceDigest===message.artifact.sourceDigest&&old.artifact.reportHash===message.artifact.reportHash)
+        guide.draft.assessmentProjection=FlowboardWalkthrough.remap(old,message.profile);
+      // Replace only the mapping presentation. Preserve all input nodes,
+      // selection/caret, source scroll, camera and the deliberate old guide.
+      refreshSeverity();renderPreparation();updatePreparationRows();
     }
     else if (message?.type === 'triage:investigation' && message.issueId === active && message.token === token && message.draft?.findingId === active) {
       if (sourceStale || message.draft.revision < (investigationDraft?.revision || 0)) return;
+      const changedAssessment=!FlowboardWalkthrough.sameArtifact(investigationDraft?.assessmentProjection?.artifact,message.draft.assessmentProjection?.artifact);
       investigationDraft = message.draft;
       guideAvailability = message.guideAvailability || null;
-      if (!readyDraft(investigationDraft) && guide) { revokeGeneratedGuidance(); renderGuide(); redrawEdges(); }
+      if (!readyDraft(investigationDraft) && (guide || changedAssessment) || !guide && changedAssessment) { revokeGeneratedGuidance(false); renderGuide(); redrawEdges(); }
       preparationState = null; renderPreparation();
       // Never replace source cards/camera or insert new inline notes while the
       // researcher is reading. The next explicit source/claim selection adopts
@@ -2097,6 +2158,22 @@
       if (!drawer.querySelector('input:focus,textarea:focus,select:focus') && ['claims', 'brief'].includes(drawerTab)) renderDrawer();
       if (!guide && guideIntent === 'waiting' && guideAvailability?.ready !== false && FlowboardWalkthrough.build(investigationDraft, report)) guideStart();
       else if (guide && guide.key !== FlowboardWalkthrough.build(investigationDraft, report)?.key) renderGuide();
+    }
+    else if(message?.type==='triage:assessmentFocus'&&message.issueId===active&&message.token===token&&!sourceStale){
+      if(message.navigationId!==guideNavigation||!assessmentReturn||!FlowboardWalkthrough.sameArtifact(message.artifact,investigationDraft?.assessmentProjection?.artifact))return;
+      const card=cards.get(message.id);if(!card&&!message.editor)return;
+      guideIntent='explore';if(card){card.el.classList.add('triage-assessment-card');inspectCard(card,false);
+        card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);checkedLocation=message.source;redrawEdges();
+        const row=card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`);if(row)card.codeEl.scrollTop+=row.getBoundingClientRect().top-card.codeEl.getBoundingClientRect().top-32;
+      }else show('flow');
+      const note=element('section','guide-assessment-inspection');note.append(element('h2','',`${message.entry.stance==='contradicts'?'Opposing':'Supporting'} evidence · ${message.entry.sourceName||message.entry.claimId}`),element('p','',message.entry.note),element('p','triage-muted','Source inspection only · the full walkthrough remains unavailable.'));
+      const claim=element('details');claim.append(element('summary','','Exact checked statement'),element('p','',message.entry.claimTitle||message.entry.claimId));note.append(claim);
+      note.prepend(button('Return to assessment',()=>{const saved=assessmentReturn;if(!saved)return;assessmentReturn=null;
+        card?.el.classList.remove('triage-assessment-card');const v=saved.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=saved.checkedLocation;
+        show(v.drawerTab);({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;
+        for(const[id,scroll]of saved.scrolls){const c=cards.get(id);if(c)c.codeEl.scrollTop=scroll;}
+        guideIntent=saved.intent;preparationExpanded=saved.expanded;renderPreparation();preparationSurface.scrollTop=saved.preparationScroll;redrawEdges();schedulePersist();}));
+      drawer.prepend(note);drawer.scrollTop=0;schedulePersist();
     }
     else if (message?.type === 'triage:investigationFocus' && message.issueId === active && message.token === token && !sourceStale) {
       if (preparing || guideNavigation && message.navigationId !== guideNavigation || message.navigationId && message.navigationId !== guideNavigation) return;

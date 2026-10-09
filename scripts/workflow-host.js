@@ -140,7 +140,7 @@ async function start(options = {}) {
   // Observe the real provider without replacing its inputs or responses. Only
   // fictional quality cases expose these records; no private workspace capture.
   const providerCalls = [];
-  let releaseMixed, mixedHeld = false, localChallengeFailed = false;
+  let releaseMixed, mixedHeld = false, localChallengeFailed = false, assessmentRefuted=false;
   const mixedWait = options.mixedFixture && new Promise(resolve => { releaseMixed = resolve; });
   const mixedInvoke = options.mixedFixture || options.routeFixture || options.teachingFixture ? async (input, settings) => {
     const record = { input: structuredClone(input), fixture: options.routeFixture ? 'controlled-route-preparation' : 'controlled-mixed-preparation' }; providerCalls.push(record);
@@ -156,7 +156,7 @@ async function start(options = {}) {
       })]);
       mixedHeld = false;
     }
-    const result = { value: require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
+    const result = { value: options.assessmentFixture?require('./fixtures/assessment-output').response(input,{blocked:options.assessmentFixture==='blocked',refuted:assessmentRefuted}):require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
     if(options.routeFixture&&options.longQualification){
       const explanation='The checked guard bounds this source interpretation. '.repeat(82)+' MATERIAL SCOPE: only this false-approval invocation rolls back; no historical deployment loss is established.';
       const note=result.value.evidence?.find(e=>e.id==='approval-guard');if(note)note.explanation=explanation;
@@ -345,6 +345,8 @@ async function start(options = {}) {
         for (const callback of panel.callbacks) Promise.resolve(callback(message)).catch(record);
       } else if (message.name === 'reopen') {
         await selection; panel.dispose(); pending.length = 0; await createBoard();
+      } else if(message.name==='local-playback'&&options.assessmentFixture&&!readOnly){
+        await reportPreparation.loop;configuration.semanticProvider='none';
       } else if (message.name === 'release-mixed' && options.mixedFixture) {
         releaseMixed();
       } else if (message.name === 'external-reimport' && options.mixedFixture && productionEditor) {
@@ -367,8 +369,19 @@ async function start(options = {}) {
         fs.writeFileSync(path.join(root,'engagement.json'),JSON.stringify({version:1,name:'Fixture H/M mapping',revision:'1',labels:{Low:'Low — no payout'},eligibleBands:['High','Medium']}));
         configuration.engagementProfile='engagement.json';
         await board.remapProfile();
+      } else if(message.name==='assessment-revision'&&!readOnly&&options.assessmentFixture==='ready'){
+        await reportPreparation.loop;assessmentRefuted=true;
+        const engine=require(path.join(productionExtension,'investigation-engine')),draft=engine.read(root,board.activeId);
+        // Simulate delivery of a newly completed artifact while the reader
+        // retains an earlier one. All intermediate host states are still real;
+        // this fixture only delays their editor messages, never publication.
+        const post=board.post;board.post=function(m){return m.type==='triage:investigation'&&m.draft?.phase!=='ready'?Promise.resolve(true):post.call(this,m);};
+        try{engine.correct(draft,{field:'conditions',claimId:'c1',value:'startedAt is 0'});engine.write(root,draft);
+          await reportPreparation.continueFinding(board.activeId);
+        }finally{board.post=post;}
+        await board.publishInvestigation(board.models.get(board.activeId),engine.read(root,board.activeId));
       } else if (message.name === 'source-change' && !readOnly) {
-        const file = options.qualityCase || options.routeFixture || options.mixedFixture ? board.models.get(board.activeId).catalog.functions[0].file : path.join(root, options.reading ? 'src/ReservationBook.sol' : options.complex ? 'src/QuotationDemo.sol' : 'src/Demo.sol');
+        const file = options.qualityCase || options.routeFixture || options.mixedFixture || options.teachingFixture ? board.models.get(board.activeId).catalog.functions[0].file : path.join(root, options.reading ? 'src/ReservationBook.sol' : options.complex ? 'src/QuotationDemo.sol' : 'src/Demo.sol');
         fs.appendFileSync(file, '\n// Integration fixture source revision changed.\n');
         reportPreparation?.invalidate('Code changed. The complete report must be rechecked.');
         await board.sourceChanged(file);
@@ -410,6 +423,7 @@ if (require.main === module) {
     routeFixture: process.argv.includes('--route-fixture'),
     longQualification: process.argv.includes('--long-qualification'),
     teachingFixture: process.argv.includes('--teaching-fixture') ? process.argv[process.argv.indexOf('--teaching-fixture') + 1] : null,
+    assessmentFixture:process.argv.includes('--assessment-fixture')?process.argv[process.argv.indexOf('--assessment-fixture')+1]:null,
     productionSelection: process.argv.includes('--production-selection'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,

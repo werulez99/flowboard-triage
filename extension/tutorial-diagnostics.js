@@ -3,7 +3,7 @@
 // attestations, mutates a candidate, acquires code, or advances a lifecycle.
 const crypto=require('node:crypto'),bindings=require('./call-bindings'),capacity=require('./review-capacity');
 const {lexicalCode}=require('./solidity-text');
-const VERSION='tutorial-diagnostics-v2';
+const VERSION='tutorial-diagnostics-v3';
 const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const actions={structural:'Correct these exact explanation fields and their dependent checks in a private revision; do not retry an unchanged verification.',
   capability:'Inspect the linked supplied code. This operation is outside the supported local analysis; more copies of that code will not resolve it.',
@@ -65,12 +65,39 @@ function inspect(draft) {
   // Only exact boolean facts on an explicit runtime edge are compared. This
   // is not satisfiability analysis; context/alternative reading edges do not
   // assert one execution. A cited state write may explain the transition.
-  const facts=event=>new Map((event.conditions||[]).flatMap(c=>{const m=c.trim().match(/^([A-Za-z_$][\w.$]*)\s*={1,3}\s*(true|false)$/);return m?[[m[1],m[2]]]:[];}));
+  const point=event=>{const u=resolved.event(event),s=(event.anchor||evidence.get(event.evidenceId))?.source;
+    return u&&s?u.code.split('\n').slice(0,s.line-u.source.line).join('\n').length+1:undefined;};
+  const facts=event=>(event.conditions||[]).flatMap(c=>{const m=c.trim().match(/^([A-Za-z_$][\w.$]*)\s*={1,3}\s*(true|false)$/);
+    return m?[{name:m[1],symbol:m[1].split('.').at(-1),value:m[2],binding:bindings.scenarioBinding(resolved.event(event),event,m[1],units,point(event))}]:[];});
+  const storageRoot=(event,seen=new Set())=>{
+    if(seen.has(event.invocationId))return null;seen.add(event.invocationId);
+    const incoming=links.filter(l=>['call','callback'].includes(l.kind)&&events.find(e=>e.id===l.to)?.invocationId===event.invocationId);
+    if(incoming.some(l=>l.dispatch?.context==='delegatecall'))return null;
+    const same=incoming.filter(l=>l.dispatch?.kind==='internal'&&l.dispatch.context==='same');
+    if(same.length===1){const caller=events.find(e=>e.id===same[0].from),u=resolved.event(caller),target=resolved.event(event),site=bindings.exactSite(u,same[0].callSiteId);
+      if(site?.targets?.some(t=>t.file===target?.source.file&&t.line===target.source.line))return storageRoot(caller,seen);}
+    return event.invocationId;
+  };
+  const reconciled=(from,to,before,after)=>from.changes?.some(c=>{
+    if(c.name!==before.name||c.before!==before.value||c.after!==after.value||!refs(c.evidence))return false;
+    const u=resolved.event(from),b=before.binding;if(!u||!b)return false;
+    const scan=bindings.bindingWrites(b.body,b.symbol);
+    const sameFrame=from.invocationId===to.invocationId&&resolved.event(to)?.id===u.id;
+    return scan.writes.some(w=>w.straight&&w.operation==='assign'&&w.value===after.value&&w.at>=point(from)&&(!sameFrame||w.end<=point(to))&&
+      bindings.scenarioBinding(u,from,c.name,units,w.end)?.declaration===b.declaration&&c.evidence.some(id=>{
+        const note=evidence.get(id),line=u.source.line+u.code.slice(0,w.at).split('\n').length-1,endLine=u.source.line+u.code.slice(0,w.end).split('\n').length-1;
+        return require('./event-source').covers(note,u,{...u.source,line,endLine});}));
+  });
   for(const link of links.filter(l=>['call','callback','return','branch','data'].includes(l.kind))){
     const from=events.find(e=>e.id===link.from),to=events.find(e=>e.id===link.to);if(!from||!to||from.claimId!==to.claimId||from.transaction!==to.transaction)continue;
-    const before=facts(from);
-    for(const [name,value] of facts(to))if(before.has(name)&&before.get(name)!==value&&!from.changes?.some(c=>c.name===name&&c.before===before.get(name)&&c.after===value&&refs(c.evidence)))
-      fail(`The same runtime scenario changes ${name} from ${before.get(name)} to ${value} without a cited state transition. Keep alternatives separate or establish the intervening change.`,'structural',capacity.target('relationship',link),{code:'SCENARIO_CONTRADICTION',claimIds:[from.claimId]});
+    for(const before of facts(from))for(const after of facts(to))if(before.symbol===after.symbol&&before.value!==after.value){
+      const a=before.binding,b=after.binding,rootA=storageRoot(from),rootB=storageRoot(to);
+      if(!a||!b||a.kind==='state'&&b.kind==='state'&&(!rootA||!rootB||a.declaration===b.declaration&&rootA!==rootB)){
+        fail(`The opposing ${before.name} facts have unresolved declaration/storage identity. Inspect the exact declarations and receiver/alias context; equal names do not prove a contradiction.`,'capability',capacity.target('relationship',link),{code:'SCENARIO_STATE_IDENTITY',claimIds:[from.claimId]});continue;
+      }
+      if(a.declaration!==b.declaration||a.kind==='lexical'&&a.context!==b.context)continue;
+      if(!reconciled(from,to,before,after))fail(`The same runtime state ${before.name} changes from ${before.value} to ${after.value} without a cited matching state transition. Keep alternatives separate or establish the intervening change.`,'structural',capacity.target('relationship',link),{code:'SCENARIO_CONTRADICTION',claimIds:[from.claimId]});
+    }
   }
   const ids=new Set(events.map(e=>e.id));
   for(const link of links){

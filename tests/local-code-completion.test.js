@@ -187,7 +187,7 @@ test('declaration positions ignore repeated comment text and initializers do not
   assert.deepEqual(declarations.map(item => [item.symbol, item.startLine]), [['START', 4], ['total', 5], ['amounts', 6]]);
 });
 
-test('ordinary selection supplies new declarations to challenge and exact declaration notes remain navigable after reopening', { skip: !native }, async t => {
+test('ordinary selection supplies declarations; partial notes stay private while exact code reopens', { skip: !native }, async t => {
   const inputs = [];
   // Explicit controlled response fixture: isolates source-completion/navigation.
   const host = await start({ qualityCase: 'd3', provider: 'codex', invoke: async input => {
@@ -213,13 +213,18 @@ test('ordinary selection supplies new declarations to challenge and exact declar
   let current = await open();
   assert.deepEqual(inputs.map(input => input.phase), ['generate', 'challenge']);
   assert.ok(current.investigation.actions.some(action => action.kind === 'code-completion' && action.sourceIds.length));
+  const declaration = current.investigation.sources.find(unit => unit.name === 'ReviewQueue::reviewer (state)');
   await send({ type: 'triage:investigationFocus', issueId: 'I-01', token: current.token, evidenceId: 'role' });
-  await send({ type: 'triage:investigationFocus', issueId: 'I-01', token: current.token, evidenceId: 'role', editor: true });
+  await wait(s=>s.logs.some(e=>/private explanation/.test(e)));
+  assert.equal((await state()).exposedInvestigation.evidence.length,0,'Partial interpretation is not an approved source annotation.');
+  // Source inspection stays available independently of this partial fixture's
+  // unexposed semantic note; the new checked-assessment path is tested separately.
+  await send({ type: 'triage:investigationFocus', issueId: 'I-01', token: current.token, sourceId: declaration.id });
+  await send({ type: 'triage:investigationFocus', issueId: 'I-01', token: current.token, sourceId: declaration.id, editor: true });
   current = await wait(s => s.opened.length === 1);
   assert.equal(current.opened[0].selection.startLine, 4);
   assert.equal(current.opened[0].selection.endLine, 4);
   assert.equal(current.investigation.evidence.find(item => item.id === 'role').function, null, 'A declaration is not a fake function.');
-  const declaration = current.investigation.sources.find(unit => unit.name === 'ReviewQueue::reviewer (state)');
   const checkpoint = structuredClone(current.lastLoad.state);
   const declarationId = `finding:I-01:investigation-${declaration.id}`;
   checkpoint.cards.push({ id: declarationId, kind: 'context', name: 'reviewer (state)', contract: 'ReviewQueue',
@@ -230,12 +235,12 @@ test('ordinary selection supplies new declarations to challenge and exact declar
   current = await open();
   assert.equal(inputs.length, 2);
   const restored = current.lastLoad.state.cards.find(card => card.id === declarationId);
-  assert.equal(restored.code, declaration.code, 'Reopening must restore the checked declaration, not cached text or a missing-code placeholder.');
+  assert.equal(restored.code, declaration.code, 'Reopening must restore the exact declaration, not cached text or a missing-code placeholder.');
   assert.equal(restored.fsPath, path.join(host.root, declaration.source.file));
   assert.deepEqual([restored.x, restored.y], [877, 411], 'Declaration navigation must retain the saved native layout.');
-  await send({ type: 'triage:investigationFocus', issueId: 'I-01', token: current.token, evidenceId: 'role', editor: true });
+  await send({ type: 'triage:investigationFocus', issueId: 'I-01', token: current.token, sourceId: declaration.id, editor: true });
   current = await wait(s => s.opened.length === 2);
   assert.equal(current.opened[1].selection.startLine, 4);
   assert.equal(current.lastLoad.finding.status, 'unreviewed');
-  assert.deepEqual(current.errors, []);
+  assert.deepEqual(current.errors,[]);assert.equal(current.logs.filter(e=>/private explanation/.test(e)).length,1);
 });

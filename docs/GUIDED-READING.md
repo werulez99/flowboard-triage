@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.27
+# Checked finding walkthroughs — 0.19.28
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -62,6 +62,28 @@ source, explanation and revision failures still withhold affected approval.
 No private candidate prose crosses the webview boundary. Historical blocked V
 responses cannot inherit this new independent-assessment meaning through replay.
 
+An admissible assessment's supporting/opposing source actions also work when the
+tutorial is blocked. The host checks the saved assessment identity and evidence
+reference, opens its original lines in a full native function and shows only the
+approved explanation. Return restores the inspection's previous position. This
+is evidence inspection, not an unchecked walkthrough. Historical links cannot
+silently move to a newer argument.
+
+Material regression observations participate in currentness. A test pass/failure
+needs interpretation; it does not decide a finding. Setup-only failures do not
+invalidate independent reviewed assertions, but another suite's completed tests
+are not discarded with a setup error. Before a recheck, the previous assessment
+and available response are archived. A timeout or old-response replay cannot
+certify observations absent from its input. The normal challenge can review the
+new observations without regenerating an unchanged argument.
+
+Proved unrelated source edits retain the original review identity through the
+existing source-closure compatibility proof. Relevant changes withdraw technical,
+severity and eligibility projections together, even while a human field has focus.
+Pure profile mappings operate on each displayed artifact's own reviewed factors;
+an older guide never receives a newer verdict. Such a retained revision is labeled
+beside the update action. Neither remapping nor navigation moves the camera.
+
 An established defect remains established beside refuted or unresolved **other**
 allegations. Rows preserve the qualifier “additional alleged scope unresolved”; a
 whole-finding tutorial remains blocked until material scope is resolved. True
@@ -74,6 +96,14 @@ never silently rewritten. Exact boolean scenario contradictions on runtime edges
 are diagnosed; explicit cited state changes and alternative-context edges remain
 distinct. This bounded consistency check is not a satisfiability proof.
 
+Boolean comparison requires exact declaration and storage/lexical context, not
+equal variable names. Separate contracts and shadowed locals/parameters remain
+distinct; a cited write must affect the matching state between the compared
+program points. Unresolved aliases, inheritance or delegate storage stay explicit
+capability limits, not proved contradictions. A separate-root `MISSING_HANDOFF`
+still blocks assessment where independence from material execution cannot be
+established; it is not broadly exempted like `READING_ORDER`.
+
 An optional `derived-security-invariant` basis records mechanism facts, derivation,
 assumptions and credible counterevidence under the existing rule/conditions checks.
 A generic slogan, suspected implementation or imported report does not establish
@@ -84,6 +114,13 @@ entitlement. New/changed/removed assertions retain ordinary revision obligations
 Reported severity is unchanged. Suggested severity is a deterministic mapping of
 **reviewed** consequence factors, not an additional authored verdict or numerical
 score. The named convention is the tool's rubric, not a universal judging policy:
+
+Unavailable or invalid optional factor references withhold severity alone when
+the exact core has independent complete review coverage. Their raw received
+content remains private; unavailable assertions are omitted from the native DTO.
+Missing material impact, changed claims or missing core checks remain blockers.
+No optional-factor repair pass is mandatory. Older unsupported dimensions remain
+not assessed; no historical approval is invented.
 
 | Band | Qualitative anchor and boundary |
 | --- | --- |

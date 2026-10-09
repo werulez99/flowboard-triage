@@ -43,6 +43,12 @@ function retain(root,findingId,reference,expected) {
   if(!existing)p.atomicJson(root,archive,record);
   return {...reference,archive};
 }
+// Archival only: retain the hash-checked original context, not approval for a
+// changed context. Useful before recording new material execution evidence.
+function retainOriginal(root,findingId,reference){
+  const record=p.readWorkspaceJson(root,reference.archive||location(findingId),MAX_BYTES);
+  return retain(root,findingId,reference,{phase:record.input?.phase,snapshot:record.snapshot,corrections:record.corrections,previous:record.previous});
+}
 function recover(root,findingId,reservation,expected) {
   if(!reservation?.id)throw new Error('Owned original reservation is required for receipt recovery.');
   const record=p.readWorkspaceJson(root,location(findingId),MAX_BYTES);
@@ -53,4 +59,4 @@ function recover(root,findingId,reservation,expected) {
      value.reservation&&digest(value.reservation)!==digest(reservation))throw new Error('Retained response does not match the owned reservation/context or confirmed cleanup.');
   return {reference,value};
 }
-module.exports = { save, read, retain, recover, digest };
+module.exports = { save, read, retain, retainOriginal, recover, digest };

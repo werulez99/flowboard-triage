@@ -83,7 +83,11 @@ class TriageBoard {
       findingId: draft?.findingId, findingReady: false } : null,evaluated);
   }
   async remapProfile(){const model=this.models.get(this.activeId);if(!model?.investigationDraft)return;
-    await this.post({type:'triage:assessmentProjection',issueId:model.id,token:model.token,projection:this.exposed(model.investigationDraft).assessmentProjection});
+    this.assertCurrent(model);
+    const profiles=require('./assessment-profile'),relative=this.vscode.workspace.getConfiguration('flowboardTriage',this.vscode.Uri.file(this.root)).get('engagementProfile','');
+    const projection=this.exposed(model.investigationDraft).assessmentProjection;
+    await this.post({type:'triage:assessmentProjection',issueId:model.id,token:model.token,artifact:projection.artifact,projection,
+      profile:profiles.load(this.root,relative),profileObservation:this.profileObservation=(this.profileObservation||0)+1});
     const report=this.callbacks.reportPreparation?.();if(report)await this.post({type:'triage:reportPreparation',report:report.status()});}
   async reportProgress() {
     if (this.disposed) return;
@@ -555,6 +559,8 @@ class TriageBoard {
     const draft = model.investigationDraft;
     if (message.investigationRevision !== undefined && message.investigationRevision !== draft?.revision) throw new Error('A newer review is available. Update the walkthrough before opening this note; the old link was not moved.');
     const evidence = message.evidenceId ? draft?.evidence.find(item => item.id === message.evidenceId) : null;
+    const exposed=this.exposed(draft);
+    if(evidence&&!exposed?.causal)throw new Error('Use the checked assessment evidence action; this private explanation is not a walkthrough.');
     let unit = draft?.sources.find(item => item.id === (evidence?.sourceId || message.sourceId));
     if (!unit || message.evidenceId && !evidence) throw new Error('Unknown investigation evidence/source.');
     this.assertCurrent(model);
@@ -580,12 +586,40 @@ class TriageBoard {
       model.expandedIds.add(cardId); model.sourceById.set(cardId, fn);
       this.native.addFunction(fn, model.catalog.code(fn), null, cardId);
       await this.post({ type: 'triage:hint', issueId: model.id, token: model.token, id: cardId,
-        hint: { ...model.catalog.hints(fn), description: draft.causal?.events.find(event => draft.evidence.find(item => item.id === event.evidenceId)?.sourceId === unit.id)?.role || 'Exploration code outside the checked walkthrough.' } });
+        hint: { ...model.catalog.hints(fn), description: exposed?.causal?.events.find(event => exposed.evidence.find(item => item.id === event.evidenceId)?.sourceId === unit.id)?.role || 'Source inspection context; not a checked execution step.' } });
     }
     await this.post({ type: 'triage:investigationFocus', issueId: model.id, token: model.token, cardId, source,
       claimId: evidence?.claimId || draft.claims.find(claim => claim.id === message.claimId)?.id || null, evidenceId: evidence?.id || null,
       navigationId: typeof message.navigationId === 'string' ? message.navigationId.slice(0, 100) : null, guideAvailability: this.guideAvailability(model) });
     await this.post({ type: 'triage:investigationLinks', issueId: model.id, token: model.token, connections: this.investigationLinks(model) });
+  }
+  async inspectAssessmentEvidence(model,message){
+    if(!this.investigationCurrent(model))throw new Error('Refresh changed source before inspecting checked evidence.');
+    this.assertCurrent(model);
+    const approved=()=>{const saved=investigationEngine.read(this.root,model.id);
+      const projection=this.exposed(saved)?.assessmentProjection;
+      if(!projection?.artifact||projection.artifact.identity!==message.assessmentIdentity||projection.technical.result==='not-assessed')throw new Error('This checked assessment identity is no longer current. Reopen the current result.');
+      const entry=projection.technical.evidence?.find(e=>e.id===message.evidenceId);
+      if(!entry)throw new Error('This evidence is not exposed by the checked assessment.');return{entry,artifact:projection.artifact};};
+    const {entry,artifact}=approved(),source=entry.source;
+    const [checked]=p.sources(this.root,{cards:[source]});
+    let fn;try{fn=model.catalog.resolveCard({file:source.file,line:source.line});}catch{fn=null;}
+    if(fn&&fn.endLine<source.endLine)fn=null;
+    const document=await this.vscode.workspace.openTextDocument(this.vscode.Uri.file(checked.absolute));
+    if(!this.investigationCurrent(model))return;
+    this.assertCurrent(model);approved();p.sources(this.root,{cards:[source]});
+    if(document.isDirty)throw new Error('Save changed source before opening this checked reference.');
+    if(!fn){
+      await this.vscode.window.showTextDocument(document,{preview:false,selection:new this.vscode.Range(source.line-1,0,source.endLine-1,0)});
+      if(!this.investigationCurrent(model))return;this.assertCurrent(model);approved();
+      await this.post({type:'triage:assessmentFocus',issueId:model.id,token:model.token,id:null,editor:true,source,entry,artifact,navigationId:message.navigationId});return;
+    }
+    let id=[...model.sourceById].find(([,u])=>model.catalog.key(u)===model.catalog.key(fn))?.[0];
+    if(!id){if(model.expandedIds.size>=200)throw new Error('The source-card limit is reached; remove an exploration card.');
+      id=`finding:${model.id}:assessment-${crypto.randomUUID()}`;model.expandedIds.add(id);model.sourceById.set(id,fn);this.native.addFunction(fn,model.catalog.code(fn),null,id);}
+    await this.post({type:'triage:hint',issueId:model.id,token:model.token,id,hint:{...model.catalog.hints(fn),description:'Checked evidence inspection, not a tutorial execution step.'}});
+    await this.post({type:'triage:assessmentFocus',issueId:model.id,token:model.token,id,source,entry,artifact,navigationId:message.navigationId});
+    // No private causal role, event or model-authored relationship is emitted.
   }
   async openDocumentation(model, message) {
     if (!this.investigationCurrent(model)) throw new Error('Refresh before opening this documentation reference.');
@@ -635,7 +669,15 @@ class TriageBoard {
     model.investigationAbort?.abort(); if (model.investigationJob) await model.investigationJob;
     if (!this.investigationCurrent(model)) return;
     const abort = new AbortController(); model.experimentAbort = abort;
-    const draft = model.investigationDraft; draft.phase = 'running-regression'; draft.revision++;
+    const draft = model.investigationDraft;
+    if(this.callbacks.investigationPersistence!==false){
+      // Preserve the exact pre-observation assessment and available response
+      // before a later review replaces the last-response checkpoint.
+      const checkpoint=require('./provider-result'),run=draft.runs.at(-1),ref=run?.retainedResponse;
+      if(ref&&!ref.archive)run.retainedResponse=checkpoint.retainOriginal(this.root,model.id,ref);
+      investigationEngine.archive(this.root,draft);
+    }
+    draft.phase = 'running-regression'; draft.revision++;
     if (this.callbacks.investigationPersistence !== false) investigationEngine.write(this.root, draft);
     await this.publishInvestigation(model, draft);
     model.experimentJob = experiment.run(unit, { root: this.root, snapshot: draft.snapshot, claimId: message.claimId, signal: abort.signal });
@@ -643,10 +685,13 @@ class TriageBoard {
       const result = await model.experimentJob;
       if (!this.investigationCurrent(model)) return;
       if (!investigationEngine.sameSnapshot(draft.snapshot, investigationEngine.snapshot(model.catalog, model.request, model.issue))) throw new Error('Sources changed during the regression. Its result was not attached to the current investigation.');
-      draft.experiments.push(result); draft.experiments = draft.experiments.slice(-10); draft.phase = 'experiment-recorded'; draft.revision++;
+      draft.experiments.push(result); draft.experiments = draft.experiments.slice(-10);
+      const stillCurrent=require('./technical-assessment').current(draft);
+      draft.phase = stillCurrent&&draft.publication?.ready?'ready':'experiment-recorded'; draft.revision++;
       if (this.callbacks.investigationPersistence !== false) investigationEngine.write(this.root, draft);
       await this.publishInvestigation(model, draft);
     } finally { model.experimentJob = null; }
+    if(require('./technical-assessment').current(draft))return draft;
     return this.startInvestigation(model, true);
   }
   async expand(name, fromId, childId, contract, isSuper, argCount) {
@@ -711,6 +756,7 @@ class TriageBoard {
     if ((message.type?.startsWith('triage:investigation')||['triage:repairSavedAnalysis','triage:recheckLocalPreparation'].includes(message.type)) && model) {
       if (message.token !== this.activeToken) throw new Error('This investigation view is out of date.');
       if (message.type === 'triage:investigationFocus') return this.focusInvestigation(model, message);
+      if (message.type === 'triage:investigationEvidence') return this.inspectAssessmentEvidence(model,message);
       if (message.type === 'triage:investigationDocumentation') return this.openDocumentation(model, message);
       if (message.type === 'triage:investigationRetry') return this.startInvestigation(model, true);
       if(message.type==='triage:repairSavedAnalysis'){

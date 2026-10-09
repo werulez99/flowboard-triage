@@ -74,7 +74,7 @@ test('ordinary import and selection choose the closure, keep qualified overload 
   assert.ok(prepared.candidates.some(item => item.source.name === 'ReservationBook::onlyHolder'));
   assert.equal(oldLocation.cards[0].file, 'src/Archive.sol', 'The recommendation does not silently change the saved report location.');
 });
-test('selection generates and repairs an incorrect real-code explanation, keeps the remote path unresolved, navigates exact lines and reopens', { skip: !native }, async t => {
+test('selection repairs retained interpretation, withholds incomplete notes, permits code inspection and reopens', { skip: !native }, async t => {
   const inputs = [], host = await start({ reading: true, provider: 'codex', invoke: async input => { inputs.push(structuredClone(input)); return response(input); } });
   t.after(() => host.close()); const c = await client(host), load = await c.select('I-02');
   const state = await c.wait(value => value.investigation?.phase === 'blocked');
@@ -91,9 +91,14 @@ test('selection generates and repairs an incorrect real-code explanation, keeps 
   assert.ok(inputs[0].codeGaps.some(gap => /keeper.settle/.test(gap)));
   assert.ok(!load.connections.some(edge => edge.kind === 'call' && /keeper/.test(edge.reason)), 'An interface boundary is not a proven implementation.');
   await c.send({ type: 'triage:investigationFocus', issueId: 'I-02', token: state.token, evidenceId: 'credit-record', editor: true });
+  await c.wait(value=>value.logs.some(e=>/private explanation/.test(e)));
+  assert.equal((await c.request('/state')).opened.length,0,'A partial private interpretation cannot be navigated as checked evidence.');
+  await c.send({type:'triage:investigationFocus',issueId:'I-02',token:state.token,sourceId:repaired.sourceId,editor:true});
   const opened = await c.wait(value => value.opened.length === 1);
   assert.equal(opened.opened[0].file, 'src/ReservationBook.sol');
-  assert.deepEqual([opened.opened[0].selection.startLine, opened.opened[0].selection.endLine], [24, 26]);
+  const inspected=draft.sources.find(u=>u.id===repaired.sourceId);
+  assert.deepEqual([opened.opened[0].selection.startLine, opened.opened[0].selection.endLine], [inspected.source.line-1, inspected.source.endLine-1]);
+  assert.equal(draft.evidence.find(e=>e.id==='credit-record').source.line,25,'The private exact occurrence is preserved, not silently rebound.');
   const record = engine.read(host.root, 'I-02'); assert.equal(record.evidence.find(item => item.id === 'credit-record').note, repaired.note);
   await c.request('/action', { name: 'reopen' }); const reopened = await client(host); await reopened.select('I-02');
   assert.equal(inputs.length, 2, 'Reopening the same finding/source reuses its draft without new AI calls.');

@@ -1,5 +1,64 @@
 # Bounded fresh quality pilot
 
+## Checked assessment freshness and evidence inspection (0.19.28)
+
+**Zero live provider requests; no new real checked tutorial.** Existing real
+responses, source and accounting were not replayed or modified. This release
+preserves the scoped assessment architecture rather than changing its semantic
+approval policy. Host projection v2 and tutorial diagnostics v3 add no authored
+verdict store, provider stage or request schema/instruction overhead.
+
+The focused lifecycle controls cover new observations before recheck, timeout and
+saved reopen; normal checkOnly of those exact observations; immutable prior-response
+retention; unrelated source compatibility and a relevant dependency negative;
+blocked assessment source navigation; retained-revision profile mapping; declaration
+identity/shadowing/unknown alias checks; and independently complete supported/refuted
+cores with unavailable optional severity. The correction -> candidate -> verification
+control also found and fixed an unintended generation restart while corrected
+accepted claims still awaited reassessment. No candidate guard was relaxed.
+An existing regression that produces only a setup failure retains the compatible
+assessment and uses zero follow-up callbacks; mixed suites' meaningful observations
+still require interpretation. Older navigation tests that previously opened private
+partial notes now assert rejection and separately exercise manual source access.
+The final supported release gate passed 579 tests, zero failures (129.0 seconds).
+Deterministic callbacks establish these product boundaries, not real model quality.
+
+Native acceptance uses the production importer/coordinator/storage and original
+1.2.0 renderer with fixed fictional responses and simulated editor I/O. Supporting
+and opposing evidence open exact native functions from a blocked tutorial and
+Return restores position at 1440x900 and 801x600. Current AI panels withdraw while
+the same human input node/caret survives, including a delayed profile message.
+A retained supported guide keeps its own evidence when a newly checked refuted
+revision arrives and the profile changes. Screenshots were read, not just generated:
+inspection initially clipped the compact signature and used an overlong claim
+heading; the bounded wrapping card and short source label correct those failures.
+The exact statement remains accessible in a named disclosure. Dark/light evidence
+scenes and saved provider-none playback are separate from actual Cursor activation.
+
+Changed-path measurements (Linux, Node 20.20.1, headless Chromium; fixed fictional
+responses): four supporting/opposing source-open/Return pairs at 1440x900 and
+801x600 took 163.2-274.2 / 73.7-100.5 ms. The matching old renderer's evidence
+button said `undefined` and emitted zero navigation messages: it had no usable
+open latency to compare. One local profile remap took 104.8 ms without moving
+the retained guide. One blocked provider-none reopen took 636.2 ms; one Ready
+reopen took 466.0 ms. These are different scenes, not a paired speedup or p95.
+One two-file unrelated-edit fixture took 32.1 ms to reindex, 46.3 ms for ensure
+and 1.2 ms for saved read/projection, with zero additional callbacks and unchanged
+technical/severity provenance. No global scan was added to progress painting.
+The inspection's sampled minimum dark/light text contrast was 5.64/6.01:1 after
+correcting the actual rendered dark fallback and highlighted-token contrast.
+No provider instruction/enforced-schema fields changed; compact source and review
+contracts retain their existing byte/capacity policies. Variable diagnostic/evidence
+content is not a token or latency estimate.
+
+Unresolved receiver aliases/delegate storage are still capability gaps, not proved
+contradictions. Separate-root MISSING_HANDOFF is not broadly exempted from material
+review. Optional-factor isolation cannot rescue missing core impact or evidence.
+The retained real fee-rule/scenario questions remain unresolved; no historical V
+was transferred to a new assertion. Real model accuracy, false refutations and
+200-finding throughput remain unmeasured. The later independent evaluation checklist
+below still applies; no paid evaluation was run here.
+
 ## Scoped assessment and native scenarios (0.19.27)
 
 **Zero live provider requests; no new real checked tutorial.** This implementation

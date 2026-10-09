@@ -172,7 +172,7 @@ test('saved tutorial rejects malformed positions without changing stored researc
   state.view.walkthrough.index = -1;
   assert.throws(() => store.writeBoard(root, 'I-01', state, 'hash'), /view checkpoint/);
 });
-test('ordinary selection prepares guide, completes missing helpers, keeps remote path unresolved and stops on report changes', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async t => {
+test('ordinary selection retains private work and manual code access without an unresolved pseudo-guide', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async t => {
   const inputs = [], host = await start({ reading: true, provider: 'codex', invoke: async input => {
     inputs.push(structuredClone(input)); const result = response(input);
     result.value.walkthrough = { steps: result.value.evidence.map(entry => ({ evidenceId: entry.id, title: 'Inspect the recorded behavior', paragraphId: input.finding.reportParagraphs[0].id, phrase: '' })),
@@ -194,9 +194,13 @@ test('ordinary selection prepares guide, completes missing helpers, keeps remote
   assert.deepEqual(inputs.map(input => input.phase), ['generate', 'challenge']);
   assert.ok(require('../extension/packet-context').expand(inputs[1]).sources.some(item => item.name.endsWith('::_settleCredit')));
   await request('/message', { type: 'triage:investigationFocus', issueId: 'I-02', token: ready.token, evidenceId: 'credit-record', navigationId: 'step-request-1' });
-  const focused = await wait(state => state.received.some(item => item.type === 'triage:investigationFocus'));
+  await wait(state => state.logs.some(error=>/private explanation/.test(error)));
+  const source=ready.investigation.evidence.find(e=>e.id==='credit-record').sourceId;
+  await request('/message',{type:'triage:investigationFocus',issueId:'I-02',token:ready.token,sourceId:source,navigationId:'source-request-1'});
+  await wait(state=>state.received.filter(message=>message.type==='triage:investigationFocus').length===2);
   const events = await request('/events?after=0');
-  assert.ok(events.messages.some(message => message.type === 'triage:investigationFocus' && message.navigationId === 'step-request-1'));
+  assert.ok(!events.messages.some(message => message.type === 'triage:investigationFocus' && message.navigationId === 'step-request-1'));
+  assert.ok(events.messages.some(message=>message.type==='triage:investigationFocus'&&message.navigationId==='source-request-1'));
   assert.equal(inputs.length, 2);
   const before = fs.readFileSync(path.join(host.root, '.flowboard/findings/I-02.json'), 'utf8');
   await request('/action', { name: 'report-change' });

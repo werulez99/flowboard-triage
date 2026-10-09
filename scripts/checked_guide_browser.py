@@ -17,6 +17,7 @@ from playwright.sync_api import sync_playwright
 parser = argparse.ArgumentParser()
 parser.add_argument('--case')
 parser.add_argument('--teaching-case', choices=['time','lifecycle','accounting','scenarios'])
+parser.add_argument('--assessment-check',choices=['blocked','ready'],help='Fixed-response assessment identity, evidence, invalidation and mapping interactions.')
 parser.add_argument('--workspace')
 parser.add_argument('--report')
 parser.add_argument('--finding', default='I-01')
@@ -35,6 +36,9 @@ parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
 parser.add_argument('--output', required=True)
 args = parser.parse_args()
+if args.assessment_check:
+    args.teaching_case='time'
+    args.finding='I-1'
 if args.blocker_check and (args.provider != 'none' or not args.workspace):
     parser.error('--blocker-check requires a saved workspace and provider none')
 repo = Path(__file__).resolve().parent.parent
@@ -51,6 +55,8 @@ if args.case:
     command += ['--quality-case', args.case]
 if args.teaching_case:
     command += ['--teaching-fixture', args.teaching_case, '--defer-mapping']
+if args.assessment_check:
+    command += ['--assessment-fixture',args.assessment_check]
 if args.recorded:
     command += ['--quality-responses', args.recorded]
 if args.workspace:
@@ -82,7 +88,7 @@ try:
               const blend=(a,b)=>a.slice(0,3).map((v,i)=>v*(a[3]??1)+b[i]*(1-(a[3]??1)));
               const lum=c=>c.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
               const results=[];
-              for(const el of document.querySelectorAll('.guide-annotation p,.guide-mechanism,.guide-controls button:not(:disabled),.guide-active-card .code-line span')) {
+              for(const el of document.querySelectorAll('.guide-annotation p,.guide-mechanism,.guide-controls button:not(:disabled),.guide-active-card .code-line span,.guide-assessment-inspection p,.guide-assessment-inspection h2,.guide-assessment-inspection button,.triage-assessment-card .code-line span')) {
                 if(!el.textContent.trim()||!el.getBoundingClientRect().height)continue;
                 const chain=[];for(let p=el;p;p=p.parentElement)chain.unshift(p);
                 let bg=[13,17,23];for(const p of chain)bg=blend(rgb(getComputedStyle(p).backgroundColor),bg);
@@ -133,6 +139,80 @@ try:
         page.screenshot(path=str(out / ('initial.png' if draft and draft['phase'] == 'ready' else 'blocked.png')))
         if args.baseline:
             result['checks'].append('Captured the installed older renderer in its normal selected-finding state.')
+            if args.assessment_check=='blocked':
+                page.get_by_role('button',name='Summary',exact=True).first.click()
+                for width,height in [(1440,900),(801,600)]:
+                    page.set_viewport_size({'width':width,'height':height});page.wait_for_timeout(150)
+                    page.screenshot(path=str(out/f'assessment-{width}.png'))
+                action=page.locator('.guide-opinion').get_by_role('button',name='Supports this statement',exact=False).first
+                before=len(request('/state')['received']);action.click();page.wait_for_timeout(200)
+                result['baselineEvidence']={'label':action.inner_text(),'navigationMessages':len(request('/state')['received'])-before}
+        elif args.assessment_check == 'blocked':
+            a=state['exposedInvestigation']['assessmentProjection']
+            assert a['technical']['result']=='supported' and not draft['publication']['ready']
+            assert len(state['providerCalls'])==2
+            calls=len(state['providerCalls']);samples=[]
+            for width,height in [(1440,900),(801,600)]:
+                page.set_viewport_size({'width':width,'height':height})
+                page.wait_for_timeout(150)
+                page.screenshot(path=str(out/f'assessment-{width}.png'))
+                for stance in ['Supporting','Opposing']:
+                    before=page.evaluate('()=>({scale,panX,panY})')
+                    start=time.monotonic()
+                    actions=page.locator('.guide-assessment-actions')
+                    action=actions.get_by_role('button',name=stance+' evidence',exact=False).first
+                    assert 'undefined' not in action.inner_text()
+                    action.click()
+                    page.wait_for_selector('.guide-assessment-inspection:visible')
+                    page.wait_for_function('()=>document.querySelector(".triage-claim-line")')
+                    focus=page.evaluate('()=>window.hostMessages.filter(m=>m.type==="triage:assessmentFocus").at(-1)')
+                    native_card=page.locator('[data-id='+json.dumps(focus['id'])+']')
+                    geometry=native_card.evaluate('''(card,source)=>{const h=card.querySelector('.card-header').getBoundingClientRect(),line=card.querySelector('[data-source-line="'+source.line+'"]').getBoundingClientRect(),code=card.querySelector('.card-code').getBoundingClientRect(),board=document.getElementById('flowboard').getBoundingClientRect();return {header:h.top>=board.top&&h.bottom<=board.bottom,line:line.top>=Math.max(code.top,board.top)&&line.bottom<=Math.min(code.bottom,board.bottom),width:code.width};}''',focus['source'])
+                    assert geometry['header'] and geometry['line'] and geometry['width']>250,geometry
+                    assert not page.locator('.guide-annotation:visible').count()
+                    assert focus['entry']['note'] in page.locator('.guide-assessment-inspection').inner_text()
+                    opened=(time.monotonic()-start)*1000
+                    page.screenshot(path=str(out/f'evidence-{stance.lower()}-{width}.png'))
+                    if width==801 and stance=='Opposing':
+                        result['inspectionDarkContrast']=contrast()[:6]
+                        page.evaluate('document.body.classList.add("vscode-light")')
+                        page.screenshot(path=str(out/'evidence-opposing-801-light.png'))
+                        result['inspectionLightContrast']=contrast()[:6]
+                        assert all(item['ratio']>=4.5 for item in result['inspectionDarkContrast']+result['inspectionLightContrast']), 'Evidence inspection text contrast below 4.5:1'
+                        page.evaluate('document.body.classList.remove("vscode-light")')
+                    start=time.monotonic();page.get_by_role('button',name='Return to assessment',exact=True).click()
+                    page.wait_for_selector('.guide-assessment-actions:visible')
+                    assert page.evaluate('()=>({scale,panX,panY})')==before
+                    samples.append({'viewport':[width,height],'stance':stance,'openMs':opened,'returnMs':(time.monotonic()-start)*1000,'geometry':geometry})
+                    assert len(request('/state')['providerCalls'])==calls
+            result['evidenceInteractions']=samples
+            result['checks'].append('Blocked tutorial: supporting/opposing checked evidence opens exact full native functions and Return restores camera at desktop/compact sizes; zero new callbacks.')
+            request('/action',{'name':'local-playback'})
+            page.evaluate('window.closing=true;clearInterval(window.timer)');started=time.monotonic()
+            request('/action',{'name':'reopen'});page.reload();page.wait_for_selector(finding_row);page.locator(finding_row).click()
+            page.wait_for_selector('.guide-assessment-actions:visible')
+            result['blockedReopenMs']=(time.monotonic()-started)*1000
+            assert request('/state')['exposedInvestigation']['assessmentProjection']['technical']['identity']==a['technical']['identity']
+            assert len(request('/state')['providerCalls'])==calls
+            result['checks'].append('Compatible blocked-assessment reopen uses provider none and preserves the exact checked identity, with zero new callbacks.')
+            # Preserve a real human input node through immediate revocation and
+            # a delayed old mapping. This is simulated editor message delivery.
+            page.keyboard.press('Alt+4')
+            human=page.locator('#triage-field-decisionReason');human.fill('Researcher judgment remains mine.')
+            human.evaluate('(n)=>{n.focus();n.setSelectionRange(3,12);window.retainedHuman=n;}')
+            request('/action',{'name':'profile-mapping'})
+            page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:assessmentProjection")')
+            old=page.evaluate('()=>window.hostMessages.filter(m=>m.type==="triage:assessmentProjection").at(-1)')
+            request('/action',{'name':'source-change'})
+            page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:sourceStale")')
+            page.evaluate('m=>window.dispatchEvent(new MessageEvent("message",{data:m}))',old)
+            assert page.evaluate('document.activeElement===window.retainedHuman&&window.retainedHuman.selectionStart===3&&window.retainedHuman.selectionEnd===12')
+            assert not page.locator('.guide-severity,.guide-opinion,.guide-technical-result,.guide-assessment-actions').count()
+            assert 'Needs recheck' in page.locator('.guide-currentness').inner_text()
+            assert human.input_value()=='Researcher judgment remains mine.'
+            page.screenshot(path=str(out/'invalidation-editing-801.png'))
+            assert len(request('/state')['providerCalls'])==calls
+            result['checks'].append('Relevant invalidation immediately removes all AI projections and evidence actions while preserving the exact human input/caret; delayed mapping is rejected.')
         elif draft and draft['phase'] == 'ready':
             def visual(event):
                 note = next(e for e in draft['evidence'] if e['id'] == event['evidenceId'])
@@ -438,11 +518,28 @@ try:
             assert len(request('/state')['providerCalls']) == before_calls
             result['checks'].append('Reopening a saved board missing its required first function includes the complete checked native card in the initial load before guided focus.')
             if args.teaching_case:
+                if args.assessment_check=='ready':
+                    original_assessment=request('/state')['exposedInvestigation']['assessmentProjection']
+                    original_result=page.locator('.guide-aside .guide-result').inner_text()
+                    request('/action',{'name':'assessment-revision'})
+                    page.wait_for_selector('button:text-is("New review ready · update steps")')
+                    newer=request('/state')['exposedInvestigation']['assessmentProjection']
+                    assert newer['technical']['result']=='refuted',newer
+                    assert original_assessment['technical']['identity']!=newer['technical']['identity']
+                    assert page.locator('.guide-aside .guide-result').inner_text()==original_result
+                    before_calls=len(request('/state')['providerCalls'])
                 profile_position=page.evaluate('()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId,code:document.querySelector(".guide-active-card .card-code").parentElement.scrollTop})')
+                mapping_start=time.monotonic()
                 request('/action',{'name':'profile-mapping'})
                 page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:assessmentProjection"&&m.projection?.engagement?.name==="Fixture H/M mapping")')
                 assert page.evaluate('()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId,code:document.querySelector(".guide-active-card .card-code").parentElement.scrollTop})')==profile_position
                 assert len(request('/state')['providerCalls'])==before_calls
+                result['profileRemapMs']=(time.monotonic()-mapping_start)*1000
+                if args.assessment_check=='ready':
+                    assert page.locator('.guide-aside .guide-result').inner_text()==original_result
+                    assert 'Fixture H/M mapping' in page.locator('.guide-aside .guide-severity').inner_text()
+                    page.screenshot(path=str(out/'retained-revision-profile.png'))
+                    result['checks'].append('A fully reviewed refuted revision is available while the retained supported guide keeps its own result/evidence through local profile mapping.')
                 result['checks'].append('A validated local engagement profile remaps the assessment without changing the active step, camera or code scroll, and without another request.')
             if args.batch:
                 page.get_by_role('button', name='Findings', exact=True).click()

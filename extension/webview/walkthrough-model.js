@@ -7,6 +7,16 @@
 })(globalThis, function() {
   'use strict';
   const capacity = typeof module === 'object' && module.exports ? require('./review-capacity') : globalThis.FlowboardCapacity;
+  function sameArtifact(a,b){return !!a?.identity&&a.identity===b?.identity&&a.findingId===b.findingId&&a.sourceDigest===b.sourceDigest&&a.reportHash===b.reportHash;}
+  // Pure labels over the artifact's own already-approved factors. This never
+  // transfers another revision's technical result, evidence or severity.
+  function remap(assessment,profile){
+    const copy=structuredClone(assessment);copy.engagement={state:'not-assessed',reason:'No engagement rules selected.'};
+    const s=copy.severity;
+    if(profile){copy.engagement={state:'not-assessed',name:profile.name,revision:profile.revision,identity:profile.identity,reason:'No reviewed severity band is available for this mapping.'};
+      if(copy.technical.result==='supported'&&s?.band&&s.identity===copy.technical.identity)copy.engagement={...copy.engagement,state:s.state==='conditional'?'conditional':profile.eligibleBands.includes(s.band)?'eligible':'excluded',label:profile.labels[s.band]||s.band,reason:`${profile.name} (${profile.revision}) ${profile.eligibleBands.includes(s.band)?'includes':'excludes'} the ${s.band} band.`};}
+    return copy;
+  }
   function paragraphs(report = '') {
     const result = [];
     const expression = /[^\r\n]+(?:\r?\n(?![ \t]*\r?\n)[^\r\n]+)*/g;
@@ -174,5 +184,5 @@
     if (argument?.span) result.argument = { unit: caller.unit, span: argument.span, text: argument.expression };
     return result;
   }
-  return { paragraphs, reportLink, originalLines, exact, assessment, build, teaching, relationship, transition, watchedChanges, inputLinks };
+  return { sameArtifact, remap, paragraphs, reportLink, originalLines, exact, assessment, build, teaching, relationship, transition, watchedChanges, inputLinks };
 });

@@ -23,7 +23,8 @@ function project(draft,assessment,profile=null){
   if(profile)result.engagement={state:'not-assessed',name:profile.name,revision:profile.revision,identity:profile.identity,reason:'No reviewed established-defect severity band is available for this mapping.'};
   if(technical.result==='refuted'){result.severity={state:'not-applicable',label:'Not applicable to the refuted allegation',reason:'Reported severity is preserved separately.'};return result;}
   if(technical.result!=='supported'||technical.legacy)return result;
-  const claims=draft.claims.filter(c=>technical.supported.includes(c.id)),assessed=claims.filter(c=>c.severityFactors&&bands[c.severityFactors.consequence]);
+  const claims=draft.claims.filter(c=>technical.supported.includes(c.id)),assessed=claims.filter(c=>c.severityFactors&&bands[c.severityFactors.consequence]&&!assessment.optional?.some(d=>d.claimIds?.includes(c.id)));
+  if(assessment.optional?.length)result.severity.reason=assessment.optional.map(d=>d.reason).join(' ');
   if(assessed.length){
     const selected=assessed.sort((a,b)=>names.indexOf(bands[a.severityFactors.consequence])-names.indexOf(bands[b.severityFactors.consequence]))[0],f=selected.severityFactors;
     const conditions=[...new Set([...f.conditions,...f.unknowns,...(assessed.length<claims.length?['Other established defects have unassessed magnitude.']:[])])],band=bands[f.consequence];
@@ -33,11 +34,7 @@ function project(draft,assessment,profile=null){
   return result;
 }
 function remap(assessment,profile){
-  const copy=structuredClone(assessment);copy.engagement={state:'not-assessed',reason:'No engagement rules selected.'};
-  const s=copy.severity;
-  if(profile){copy.engagement={state:'not-assessed',name:profile.name,revision:profile.revision,identity:profile.identity,reason:'No reviewed severity band is available for this mapping.'};
-    if(copy.technical.result==='supported'&&s?.band)copy.engagement={...copy.engagement,state:s.state==='conditional'?'conditional':profile.eligibleBands.includes(s.band)?'eligible':'excluded',label:profile.labels[s.band]||s.band,reason:`${profile.name} (${profile.revision}) ${profile.eligibleBands.includes(s.band)?'includes':'excludes'} the ${s.band} band.`};}
-  return copy;
+  return require('./webview/walkthrough-model').remap(assessment,profile);
 }
 const instruction=`OPTIONAL DIMENSIONS general-audit-v1. Claim kind distinguishes defect, context and impact-qualification; null means not assessed. A true contextual fact cannot keep a refuted defect alive. property.basis may be derived-security-invariant ONLY with derivation: mechanism facts establishing rights/obligations, reason deriving the property, adopted assumptions, credible counterevidence and source evidence IDs. A slogan, suspected implementation, test reproducing behavior or imported policy alone cannot certify intended behavior. Review derivation under existing rule/conditions/counterevidence obligations, including revisions. Do not invent minimum fees, rounding up, deployment, trust or recovery promises.
 severityFactors is optional (null when unavailable). Reuse the SAME reviewed scenario; do not add a request or material question for severity-only information. General Audit v1 maps systemic-irreversible to Critical, material-loss-or-critical-function to High, bounded-harm to Medium, minor-deviation to Low, non-security to Informational; unknown is not Informational. These are qualitative anchors, not universal contest rules. Give affected party/asset, scale, duration/repetition/caps, permissions, economics and actual recovery with relevant evidence. Separate victim loss, profit, capital, fees, principal and yield; do not sum alternative scenarios or assume repetition without a reset mechanism. conditions/unknowns are severity-only qualifications, never a way to hide missing feasibility or material consequence. Conditional premises must be compatible with established guards and source facts. Existing impact/conditions/counterevidence checks review these factors and every changed/removed assertion. Refuted allegations have no established-defect severity. Known/duplicate/reportability and human decisions do not determine technical validity.`;
