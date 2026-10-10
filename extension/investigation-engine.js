@@ -675,7 +675,12 @@ function makeContext(catalog, request, issue) {
     for (const action of draft.actions || []) if (!replaceDiscovery && action.kind === 'code-completion')
       for (const id of action.sourceIds || []) if (!supersededIds.includes(id)) pinned.add(id);
     const knownIds=new Set(units.map(u=>u.id)), retain=value=>{if(typeof value==='string'&&knownIds.has(value))pinned.add(value);else if(value&&typeof value==='object')for(const item of Object.values(value))retain(item);};
-    for(const value of [draft.causal,draft.bindingPlan,draft.property])retain(value);
+    // A private candidate has not replaced the accepted argument. Its newly
+    // cited sources and the original/reviewed removal sources must survive a
+    // new material plan too; they are not unbound discovery neighbors. Repair
+    // moves the previous check into history: its source dependencies still
+    // belong to the same bounded candidate lineage, not optional discovery.
+    for(const value of [draft.causal,draft.bindingPlan,draft.property,draft.reviewCandidate])retain(value);
     const roots = new Set(targets.selected.map(fn => catalog.key(fn))), rootContracts=new Set(targets.selected.map(fn=>fn.contract)), deferred = [];
     const score=unit=>unit.kind==='test-source'?-2:rootContracts.has(unit.contract)?2:/^(?:lib|node_modules)\//.test(unit.source.file)?1:0;
     for (const unit of [...units].sort((a,b)=>score(a)-score(b))) {

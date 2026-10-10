@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.30
+# Checked finding walkthroughs — 0.19.31
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 

@@ -41,9 +41,9 @@ test('a non-daemonizing version child ignoring TERM is killed and the optional p
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-version-')), executable = path.join(folder, 'version-cli'), pidFile = path.join(folder, 'pid');
   fs.writeFileSync(executable, '#!' + process.execPath + '\nrequire("fs").writeFileSync('+JSON.stringify(pidFile)+',String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},100);\n', { mode: 0o700 });
   let pid; t.after(() => { try { if(pid) process.kill(pid,'SIGKILL'); } catch {} fs.rmSync(folder, { recursive: true, force: true }); });
-  const start = Date.now();
+  const start = performance.now();
   const result = await providerIdentity('codex', executable, true); pid = Number(fs.readFileSync(pidFile,'utf8'));
-  assert.ok(Date.now() - start < 3500, 'Version diagnostics must not wait indefinitely for close.');
+  assert.ok(performance.now() - start < 3500, 'Version diagnostics must not wait indefinitely for close.');
   assert.equal(result.version, null); assert.equal(result.versionCleanup.confirmed, true);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });

@@ -1,5 +1,99 @@
 # Bounded fresh quality pilot
 
+## Retained single-case continuation (0.19.31)
+
+This increment starts at `2bbeeb52af53cb04161b82344a9678ee10904bbd`
+(0.19.30). The prospectively selected retained L-66 needed ordinary private
+repair, not another generation or immediate verification. Its full earlier
+checker feedback included actual unread dependencies as well as the already
+corrected checker-attestation instruction. The original four claim groups and
+the corrected interval premise were retained. Reference reasoning is provisional
+source/AI reading, not independent adjudication.
+
+An ordinary material-preparation regression dropped sources referenced only by a
+private candidate. Priority now retains the bounded candidate lineage, including
+original/current evidence and previous checker source references after repair
+moves them into history. Unbound optional discovery can still be deferred.
+The first implementation protected only the current checker: the actual R-to-V
+transition exposed the history variant, which is now covered by a separate
+production-path regression. The smaller V packet below is **lost context**, not
+a compression or speed improvement. The final fix cannot retroactively supply
+that paid V with the omitted code or approve its candidate.
+
+| Actual continuation | Complete request | Provider service | Returned tokens (input/output) | Result |
+| --- | --- | --- | --- | --- |
+| Private repair R | 376,066 bytes / 64 sources | 29.161 s | 129,217 / 794 | Private candidate admitted; 42 notes, four claim groups |
+| Fresh V | 314,067 bytes / 49 sources | 176.115 s | 106,734 / 9,831 | `repair`; no accepted assessment or tutorial |
+
+R added one source note and one premise obligation, but left material obsolete
+“unread/unavailable” explanations elsewhere. Its actual `candidateProblems`
+contained the earlier checker's single premise-attestation complaint, not its
+entire per-note/check feedback; do not claim it received eight explicit rewrite
+instructions. The source requirements named the new local dependencies.
+V identified those inconsistencies,
+the missing calculation source bodies in its actual packet, and genuine remaining
+external-execution/economic uncertainty. Its complete feedback is retained; no
+claim, quote, premise, candidate or checker response was hand-edited. The bounded
+candidate cycle is terminal. A remaining numerical request slot is not permission
+to reset it. No further request was made.
+
+The native terminal screen also reproduced an incorrect “needs verification”
+label and ineffective Continue action. The existing coordinator projection now
+identifies the exact negative check, presents each correction, and suppresses
+terminal continuation without exposing an unchecked tutorial. This changes
+diagnostic presentation, not semantic approval or the publication policy.
+
+Original native 1.2.0 inspection used simulated editor I/O and provider none.
+L-66's actual before/after screen now shows the negative verifier outcome, eight
+separate corrections, no terminal Continue action and no unchecked annotations.
+M-54's compatible saved insufficient/partial assessment retained the same
+technical identity: all 21 blockers remained inspectable, the exact selected code
+row and function header were visible, and Return/camera restoration, 801x600
+blocker navigation and saved reopen made zero requests. Two blocker-group
+navigation samples took 213.4/103.1 ms; these are interaction observations, not
+open-time or throughput measurements. Images received AI-only read-through.
+Neither blocked-state inspection is tutorial playback or observed Cursor
+activation. No supported/refuted checked tutorial was substituted from a fixture.
+
+Final canonical `npm test` was **596/597**, with no skipped assertions. The
+existing 204-job fixed-response control hit its unchanged 120-second batch limit
+at 140 Ready. An isolated repeat reached 143; the same control with the exact
+baseline engine/coordinator modules reached 150 and failed the same bound. This
+does not isolate a new regression or prove its environmental cause. The gate is
+not wholly green; no deadline, concurrency, assertion or publication gate was
+relaxed to change that result. Focused candidate/source-history controls and the
+negative-verifier coordinator/DTO/reopen control passed. An earlier cleanup test
+used wall-clock elapsed time; it now measures the same 3,500 ms bound with the
+monotonic clock, retaining its kill/cleanup assertions. These are deterministic
+host/fixture controls, not further model reviews or source test execution.
+
+Incremental accounting is two reservations/dispatches/completed responses, one
+host-admitted private stage, zero kept verifications and zero publications. L-66
+has five accumulated requests and 803.147 aggregate provider seconds; this
+continuation accounts for 205.275 of those seconds. Its ordinary execution also
+included local indexing/preparation/ingestion: 271.240 seconds total, not a fresh
+import benchmark. Indexing within that run took 15.027 seconds. Receipt-reported
+capacity waits were 23/7 ms; preparation/host scheduling 5,215/3,348 ms. These
+receipt intervals are not extra provider service or monetary estimates.
+The historical six-case denominator below remains unchanged;
+adding this continuation gives 17 requests, 14 completed responses, ten admitted
+stages, the same one checked assessment and zero tutorials.
+
+Configuration stayed CLI-default model, medium effort, two shared slots and the
+existing 240-second deadline per request (Codex CLI 0.162.1). Actual model identity
+and monetary cost were not reported. Both owned process cleanups were confirmed.
+There is no new instruction/schema overhead or capacity change. New local source
+acquisition is not evidence that the author integrated it correctly.
+
+The first real complete-tutorial milestone remains unmet. The next prerequisite
+is a coherent private revision integrating the supplied ownership/map, enable,
+V3/V4 and calculation context into the existing dependent claims, notes, events
+and questions, while preserving genuine external/economic unknowns. It needs a
+legitimate new revision lifecycle and fresh review with the complete protected
+source packet, not replay of the terminal checker or a third request in this run.
+Only after that delivery should a contrasting multi-function/library case be
+attempted; retained L-57 requires its actual external-library convention first.
+
 ## Original-report coverage and real-workflow smoke evaluation (0.19.30)
 
 The implementation starts at `06065822b5b1dbdf278e95fe4aa5d25720fbb3f3`

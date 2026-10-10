@@ -756,9 +756,13 @@ try:
                 assert len(state['providerCalls']) == 0, 'Retained rejection inspection is local, never a repair request.'
                 result['checks'].append('Received rejection has a factual recovery message, no replay disguised as repair and no unaccepted tutorial.')
             if selected_job and selected_job.get('verificationCompletion'):
-                assert 'Full verification completed · walkthrough unavailable.' in status_text
+                correction = selected_job['verificationCompletion'].get('result') == 'repair'
+                assert ('Verifier returned · correction required.' if correction else 'Full verification completed · walkthrough unavailable.') in status_text
                 assert page.locator('.guide-verification-status').is_visible()
-                if selected_job.get('missingInputs'):
+                if selected_job.get('privateCandidateState') == 'terminal':
+                    assert page.get_by_role('button', name='Continue this finding', exact=True).count() == 0
+                    assert 'bounded candidate repair cycle is finished' in status_text
+                if selected_job.get('missingInputs') and not correction:
                     assert page.locator('.guide-current-requirement').evaluate('''node=>{
                       const box=node.getBoundingClientRect(),pane=node.closest('.guide-preparation').getBoundingClientRect();
                       return box.top>=Math.max(0,pane.top)&&box.bottom<=Math.min(innerHeight,pane.bottom)&&box.left>=pane.left&&box.right<=pane.right;
@@ -766,7 +770,7 @@ try:
                 assert 'Verification has not started' not in status_text
                 assert not page.locator('.guide-annotation:visible').count()
                 page.screenshot(path=str(out / 'verification-blocked.png'))
-                result['checks'].append('Completed full verification and withheld publication are distinct in the visible primary status, without unchecked tutorial annotations.')
+                result['checks'].append('The exact verifier outcome and withheld publication are distinct in the visible primary status, without unchecked tutorial annotations or a terminal retry action.')
             questions = (selected_job or {}).get('missingInputs', [])
             if questions:
                 page.locator('.guide-preparation').get_by_role('button', name='Details', exact=True).click()
@@ -801,7 +805,10 @@ try:
                 for problem in selected_job['validationProblems']:
                     assert problem['message'] in text
                     if problem.get('target'):
-                        assert problem['target'] in text
+                        diagnostic = details.locator('[data-blocker-id='+json.dumps(problem['id'])+']')
+                        diagnostic.get_by_text('Exact field and diagnostic', exact=True).click()
+                        assert problem['target'] in diagnostic.inner_text()
+                        diagnostic.get_by_text('Exact field and diagnostic', exact=True).click()
                     if problem.get('file'):
                         action = details.locator('[data-blocker-id='+json.dumps(problem['id'])+']').get_by_role('button', name='Open source in editor', exact=True)
                         assert action.is_visible() and action.is_enabled()

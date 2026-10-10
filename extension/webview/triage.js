@@ -73,12 +73,12 @@
   const sharedAllowanceExhausted = () => Number.isFinite(reportPreparation?.requests) && Number.isFinite(reportPreparation?.requestLimit) && reportPreparation.requests >= reportPreparation.requestLimit;
   const canContinueFinding = () => {
     const job = preparationJob(active);
-    return !localAdmission() && !sharedAllowanceExhausted() && job && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
+    return !localAdmission() && !sharedAllowanceExhausted() && job && job.privateCandidateState!=='terminal' && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
-    job?.verificationCompletion ? 'Review completed · walkthrough blocked' :
+    job?.verificationCompletion?.result==='repair' ? 'Verifier returned · correction required' : job?.verificationCompletion ? 'Review completed · walkthrough blocked' :
     job?.retainedRejection ? 'Received analysis needs correction' : job?.failureKind==='storage' ? 'Response storage needs recovery' : job?.hasPrivateCandidate ? 'Private candidate needs verification' : job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
   function selectedProjection(job=preparationJob(active)){
@@ -248,7 +248,7 @@
       if (selectedJob?.missingInputs?.length) {
         const first = selectedJob.missingInputs[0];
         parent.append(element('h3', '', 'What still needs checking'), element('p', '', `${first.claimId} · ${first.text}`),
-          element('small', 'triage-muted', first.why), element('p', 'triage-muted', selectedJob.retainedRejection?'The received analysis and paid responses are retained, but were not accepted. Local source acquisition is not a completed semantic review.':selectedJob.hasPrivateCandidate?'The private candidate and paid responses are retained. Complete fresh verification is still required.':'The accepted draft and paid responses are retained. Local source acquisition is not a completed semantic review.'));
+          element('small', 'triage-muted', first.why), element('p', 'triage-muted', selectedJob.retainedRejection?'The received analysis and paid responses are retained, but were not accepted. Local source acquisition is not a completed semantic review.':selectedJob.verificationCompletion?.result==='repair'?'The private candidate and paid responses are retained. The verifier requested corrections; the candidate questions below are unaccepted and may themselves need revision.':selectedJob.hasPrivateCandidate?'The private candidate and paid responses are retained. Complete fresh verification is still required.':'The accepted draft and paid responses are retained. Local source acquisition is not a completed semantic review.'));
         const needed = element('details'); needed.append(element('summary', '', 'Evidence needed before this finding can finish'));
         for (const item of selectedJob.missingInputs) {
           needed.append(element('p', '', `${item.claimId} / ${item.id}: ${item.text}`), element('small', 'triage-muted', item.why));
@@ -355,9 +355,11 @@
       const stageLabel = stage => ({ generate: 'Reading code', generating: 'Reading code', challenge: 'Checking the explanation', challenging: 'Checking the explanation', 'locating-code': 'Locating code', 'preparing-local-context':'Checking local preparation (no model request)' })[stage] || stage || 'Reading code';
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
-      if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.published?
+      if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.result==='repair'?
+        'Verifier returned · correction required. No technical assessment or tutorial was accepted.':job.verificationCompletion.published?
         'Full verification completed · checked tutorial available.':'Full verification completed · walkthrough unavailable. The technical assessment and the remaining evidence or presentation blockers are shown separately.'));
-      if(job?.verificationCompletion&&!job.verificationCompletion.published&&job.missingInputs?.length)
+      if(job?.privateCandidateState==='terminal')preparationSurface.append(element('p','guide-status-reason guide-current-requirement','The bounded candidate repair cycle is finished. Inspect the verifier’s corrections and source; continuing unchanged cannot start another request.'));
+      if(job?.verificationCompletion&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.length)
         preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
       if(job?.validationProblems?.length){
         const groups=element('nav','guide-blocker-groups');groups.setAttribute('aria-label','Current blocker groups');

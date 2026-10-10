@@ -186,7 +186,7 @@ class ReportPreparation {
       plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, currentAttempt, verificationCompletion, rejectionHistory, hasPrivateCandidate, retainedRejection, repairAvailable, localRecheckAvailable,assessmentProjection }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,currentAttempt,verificationCompletion,rejectionHistory,hasPrivateCandidate,retainedRejection,repairAvailable,localRecheckAvailable,
+      jobs: jobs.map(({ id, state, stage, reason, digest, outcome, publishedAt, failureKind, missingInputs, validationProblems, currentAttempt, verificationCompletion, rejectionHistory, hasPrivateCandidate, privateCandidateState, retainedRejection, repairAvailable, localRecheckAvailable,assessmentProjection }) => ({ id, state, stage, reason, failureKind, missingInputs, validationProblems,currentAttempt,verificationCompletion,rejectionHistory,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,localRecheckAvailable,
         assessmentProjection:mapped(assessmentProjection),publishable: !!this.artifact(id), digest: this.artifact(id), outcome, publishedAt })),
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
@@ -744,13 +744,17 @@ class ReportPreparation {
     job.assessmentProjection=evaluated?.assessment||(draft.property?policy.evaluate(draft).assessment:require('./technical-assessment').project(draft,draft.publication||{ready:false}));
     job.failureKind = draft.failureKind || null;
     job.hasPrivateCandidate=!!draft.reviewCandidate;
+    job.privateCandidateState=draft.reviewCandidate?.state||null;
+    const candidate=draft.reviewCandidate, feedback=candidate?.verification;
+    const rejectedCheck=feedback?.result==='repair'&&feedback.candidateHash===candidate.candidateHash&&feedback.revisionHash===hash(candidate.revisions)&&
+      (!draft.currentRejection||draft.currentRejection.requestId===feedback.requestId)?feedback:null;
     job.localRecheckAvailable=draft.failureKind==='local-reading'&&!draft.pendingResponse&&!job.correctionHold&&(draft.rejectedProposal?.state!=='repair-dispatched'||draft.rejectedProposal.followup?.state==='pending');
     job.retainedRejection=!job.hasPrivateCandidate&&(!!draft.lastRejected&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'||!!draft.rejectedProposal);
     const repairPending=require('./rejected-proposal').eligible(draft)||require('./rejected-proposal').followupEligible(draft)||
       !draft.reviewCandidate&&(draft.rejectedProposal?.state==='repair-pending'||draft.rejectedProposal?.followup?.state==='pending');
     job.repairAvailable=!!repairPending&&!draft.recoveryRequired&&!['local-reading','storage'].includes(draft.failureKind)&&!job.correctionHold&&['codex','claude'].includes(this.options.configuration().provider)&&
       this.state.resources.requests<this.state.resources.limit&&job.requests<job.requestLimit&&this.options.phaseRemaining?.(job.id)!==false;
-    const validation = draft.currentRejection ? draft.currentRejection.validationProblems : draft.validationProblems?.length ? draft.validationProblems : draft.lastRejected?.validationProblems?.length ? draft.lastRejected.validationProblems : draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
+    const validation = rejectedCheck ? rejectedCheck.problems.map((message,index)=>({code:'CANDIDATE_VERIFICATION_REPAIR',target:'/reviewCandidate',id:hash([rejectedCheck.requestId,candidate.candidateHash,index,message]),message,kind:'structural',group:'Explanation correction',action:'Verifier feedback is not an approved explanation. Correct the named assertions and their dependencies through the supported private revision lifecycle.'})) : draft.currentRejection ? draft.currentRejection.validationProblems : draft.validationProblems?.length ? draft.validationProblems : draft.lastRejected?.validationProblems?.length ? draft.lastRejected.validationProblems : draft.checkpoint?.feedback?.validationProblems?.length ? draft.checkpoint.feedback.validationProblems :
       (draft.publication?.details || []).map(item => ({...item, message:item.reason}));
     job.validationProblems = [...new Map(validation.map(item=>{
       const {code,target,evidenceId,sourceId,line,endLine,oldClaimId,proposedClaimId,actualOwner,allowedOwners,message,action,kind,group,source,id,missingEvidence}=item;
@@ -760,7 +764,7 @@ class ReportPreparation {
     })).values()];
     job.currentAttempt=draft.currentRejection?{requestId:draft.currentRejection.requestId,reviewPurpose:draft.currentRejection.reviewPurpose,phase:draft.currentRejection.phase,verificationStarted:!!draft.reviewCandidate?.verification}:null;
     const verified=(draft.candidateHistory||[]).findLast(item=>item.verification&&item.candidateHash===draft.candidateVerification?.candidateHash);
-    job.verificationCompletion=verified?{requestId:verified.verification.requestId,result:verified.verification.result,at:verified.verification.at,published:draft.publication?.ready===true}:
+    job.verificationCompletion=rejectedCheck?{requestId:rejectedCheck.requestId,result:'repair',at:rejectedCheck.at,published:false}:verified?{requestId:verified.verification.requestId,result:verified.verification.result,at:verified.verification.at,published:draft.publication?.ready===true}:
       require('./technical-assessment').current(draft)?{requestId:draft.technicalReview.requestId,result:draft.technicalReview.result,published:draft.publication?.ready===true}:null;
     const proposals=[...(draft.rejectedProposalHistory||[]),...(draft.rejectedProposal?[draft.rejectedProposal]:[])];
     job.rejectionHistory=proposals.flatMap(proposal=>[

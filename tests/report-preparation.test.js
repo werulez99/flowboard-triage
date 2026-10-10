@@ -234,6 +234,29 @@ async function seedCorrectionRace(t) {
   assert.equal(engine.read(f.root,'I-1').reviewCandidate.state,'awaiting-verification');
   assert.equal(f.calls.length,2);return f;
 }
+test('completed negative candidate verification exposes exact feedback and a terminal cycle on reopen without more requests',{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t),problems=['Clarify the guard condition without changing the reported scope.','Do not describe a reverted intermediate effect as committed.'];
+  f.options.invoke=async (input,options)=>{
+    f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
+    const value=input.candidateOnly?candidatePatch(response({...input,checkOnly:false})):checkedCandidate(input);
+    if(input.checkOnly){value.result='repair';value.problems=problems;}
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId}};
+  };
+  await f.runner.continueFinding('I-1');
+  assert.equal(engine.read(f.root,'I-1').reviewCandidate.state,'repair-requested');
+  await f.runner.continueFinding('I-1');
+  const draft=engine.read(f.root,'I-1'),job=f.runner.state.jobs['I-1'];
+  assert.equal(draft.reviewCandidate.state,'terminal',draft.error);
+  assert.equal(job.privateCandidateState,'terminal');assert.equal(job.verificationCompletion.result,'repair');
+  assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').privateCandidateState,'terminal','The ordinary webview DTO must carry lifecycle eligibility, not only the private journal.');
+  assert.equal(job.verificationCompletion.published,false);assert.equal(job.assessmentProjection.technical.result,'not-assessed');
+  assert.deepEqual(job.validationProblems.map(p=>p.message),problems);assert.ok(job.validationProblems.every(p=>p.code==='CANDIDATE_VERIFICATION_REPAIR'));
+  const calls=f.calls.length,used=job.requests,exact=structuredClone(draft.reviewCandidate);
+  f.options.configuration=()=>({provider:'none'});await f.runner.ensure();
+  assert.equal(f.calls.length,calls);assert.equal(f.runner.state.jobs['I-1'].requests,used);assert.deepEqual(engine.read(f.root,'I-1').reviewCandidate,exact);
+  const mismatched=structuredClone(draft);mismatched.reviewCandidate.verification.candidateHash='other-artifact';const projected={};
+  f.runner.recoveryStatus(projected,mismatched);assert.equal(projected.verificationCompletion,null,'A received check cannot be attributed to another candidate.');
+});
 function correctThroughBoard(f) {
   const model={id:'I-1',investigationDraft:engine.read(f.root,'I-1')};
   const board={root:f.root,callbacks:{reportPreparation:()=>f.runner},investigationCurrent:()=>true,publishInvestigation:async(m,d)=>m.investigationDraft=d};
