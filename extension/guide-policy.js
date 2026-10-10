@@ -9,6 +9,7 @@ function digest(draft) {
     property: draft.property, claims: draft.claims, evidence: draft.evidence, sources: draft.sources,
     causal: draft.causal, walkthrough: draft.walkthrough, conclusion: draft.conclusion, dependencies: draft.dependencies,
     semanticInput: draft.semanticInput, inputReviews: draft.inputReviews, ...(draft.bindingPlan ? { bindingPlan: draft.bindingPlan } : {}),
+    ...(draft.reportCoverage?{reportCoverage:draft.reportCoverage,reportReview:draft.reportReview}:{}),
     ...(require('./technical-assessment').observations(draft).length?{observations:require('./technical-assessment').observations(draft)}:{}),
     ...(draft.candidateVerification ? { candidateVerification: draft.candidateVerification } : {}) })).digest('hex');
 }
@@ -56,6 +57,7 @@ function gate(draft) {
   if(!draft.property||!Array.isArray(draft.claims)||!Array.isArray(draft.evidence)||!Array.isArray(draft.sources))
     return {ready:false,policy:POLICY,problems:['The saved analysis is missing its canonical argument fields. No checked assessment or layout remedy is available.'],details:[{kind:'structural',code:'ARGUMENT_INCOMPLETE',reason:'Canonical property, claims, evidence and source collections are required.'}]};
   const technical=require('./technical-assessment'),optionalDetails=[];
+  for(const item of require('./report-coverage').details(draft))fail(item.reason,item.kind,item.target,item);
   if(technical.pendingObservations(draft).length&&!technical.current(draft))fail('Execution observations have changed since the retained substantive review. Interpret their assertions and setup before publishing a current walkthrough.','material-evidence','experiments',{code:'OBSERVATION_REVIEW_REQUIRED'});
   const resolved = require('./event-source').resolver(draft);
   for (const problem of require('./semantic-input').problems(draft, false, resolved)) fail(problem, 'structural',null,{code:'PREMISE_REVIEW_INVALID'});
@@ -167,7 +169,7 @@ function expose(draft, report = null, evaluation=null) {
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
   for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
-  for (const field of ['causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
+  for (const field of ['reportCoverage','reportReview','causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   delete copy.technicalReview;delete copy.technicalReviewHistory;
   copy.assessmentProjection=evaluated.assessment;

@@ -2,7 +2,7 @@
   "name": "flowboard-triage",
   "displayName": "Flowboard Triage",
   "description": "Review a Solidity finding with source cards and evidence notes in Solidity Flowboard.",
-  "version": "0.19.29",
+  "version": "0.19.30",
   "publisher": "local",
   "repository": { "type": "git", "url": "https://github.com/werulez99/flowboard-triage.git" },
   "bugs": { "url": "https://github.com/werulez99/flowboard-triage/issues" },
@@ -36,6 +36,15 @@
         "flowboardTriage.codexPath": {
           "type": "string", "default": "", "scope": "machine",
           "description": "Absolute Codex CLI path without arguments. Empty uses codex on PATH. Requires authenticated CLI supporting ignore-user-config, ephemeral and structured output. Only direct, non-daemonizing CLIs are supported; wrappers that detach workers from the owned process group are unsupported."
+        },
+        "flowboardTriage.codexModel": {
+          "type":"string", "default":"", "scope":"resource", "maxLength":100,
+          "pattern":"^$|^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$",
+          "description":"Explicit Codex model identifier. Empty preserves the CLI default with user configuration ignored. Account availability is not proved locally; a rejection never silently downgrades. Does not regenerate saved findings or increase shared concurrency."
+        },
+        "flowboardTriage.codexReasoningEffort": {
+          "type":"string", "enum":["none","minimal","low","medium","high","xhigh"], "default":"medium", "scope":"resource",
+          "description":"Requested Codex reasoning effort. The installed CLI flags are checked locally; support depends on the chosen model/account and is not guaranteed. Existing in-flight requests keep their captured settings."
         },
         "flowboardTriage.claudePath": {
           "type": "string", "default": "", "scope": "machine",

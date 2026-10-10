@@ -3,18 +3,29 @@
 // Fixtures still pass through the exact new enforced schema and engine path.
 function encode(value, input) {
   const contract=require('../../extension/authoring-contract');
+  if(input.reportCoverageContract&&(value?.claims?.length||input.earlierDraft?.reportCoverage)){
+    value=structuredClone(value);const plain=require('../../extension/packet-context').expand(input),coverage=require('../../extension/report-coverage');
+    const map=value.reportCoverage||plain.earlierDraft?.reportCoverage||{version:coverage.VERSION,reportHash:plain.semanticInput.originalReport.sha256,
+      dispositions:plain.finding.reportParagraphs.map((p,i)=>({id:'fixture-scope-'+i,paragraphId:p.id,start:0,end:p.text.length,kind:'claim',claimIds:[value.claims[0].id],duplicateOf:'',reason:'Fictional fixture assertion is represented by this claim.'}))};
+    const original=plain.candidateRevisions?.changes.find(c=>c.path==='/reportCoverage')?.before??plain.earlierDraft?.reportCoverage;
+    const review=input.phase==='generate'?null:{reportHash:map.reportHash,reviewedIds:[...new Set([...(original?.dispositions||[]),...map.dispositions].map(d=>d.id))],changes:coverage.changes(original,map).map(c=>({...c,reason:'Fixture reviewed the exact scope change.'})),reason:'Deterministic fixture reviewed original wording and all scope dispositions.'};
+    if(value.claims){value.reportCoverage=map;value.reportReview=review;}
+    else if(!input.candidateOnly)value.reportReview=review;
+  }
   // Deterministic old fixtures decline new dimensions explicitly. This is
   // never used for paid replay or production normalization.
   if(input.assessmentContract&&value?.claims){value=structuredClone(value);value.property.derivation??=null;for(const claim of value.claims){claim.kind??=null;claim.severityFactors??=null;}}
   if(input.authoringFormat!==contract.VERSION)return value;
   if(value?.claims&&value?.causal){const full=structuredClone(value);if(full.walkthrough)delete full.walkthrough.steps;
-    value={mode:input.candidateOnly?'candidate-patch-v1':'review-patch-v1',updates:Object.entries(full).filter(([key])=>!['inputReviews','explanationReviews','bindingFormat'].includes(key)).map(([key,item])=>({path:'/'+key,valueJSON:JSON.stringify(item)})),
+    value={mode:input.candidateOnly?'candidate-patch-v1':'review-patch-v1',updates:Object.entries(full).filter(([key])=>!['inputReviews','explanationReviews','reportReview','bindingFormat'].includes(key)).map(([key,item])=>({path:'/'+key,valueJSON:JSON.stringify(item)})),
+      ...(input.reportCoverageContract&&!input.candidateOnly?{reportReview:full.reportReview}:{}),
       inputReviews:full.inputReviews||[],explanationReviews:full.explanationReviews||[],checks:full.causal.checks||[]};
     if(input.candidateOnly){delete value.inputReviews;delete value.explanationReviews;delete value.checks;}
   }
   if(!['candidate-patch-v1','review-patch-v1'].includes(value?.mode))return value;
   const plain=require('../../extension/packet-context').expand(input),format=require('../../extension/challenge-format'),provider=require('../../extension/semantic-provider');
-  const canonical=plain.bindingFormat?require('../../extension/source-bindings').schema(provider.schema):provider.schema,full=provider.fullSchema(plain);
+  const canonical=structuredClone(plain.bindingFormat?require('../../extension/source-bindings').schema(provider.schema):provider.schema),full=provider.fullSchema(plain);
+  if(plain.reportCoverageContract)canonical.required.push('reportCoverage','reportReview');else{delete canonical.properties.reportCoverage;delete canonical.properties.reportReview;}
   const after=value.mode===format.CANDIDATE?format.candidate(value,plain.earlierDraft,canonical):format.assemblePatch(value,plain.earlierDraft,canonical);
   if(input.assessmentContract){after.property.derivation??=null;for(const claim of after.claims){claim.kind??=null;claim.severityFactors??=null;}}
   const lookup=(root,path)=>path.split('/').slice(1).reduce((v,key)=>Array.isArray(v)?v.find(i=>i.id===key):v?.[key],root);
@@ -29,7 +40,7 @@ function encode(value, input) {
     else for(const target of group.paths)if(lookup(after,target)!==undefined&&!edits.some(e=>target.startsWith(e.target+'/'))&&!same(lookup(plain.earlierDraft,target),lookup(after,target)))edits.push({op:'set',target,value:lookup(after,target)});
   }
   for(const target of contract.catalog(plain,full).removals)if(!lookup(after,target))edits.push({op:'remove',target});
-  const result={mode:plain.candidateOnly?contract.CANDIDATE:contract.REPAIR,edits,...(!plain.candidateOnly?{inputReviews:value.inputReviews||[],explanationReviews:value.explanationReviews,checks:value.checks}:{})};
+  const result={mode:plain.candidateOnly?contract.CANDIDATE:contract.REPAIR,edits,...(!plain.candidateOnly?{...(plain.reportCoverageContract?{reportReview:value.reportReview}:{}),inputReviews:value.inputReviews||[],explanationReviews:value.explanationReviews,checks:value.checks}:{})};
   require('node:assert/strict').equal(format.valid(result,provider.responseSchema(input)),true,'Fixture must use the actual provider-enforced edit schema.');
   return result;
 }

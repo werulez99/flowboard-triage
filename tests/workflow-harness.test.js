@@ -141,7 +141,7 @@ test('normal selection invokes generation and cancels superseded work without le
       evidence: [], transitions: [], questions: [], conclusion: { status: 'insufficient-evidence', text: 'Unresolved controlled fixture.', limitations: ['Not a real provider result.'] } },
       audit: { phase: input.phase, provider: 'controlled-test-fixture', outcome: 'completed' } };
   };
-  engine.advance = options => original({ ...options, invoke: (input, config) => new Promise(resolve => pending.push({ input, signal: config.signal, release: () => resolve(result(input)) })) });
+  engine.advance = options => original({ ...options, invoke: require('../scripts/fixtures/authoring-output').invoke((input, config) => new Promise(resolve => pending.push({ input, signal: config.signal, release: () => resolve(result(input)) }))) });
   t.after(() => { engine.advance = original; for (const job of pending) job.release(); });
   const host = await start({ provider: 'codex' }); t.after(() => host.close());
   const { open, waitFor, request } = await client(host);

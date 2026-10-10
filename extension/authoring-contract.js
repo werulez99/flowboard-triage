@@ -7,7 +7,7 @@ const VERSION = 'source-edits-v2';
 const CANDIDATE = 'candidate-edit-v2', REPAIR = 'review-edit-v2';
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const readOnly = new Set(['inputReviews', 'explanationReviews', 'bindingFormat', 'checks']);
+const readOnly = new Set(['inputReviews', 'explanationReviews', 'reportReview', 'bindingFormat', 'checks']);
 const safeId = id => typeof id === 'string' && !!id && !/[\/~]/.test(id) && !['__proto__','constructor','prototype'].includes(id);
 function catalog(input, full) {
   const plain = require('./packet-context').expand(input), previous = plain.earlierDraft;
@@ -74,7 +74,7 @@ function schema(input, full) {
   return shareSchema(object({ mode: { enum: [input.candidateOnly ? CANDIDATE : REPAIR] },
     edits: { type: 'array', maxItems: 80, items: { anyOf: alternatives } },
     ...(!input.candidateOnly ? { ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
-      explanationReviews: full.properties.explanationReviews, checks: full.properties.causal.properties.checks } : {}) }));
+      ...(full.required.includes('reportCoverage')?{reportReview:require('./report-coverage').reviewSchema}:{}),explanationReviews: full.properties.explanationReviews, checks: full.properties.causal.properties.checks } : {}) }));
 }
 function problem(code, target, message, extra = {}) { return { code, target, message, ...extra }; }
 function collectionBounds(value, shape, path = '', entries = [], template = false) {
@@ -239,6 +239,7 @@ function compile(value, input, full, units) {
     }else container[key]=update.value;
   }
   output.inputReviews=value.inputReviews||[];output.explanationReviews=value.explanationReviews||[];output.causal.checks=value.checks||[];
+  if(output.reportCoverage)output.reportReview=value.reportReview??null;
   if(!format.valid(output,full)){
     const previous=new Map(collectionBounds(plain.earlierDraft,full).map(item=>[item.path,item.current]));
     const bounds=collectionBounds(output,full).filter(item=>item.current>item.maximum).map(item=>problem('EDIT_CAPACITY',item.path,

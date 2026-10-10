@@ -11,7 +11,7 @@ function identity(provider, options = {}) {
   // Raw paths, prompts, source, stdout, credentials and environment values are
   // never copied into this cross-project status file.
   return crypto.createHash('sha256').update(JSON.stringify({ provider, executable: options.executable || provider,
-    configuration: provider === 'codex' ? 'isolated-medium-v1' : 'isolated-budget-v1' })).digest('hex').slice(0, 24);
+    configuration: provider === 'codex' ? require('./provider-settings').explicit(options)?require('./provider-settings').resolve(options):'isolated-medium-v1' : 'isolated-budget-v1' })).digest('hex').slice(0, 24);
 }
 function files(provider, options) {
   const root = localDirectory(options.directory), key = identity(provider, options);
@@ -22,7 +22,7 @@ function read(file) {
     const observed = ownership.snapshot(file);
     if (observed) {
       const value = observed.entry;
-      if (!value || value.version !== 1 || !Array.isArray(value.failures) || value.failures.some(item => !item || typeof item.requestId !== 'string' || !Number.isFinite(Date.parse(item.at))) ||
+      if (!value || value.version !== 1 || !Array.isArray(value.failures) || value.failures.some(item => !item || typeof item.requestId !== 'string' || !Number.isFinite(Date.parse(item.at)) || item.job!=null&&!/^[a-f0-9]{64}$/.test(item.job)) ||
           value.openedAt !== null && !Number.isFinite(Date.parse(value.openedAt))) throw unavailable('Provider health data is incomplete. Automatic requests are stopped; preserve the file and repair local provider state before retrying.');
       return value;
     }
@@ -77,9 +77,14 @@ async function record(provider, audit, options = {}) {
       return { ...previous, lastSuccessAt: finishedAt, ...(previous.openedAt ? {} : { failures: [] }) };
     }
     const failures = previous.failures.filter(value => time - Date.parse(value.at) <= WINDOW_MS && value.requestId !== requestId);
-    failures.push({ requestId, at: finishedAt, kind: audit.failureKind, phase: audit.phase, inputBytes: audit.inputBytes ?? null });
-    const open = previous.openedAt || failures.length >= THRESHOLD;
-    return { ...previous, failures: failures.slice(-THRESHOLD), openedAt: previous.openedAt || (open ? finishedAt : null),
+    const job=options.jobKey&&audit.teardown?.confirmed===true?crypto.createHash('sha256').update(options.jobKey).digest('hex'):null;
+    failures.push({ requestId, at: finishedAt, kind: audit.failureKind, phase: audit.phase, inputBytes: audit.inputBytes ?? null,job });
+    // Repeated cleanly settled deadlines on one finding are job-local evidence,
+    // not two independent signs of an account outage. Unknown legacy attribution
+    // and non-timeout transport failures retain the conservative circuit rule.
+    const signals=new Set(failures.map(f=>f.kind==='timeout'&&f.job?'timeout:'+f.job:'request:'+f.requestId));
+    const open = previous.openedAt || signals.size >= THRESHOLD;
+    return { ...previous, failures: failures.slice(-16), openedAt: previous.openedAt || (open ? finishedAt : null),
       reason: open ? failures.every(value => value.kind === failures[0].kind) ? failures[0].kind : 'repeated transport failures' : null };
   });
 }

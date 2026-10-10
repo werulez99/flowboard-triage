@@ -656,6 +656,7 @@
     const part = (heading, key) => { const node = element('section', 'guide-ai-part'); node.dataset.part = key; node.append(element('h3', '', heading)); opinion.append(node); return node; };
     const result = part('Scoped technical assessment', 'assessment');
     result.append(element('strong', `guide-result ${assessment.result}`, assessment.label), element('small', 'triage-muted', 'AI opinion · your saved judgment is separate'));
+    if(draft.assessmentProjection?.technical.reportAssurance)result.append(element('small','triage-muted',draft.assessmentProjection.technical.reportAssurance));
     const why = part('Why', 'why'); why.append(element('p', '', assessment.why));
     if (draft?.snapshot&&readyDraft(draft)) {
       const scope = element('details'); scope.append(element('summary', '', 'Checked scope and code version'));

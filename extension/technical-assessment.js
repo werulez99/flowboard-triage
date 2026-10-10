@@ -7,7 +7,7 @@ const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).dige
 const presentationCodes=new Set(['READING_ORDER']);
 const presentation=detail=>presentationCodes.has(detail.code);
 function coreIdentity(draft){return hash([VERSION,draft.snapshot,draft.semanticInput,draft.corrections,draft.sources,
-  content.project(draft),draft.inputReviews,draft.explanationReviews,draft.causal?.checks,draft.bindingPlan,draft.candidateVerification]);}
+  content.project(draft),draft.inputReviews,draft.explanationReviews,draft.causal?.checks,draft.bindingPlan,draft.candidateVerification,...(draft.reportCoverage?[draft.reportReview]:[])]);}
 // Execution evidence is not a verdict. Exclude incidental clocks, gas and log
 // formatting; retain the exact recorded assertion result and its test/setup.
 function observations(draft){return (draft.experiments||[]).filter(e=>
@@ -51,9 +51,10 @@ function aggregate(draft,withheld=new Set()){
     return{id:c.id,result:defect?'supported':refuted?'refuted':'insufficient-evidence',reason:c.reason,evidence:c.evidence||[],unknowns:c.unknowns||[]};
   });
   const supported=claims.filter(c=>c.result==='supported'),unknown=claims.filter(c=>c.result==='insufficient-evidence');
-  const result=supported.length?'supported':claims.length&&!unknown.length?'refuted':'insufficient-evidence';
-  const complete=claims.length>0&&!unknown.length&&!(draft.conclusion?.limitations?.length);
-  return{result,coverage:complete?'complete':'partial',claims,supported:supported.map(c=>c.id),unresolved:unknown.map(c=>c.id),
+  const reportUnknown=require('./report-coverage').unresolved(draft);
+  const result=supported.length?'supported':claims.length&&!unknown.length&&!reportUnknown.length?'refuted':'insufficient-evidence';
+  const complete=claims.length>0&&!unknown.length&&!reportUnknown.length&&!(draft.conclusion?.limitations?.length);
+  return{result,coverage:complete?'complete':'partial',claims,supported:supported.map(c=>c.id),unresolved:[...unknown.map(c=>c.id),...reportUnknown.map(d=>'report:'+d.id)],
     label:result==='supported'?(complete?'Defect established in the assessed scope':'Defect established · additional alleged scope unresolved'):
       result==='refuted'?'Refuted in the assessed scope':'Insufficient evidence for the complete allegation'};
 }
@@ -130,7 +131,8 @@ function project(draft,publication){
   base.technical={...a,why:decisive.map(c=>c.reason).filter(Boolean).join(' '),remaining:[...new Set([
     ...a.claims.flatMap(c=>c.unknowns),...(draft.conclusion?.limitations||[]),...details.filter(d=>!presentation(d)&&d.kind!=='structural').map(d=>d.reason)])],
     evidence:decisive.filter(c=>!withheld.has(c.id)).flatMap(c=>c.evidence).filter((id,i,ids)=>ids.indexOf(id)===i).map(id=>draft.evidence.find(e=>e.id===id)).filter(Boolean).map(e=>({id:e.id,claimId:e.claimId,claimTitle:draft.claims.find(c=>c.id===e.claimId)?.allegation||e.claimId,sourceName:draft.sources.find(u=>u.id===e.sourceId)?.name,stance:e.stance,note:e.note,source:e.source,sourceId:e.sourceId})),
-    identity:received(draft)?draft.technicalReview.identity:publication.digest,legacy:!received(draft)};
+    identity:received(draft)?draft.technicalReview.identity:publication.digest,legacy:!received(draft),
+    reportAssurance:draft.reportCoverage?'Original report dispositions received fresh scope review. This is not independent adjudication.':'Legacy assurance: authored claims were checked; an original-report omission review was not recorded.'};
   if(pending.length)base.technical.remaining.unshift('New execution observations require interpretation for: '+draft.claims.filter(c=>withheld.has(c.id)).map(c=>c.allegation||c.id).join('; ')+'. Unaffected checked statements are retained.');
   base.artifact={findingId:draft.findingId,identity:base.technical.identity,revision:draft.revision,sourceDigest:draft.snapshot?.sourceDigest,reportHash:draft.snapshot?.reportHash};
   return base;

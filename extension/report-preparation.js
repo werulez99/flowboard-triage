@@ -165,7 +165,7 @@ class ReportPreparation {
         const latest = p.readWorkspaceJson(this.root, FILE, 8 * 1024 * 1024);
         if (hash(latest) !== this.savedJournalHash) { this.localAdmissionFailure('Another host updated this report. Reopen it before applying a control; its journal was preserved.'); return; }
       }
-      this.aggregate(); this.state.updatedAt = now(); p.atomicJson(this.root, FILE, this.state); this.savedJournalHash = hash(this.state);
+      this.aggregate(); this.state.updatedAt = now(); this.savedJournalHash = p.atomicJson(this.root, FILE, this.state, { compact: true });
     }
     finally { if (temporary) this.unlock(); }
     this.notifyStatus(); }
@@ -351,7 +351,7 @@ class ReportPreparation {
     }
     if (retry) { this.state.mode = 'running'; this.state.reason = ''; this.state.resources.limit = Math.max(this.state.resources.limit, this.state.resources.requests + Math.max(1, config.requestLimit || entries.filter(entry => !this.state.jobs[entry.id].publishable).length * (config.findingRequestLimit || 6))); }
     if (retry && ['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
-      await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable });
+      await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable,model:config.model,reasoningEffort:config.reasoningEffort });
     this.save();
     if (this.expired()) {
       this.expire();
@@ -441,7 +441,7 @@ class ReportPreparation {
         this.admitting.set(id, intent);
         try {
           if (['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
-            await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable });
+            await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable,model:config.model,reasoningEffort:config.reasoningEffort });
           if (this.disposed || !this.ownsLock() || intent.revision !== this.controlRevision || intent.epoch !== this.epoch ||
               this.admitting.get(id) !== intent || this.state.jobs[id] !== job || this.tasks.has(id) || job.publishable ||
               this.options.dirty?.(id) || this.options.configuration().provider !== config.provider ||
@@ -635,7 +635,7 @@ class ReportPreparation {
     };
     try {
       draft = await engine.advance({ root: this.root, catalog, request, issue, findingId: entry.id, draft,
-        provider: config.provider, executable: config.executable, budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
+        provider: config.provider, executable: config.executable, model:config.model,reasoningEffort:config.reasoningEffort,budget: config.budget, signal: abort.signal, current, invoke: this.options.invoke,
         providerResources: { ...this.options.providerResources, capacity: batch.capacity(config.providerCapacity) }, yieldAfterStage: true, localOnly, preparationOnly, prepareRequest: this.options.prepareRequest, candidateSeed: this.options.candidateSeed?.(entry.id), recoveryReservation: job.lastReservation,
         beforeRequest: async data => {
           const phases = this.options.phasePlan?.(entry.id);

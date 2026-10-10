@@ -67,8 +67,29 @@ function verification(input) {
   const value={result:'kept',problems:[],inputReviews:fixed({...input,checkOnly:true}).inputReviews,
     explanationReviews:input.earlierDraft.evidence.map(e=>({evidenceId:e.id,result:old.has(e.id)?old.get(e.id)?'repaired':'added':'kept',reason:e.explanation,checkedSourceIds:[e.sourceId,...(old.get(e.id)?[old.get(e.id).sourceId]:[])]})),
     checks:[...capacity.targets(input.earlierDraft.causal).map(t=>t.key),...(input.candidateRevisionTargets||[])].map(target=>({target,reason:'The uncaught false approval reverts this invocation and its intermediate writes; branch inputs remain bounded as reported.',evidence:input.earlierDraft.claims[0].evidence,documentation:[]}))};
-  return value;
+  return fixtureAuthoring.encode(value,input);
 }
+test('ordinary candidate V freshly reviews original-to-current report disposition changes, not only current IDs',{skip:!native},async t=>{
+  for(const omit of [false,true]){
+    const f=await fixture(t);await generation(f);
+    await engine.advance({...f,invoke:async input=>{
+      const value=proposal(input),map=structuredClone(input.earlierDraft.reportCoverage);
+      map.dispositions[0].reason+=' The original reported route is retained without narrowing.';
+      value.updates.push({path:'/reportCoverage',valueJSON:JSON.stringify(map)});
+      return{value,audit:{phase:'challenge',outcome:'completed',requestId:'C-scope'}};
+    }});
+    assert.equal(f.draft.reviewCandidate.state,'awaiting-verification');
+    await actualEngine.advance({...f,invoke:async input=>{
+      const value=verification(input);assert.deepEqual(value.reportReview.changes.map(c=>c.kind),['changed']);
+      assert.ok(input.candidateRevisionTargets.some(t=>t.includes('reportCoverage')));
+      if(omit)value.reportReview.changes=[];
+      return{value,audit:{phase:'challenge',outcome:'completed',requestId:'V-scope'}};
+    }});
+    assert.equal(f.draft.phase==='ready',!omit,f.draft.error);
+    if(omit){assert.match(f.draft.error,/disposition|report/i);assert.ok(f.draft.pendingResponse);assert.equal(f.draft.reviewCandidate.verification,null);}
+    else{const reopened=engine.read(f.root,f.findingId);assert.equal(reopened.reportReview.changes[0].kind,'changed');}
+  }
+});
 test('private reading-order defect survives candidate progression and both pre-V boundaries without losing technical review',{skip:!native},async t=>{
   const f=await fixture(t);await generation(f);let count=0;
   await engine.advance({...f,invoke:async input=>{count++;const value=proposal(input);value.updates.push({path:'/causal/order',valueJSON:'[]'});return{value,audit:{phase:'challenge',outcome:'completed',requestId:'C-order'}};}});

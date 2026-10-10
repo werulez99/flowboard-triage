@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const engine = require('../extension/investigation-engine');
+const implementation = require('../extension/investigation-engine');
+const fixtureAuthoring=require('../scripts/fixtures/authoring-output');
+const engine={...implementation,advance:options=>implementation.advance({...options,invoke:fixtureAuthoring.invoke(options.invoke)})};
 const { analyze } = require('../extension/runner-adapter');
 const { SourceCatalog } = require('../extension/source');
 const { loadCompiler } = require('../extension/compiler-context');
@@ -77,7 +79,7 @@ test('normal investigation advances generation, bounded source checks and challe
       assert.equal(saved.phase, input.phase === 'generate' ? 'generating' : 'challenging', 'Draft is saved BEFORE the provider is invoked.');
       return { value: response(input), audit: { phase: input.phase, provider: 'controlled-test-fixture', outcome: 'completed' } };
     } });
-  assert.deepEqual(invocations, ['generate', 'challenge']);
+  assert.deepEqual(invocations, ['generate', 'challenge'],result.error);
   // Durable acceptance checkpoints may repeat the same real stage. Preserve
   // ordering and the separate exact two-provider-request assertion above.
   assert.deepEqual(phases.filter((phase, index) => !index || phase !== phases[index - 1]), ['generating', 'checking-source', 'challenging', 'blocked']);
@@ -149,7 +151,7 @@ test('cross-claim references are rejected precisely without filtering the answer
   const f=await fixture(t);let calls=0,original;
   const result=await engine.advance({...f,provider:'codex',publish:async()=>{},invoke:async input=>{
     calls++;const value=response(input);value.claims.push({...structuredClone(value.claims[0]),id:'second-claim'});
-    value.transitions.push({...structuredClone(value.transitions[0]),id:'second-transition',claimId:'second-claim',evidence:['addition','missing-note']});original=structuredClone(value);
+    value.transitions.push({...structuredClone(value.transitions[0]),id:'second-transition',claimId:'second-claim',evidence:['addition','missing-note']});original=fixtureAuthoring.encode(value,input);
     return {value,audit:{phase:'generate',outcome:'completed'}};
   }});
   assert.equal(calls,1);assert.equal(result.failureCode,'REVIEW_REFERENCE_SCOPE');

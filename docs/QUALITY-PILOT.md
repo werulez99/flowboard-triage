@@ -1,5 +1,148 @@
 # Bounded fresh quality pilot
 
+## Original-report coverage and real-workflow smoke evaluation (0.19.30)
+
+The implementation starts at `06065822b5b1dbdf278e95fe4aa5d25720fbb3f3`
+(0.19.29), preserving v41 evidence browsing, scoped freshness and profile recovery.
+New imported generations carry bounded `report-coverage-v1` dispositions over
+the exact original paragraphs. The same fresh challenge reviews all original and
+current disposition identities and their changes. Unrepresented text is rejected;
+reviewed unresolved original scope prevents complete coverage/refutation/Ready,
+without erasing independent support. Host range/reference checks are not proof of
+semantic completeness. Legacy guides retain explicitly labeled claim-level
+assurance; no omission review is invented for them. Standalone requests with no
+original imported report do not manufacture a report identity from a summary.
+
+Production controls cover an original two-route report with both functions
+supplied but only one route represented, reviewed unresolved second scope,
+independent support, complete refutation, repeated/proposed text, a late
+qualification and changed disposition/premise identity. Candidate/checker
+attestations stay separate. A negative checker response is validated against the
+actual sent schema before it can open the existing bounded repair lifecycle.
+
+Codex model/effort preferences use validated argument arrays and local installed
+CLI flag inspection, not a probe or arbitrary user configuration. Requested and
+observed model identities remain distinct. Shared account slots are unchanged.
+The ordinary coordinator control attributes two cleanly settled timeouts from
+one finding to one health signal; healthy peers continue. Independent failures
+still open the finite stop, and late success cannot clear it or cleanup quarantine.
+
+One measured local optimization removes duplicate serialization of the report
+journal. Compact persistence returns the hash of exactly the serialized values;
+the existing optimistic ownership hash, atomic replacement, old-format reads,
+corruption checks and all receipts remain. On one immutable six-job journal,
+30 paired serialization/hash samples averaged 6.72 ms before / 3.00 ms after;
+bytes were 307,469 / 198,994. This excludes disk I/O and is not a batch or model
+speedup. Other CPU-heavy processes were present. Live evaluation used a separately
+frozen build, so this persistence-only improvement did not modify in-flight work.
+
+Complete-request contract comparisons on unchanged retained 12-source generation
+and 40-source verification inputs added 3,744 and 3,244 bytes respectively
+(including instructions/schema). Old-input compatible generation was unchanged;
+the checker instruction clarification alone added 456 bytes. The final scope
+instruction also explicitly distinguishes unchanged candidates from their changed
+original-reference dispositions (215 bytes beyond the first v42 measurement).
+These in-memory
+comparisons did not dispatch archived input. Actual disposition/prior-draft growth
+is additional; bytes are not token estimates or comprehension evidence.
+
+The native fixture acceptance remains ordinary importer/coordinator/storage and
+original native 1.2.0, with simulated editor I/O and fixed fictional responses.
+Ready exploration inspected exact late comment/multiline ranges at 1440x900 and
+801x600, dark/light, with all original function rows, readable adjacent explanation,
+reachable tail and Return. Retained-revision mapping, invalid-profile withdrawal,
+repair, human caret and reader position passed with zero navigation/remapping
+provider callbacks. Six open/Return samples were 212-505 / 104-203 ms; one invalid
+profile update/repair took 65/93 ms with no indexing. Four fixture callbacks
+created two explicit revisions; none were live provider requests. Screenshots were
+read by AI only, not a human usability study or observed installed Cursor session.
+
+The real smoke cohort was frozen before responses: six distinct imported findings
+from one available versioned codebase, including a configuration/documentation
+discrepancy, accounting/refutation routes, delayed settlement/recovery, independent
+scope and missing external/property facts. The first two used the frozen 0.19.29
+baseline. Reference reasoning is provisional source/AI author reasoning, not
+independent adjudication; subsequent issue labels were not substituted for source
+proof or used to replace failed cases. A second independently referenced codebase
+and a human reader were unavailable. There is no model-accuracy estimate or human
+comprehension study. The selected source and original report were preserved;
+all paid inputs, outputs and receipts remain private. The old pilot was untouched.
+
+Observed failure causes must remain distinct: the early checker requested author
+attestations that a private candidate deliberately cannot contain (instructions
+now clarify the fresh checker's obligation); another candidate selected an
+internal-library binding for an external library operation, which the host
+correctly stopped before verification; one generation's literal source span was
+invalid; three stages reached their finite deadline without a final answer. These
+are not refutations. The scope-aware checker also detected compound assertion
+dispositions requiring explicit separation. Agreement alone and successful local
+assembly remain insufficient for publication.
+
+The current provider remained Codex CLI 0.162.1, CLI-default model selection,
+medium reasoning, isolated configuration and disabled tools, at the existing
+240-second request deadline and two shared slots. Requested default selection is
+not an observed model name. No alternative model, health probe, live transaction,
+attack reproduction or account-capacity increase was used. Usage is available
+only for completed responses; cost and actual model identity were not reported.
+
+Prioritized follow-up is tied to these observations: sound external-library
+calling/storage-context representation and bounded path analysis (including the
+retained unknown preceding `address(...)` conversion, not proof of unreachability); avoiding
+unrepresentable literal generation spans using the established exact-selection
+contract; evaluating source acquisition growth and report-scope authoring quality;
+and supplying the specific external implementation/rule facts when genuinely
+material. Broader deployment evidence, policy systems and symbolic execution are
+not implemented by this pass. No automatic retry or weaker gate is a substitute.
+
+Final real accounting: **15 reserved/dispatched, 12 completed responses, 9
+host-admitted stages, 1 freshly verified assessment, 0 published tutorials**.
+The single verified result is insufficient evidence with partial original-report
+coverage, not a supported finding or refutation. Five other cases did not reach a
+completed substantive assessment. No case was removed from the denominator.
+The bounded repair separated compound report assertions; its 23-note/22-disposition
+candidate was kept by a fresh challenge. Material external/rule/settlement unknowns
+still block its full tutorial. This is useful completed inconclusive work, but the
+requested real supported and real refutation walkthroughs were **not achieved**.
+
+The last repair/check used 215,140 / 201,145 conservative request bytes, 40 sources
+each, and 58.041 / 94.774 seconds of adapter service; first substantive content
+arrived at 57.028 / 94.342 seconds. Cleanup was confirmed. Returned usage was
+71,056/3,224 and 67,288/5,379 input/output tokens. Across all 15 requests, adapter
+service summed to 2,605.460 seconds (slot time, not wall-clock cohort duration);
+12 completed responses reported 679,621 input and 108,951 output tokens. Timeout
+usage/cost remain unknown. The four-case post-change concurrent segment took
+972.567 seconds including 26.517 seconds indexing, at two shared slots. The two
+early baseline cases and later bounded repair are separate segments with coding
+and validation between them, not one uninterrupted batch benchmark.
+
+The final supported sequential gate passed **594/594, zero failed, cancelled or
+skipped**, in 324.788 seconds with native 1.2.0. An earlier gate had 592/594:
+one deadline-control fixture expired during setup or awaited a timer without
+advancing it; it now drives the same production expiry check with a deterministic
+clock. The 204-duplicated-finding orchestration control also missed its unchanged
+120-second bound in earlier runs (180/204 in that gate, 135/204 in a separately
+profiled run). It completed all 204 in the final gate without a deadline or
+assertion change. Concurrent unrelated CPU-heavy work was present, so the earlier
+failures and variable timing are retained, not presented as a measured speedup.
+The profile identified journal serialization/I/O, hashing/reading and repeated
+projection copies as local costs. No unrelated process was terminated. These
+fixed-response measurements are not real review throughput, and the small journal
+microbenchmark does not explain or resolve the whole batch bottleneck.
+
+The actual freshly checked inconclusive artifact was opened in original native
+1.2.0 with provider `none` and simulated editor I/O. The primary status distinguishes
+completed review from blocked walkthrough and shows its scoped insufficient-evidence
+reason. All 21 current diagnostics remained accessible (19 material-premise targets,
+2 analyzer limitations), with historical authoring errors separate. Group navigation,
+native source focus, Return and saved reopen made zero provider calls. Header and
+cited source range were visible; narrow 801x600 status remained scrollable. Two
+group-navigation samples took 167.6/153.5 ms. There were no page/host errors. This
+is real blocked-assessment/source-inspection evidence, not real tutorial playback.
+AI read-through found the external-unit/pause/settlement uncertainties explicit;
+it does not supply missing facts, independent adjudication or a human usability
+score. Real supported/refuted tutorial usefulness and severity calibration remain
+unmeasured. Installation is not observed editor activation.
+
 ## Evidence browsing and independent scope completion (0.19.29)
 
 Zero live provider requests. The v40 checked-content/observation/correction

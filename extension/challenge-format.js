@@ -5,11 +5,12 @@ const MODE = 'review-delta-v1';
 const scope = require('./review-scope');
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] });
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+const reportCheck=full=>full.required.includes('reportCoverage')?{reportReview:require('./report-coverage').reviewSchema}:{};
 // A first challenge checks the argument without asking for a second copy of
 // the entire causal model. A disagreement takes the existing bounded repair
 // path. This is a smaller response contract, not a weaker publication gate.
 function checkSchema(full, revisions = false) {
-  return object({ result: { enum: ['kept', 'repair'] }, problems: { type: 'array', items: { type: 'string' }, maxItems: 12 },
+  return object({ ...reportCheck(full),result: { enum: ['kept', 'repair'] }, problems: { type: 'array', items: { type: 'string' }, maxItems: 12 },
     ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
     explanationReviews: full.properties.explanationReviews,
     checks: revisions ? { ...full.properties.causal.properties.checks,
@@ -21,6 +22,7 @@ function checked(value, previous, full) {
   if (value.result !== 'kept' || value.problems.length) throw Object.assign(new Error(value.problems.join('\n') || 'The reasoning check requested a specific repair.'), { reviewProblems: value.problems });
   const result = structuredClone(previous);
   result.explanationReviews = value.explanationReviews;
+  if(previous.reportCoverage)result.reportReview=value.reportReview??null;
   if (full.properties.inputReviews) result.inputReviews = value.inputReviews;
   result.causal.checks = value.checks;
   return result;
@@ -33,10 +35,10 @@ function candidateSchema(full) {
 }
 function candidate(value, previous, full) {
   if (!valid(value, candidateSchema(full))) throw new Error('The private candidate update has an invalid shape.');
-  return assemblePatch({ mode: PATCH, updates: value.updates, inputReviews: [], explanationReviews: [], checks: [] }, previous, full);
+  return assemblePatch({ mode: PATCH, updates: value.updates, inputReviews: [], explanationReviews: [], checks: [],...(full.required.includes('reportCoverage')?{reportReview:null}:{}) }, previous, full, true);
 }
 function patchSchema(full) {
-  return object({ mode: { enum: [PATCH] }, updates: { type: 'array', maxItems: 80,
+  return object({ ...reportCheck(full),mode: { enum: [PATCH] }, updates: { type: 'array', maxItems: 80,
     items: object({ path: { type: 'string' }, valueJSON: { type: 'string' } }) },
     ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
     explanationReviews: full.properties.explanationReviews, checks: full.properties.causal.properties.checks });
@@ -48,14 +50,15 @@ function apply(value, previous, full) {
 }
 // Diagnostic assembly alone is NOT a validated review. Ordinary ingestion
 // always uses apply(), including the immutable-scope check after assembly.
-function assemblePatch(value, previous, full) {
+function assemblePatch(value, previous, full, authoring=false) {
   if (full.properties.inputReviews && !previous.inputReviews?.length && value?.inputReviews === undefined) value = { ...value, inputReviews: [] };
-  if (!valid(value, patchSchema(full))) throw new Error('The targeted repair has an invalid shape.');
+  const shape=patchSchema(full);if(authoring&&shape.properties.reportReview)shape.properties.reportReview={type:'null'};
+  if (!valid(value, shape)) throw new Error('The targeted repair has an invalid shape.');
   const result = structuredClone(previous), touched = new Set();
   for (const update of value.updates) {
     const keys = update.path.split('/').slice(1);
     if (!update.path.startsWith('/') || !keys.length || keys.length > 5 || keys.some(key => !key || ['__proto__','constructor','prototype'].includes(key)) || touched.has(update.path) || update.valueJSON.length > 64000) throw new Error('The targeted repair has an unsafe or repeated field.');
-    if (['explanationReviews', 'inputReviews'].includes(keys[0]) || keys.join('/') === 'causal/checks') throw new Error('Fresh checks cannot be patched or inherited.');
+    if (['explanationReviews', 'inputReviews','reportReview'].includes(keys[0]) || keys.join('/') === 'causal/checks') throw new Error('Fresh checks cannot be patched or inherited.');
     touched.add(update.path);
     let target = result, shape = full;
     for (let i = 0; i < keys.length; i++) {
@@ -78,14 +81,15 @@ function assemblePatch(value, previous, full) {
     }
   }
   result.explanationReviews = value.explanationReviews; result.causal.checks = value.checks;
+  if(result.reportCoverage)result.reportReview=value.reportReview??null;
   if (full.properties.inputReviews) result.inputReviews = value.inputReviews;
   if (!valid(result, full)) throw new Error('The targeted repair left an incomplete review.');
   return result;
 }
 const patchInstruction = `Return review-patch-v1. This response shape supersedes the earlier full-review/delta instructions. Repair only affected fields of earlierDraft. updates use slash paths: /claims/c1/reason, /evidence/e1/explanation, /causal/obligations/obligation-id/state, /causal/summary, /conclusion/limitations, /walkthrough/assessment/why. Array objects with an id are addressed by that stable ID, never an index. To add/replace an entire item use /evidence/new-id with its complete schema object. To remove it use valueJSON="null"; do not drop a material claim. Arrays without id fields (relationships, strings) are replaced as a whole. valueJSON is the JSON-encoded new field value (a string needs JSON quotes). Unchanged fields are retained exactly. Do not repeat their contents. Check all affected dependencies against source; if a premise remains unavailable keep its blocker. Include fresh explanationReviews for every old/new/removed note and checks for every retained causal event, obligation and relationship. Each check explains the concrete evidence, not merely location validity. Never patch checks to inherit older approval. The host validates the assembled full schema, exact source spans, claim coverage and publication obligations after applying these edits.`;
 function schemaFor(full) {
-  return object({ mode: { enum: [MODE] },
-    changes: object(Object.fromEntries(Object.entries(full.properties).filter(([key]) => !['causal', 'explanationReviews'].includes(key)).map(([key, schema]) => [key, nullable(schema)]))),
+  return object({ ...reportCheck(full),mode: { enum: [MODE] },
+    changes: object(Object.fromEntries(Object.entries(full.properties).filter(([key]) => !['causal', 'explanationReviews','reportReview'].includes(key)&&(key!=='reportCoverage'||full.required.includes(key))).map(([key, schema]) => [key, nullable(schema)]))),
     causal: object(Object.fromEntries(Object.entries(full.properties.causal.properties).map(([key, schema]) => [key, key === 'checks' ? schema : nullable(schema)]))),
     explanationReviews: full.properties.explanationReviews });
 }
@@ -133,11 +137,12 @@ function expand(value, previous, fullSchema) {
   for (const [key, change] of Object.entries(value.causal)) if (change !== null) result.causal[key] = structuredClone(change);
   // Checks can never be inherited from a previous pass or lost through null.
   result.explanationReviews = structuredClone(value.explanationReviews);
+  if(result.reportCoverage)result.reportReview=structuredClone(value.reportReview??null);
   if (!valid(result, fullSchema)) throw new Error('The second pass left an incomplete explanation. Required fields still need checking.');
   scope.assert(previous, result);
   return result;
 }
 const instruction = `During challenge return review-delta-v1 using the supplied schema. earlierDraft is the exact earlier result in the same field format. In changes and causal, null means preserve that field EXACTLY, not remove it or consider it automatically checked. Replace an array as a whole when it changes; [] deliberately clears it. Supply fresh causal.checks for EVERY event, obligation and relationship, plus explanationReviews for EVERY retained/removed/new evidence ID. Never return null for these checks. Review the actual new code before keeping an earlier statement. Changes to a premise require all dependent claims, events, evidence, questions and assessment to be reconsidered. Preserve real blockers. Do not repeat unchanged quotes, conditions and event data merely to acknowledge reading them. Keep each review reason to one concrete sentence with its evidence links. This response format saves copying, not any required reasoning or source check.`;
 module.exports = { MODE, schemaFor, earlier, expand, instruction: instruction + '\n' + scope.instruction,
-  checkSchema, checked, checkInstruction: checkInstruction + '\n' + scope.instruction, PATCH, patchSchema, apply, assemblePatch,
+  checkSchema, checked, checkInstruction: checkInstruction + '\n' + scope.instruction + '\nA private candidate deliberately contains no inputReviews, explanationReviews or causal checks. Their absence in earlierDraft is NOT by itself a repair reason: supply your fresh attestations in this check response. For each supplied premise, return applied, not-applicable or unresolved with the required dependencies and reason. Kept preserves semantic claims and blockers, not empty attestation arrays. Never invent premise evidence to keep an argument.', PATCH, patchSchema, apply, assemblePatch,
   patchInstruction: patchInstruction + '\n' + scope.instruction, valid, CANDIDATE, candidateSchema, candidate };

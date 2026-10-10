@@ -12,7 +12,7 @@ async function main() {
   let catalog, last;
   const runner = new ReportPreparation(root, {
     firstFinding: get('--first'),
-    configuration: () => ({ provider: get('--provider', 'none'), requestLimit: Number(get('--requests', '12')), budget: Number(get('--budget-usd', '1')), workers: Number(get('--workers', '2')) }),
+    configuration: () => ({ provider: get('--provider', 'none'), model:get('--model',''),reasoningEffort:get('--reasoning','medium'),requestLimit: Number(get('--requests', '12')), budget: Number(get('--budget-usd', '1')), workers: Number(get('--workers', '2')) }),
     catalog: async signal => { if (!catalog) { const result = await analyze(native, root, { mode: 'source', background: true, signal }); catalog = new SourceCatalog(root, result.runner, result.result); } return catalog; },
     changed: status => { const key = JSON.stringify([status.mode, status.counts, status.requests, status.active.map(job => [job.id, job.stage, job.progress?.event])]);
       if (key !== last) { last = key; console.log(JSON.stringify(status)); } }, log: message => console.error(message)

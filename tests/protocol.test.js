@@ -13,6 +13,15 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
+test('compact journal persistence preserves every value and the existing semantic ownership hash', t => {
+  const root=fixture(t),value={jobs:{a:{reason:'Exact original text\nwith quotation " and Unicode \u03bb',state:'blocked'}},receipts:[{id:'one',consumed:true}],nested:{empty:[],value:null}};
+  p.atomicJson(root,'.flowboard/pretty.json',value);
+  const identity=p.atomicJson(root,'.flowboard/compact.json',value,{compact:true});
+  const pretty=fs.readFileSync(path.join(root,'.flowboard/pretty.json'),'utf8'),compact=fs.readFileSync(path.join(root,'.flowboard/compact.json'),'utf8');
+  assert.deepEqual(JSON.parse(compact),JSON.parse(pretty));assert.equal(compact,JSON.stringify(value)+'\n');
+  assert.equal(identity,require('../extension/investigation-engine').hash(value));assert.ok(Buffer.byteLength(compact)<Buffer.byteLength(pretty));
+  value.jobs.a.reason+=' Changed';assert.notEqual(identity,require('../extension/investigation-engine').hash(value));
+});
 test('valid demo resolves source and produces stable source hashes', t => {
   const root = fixture(t);
   assert.equal(p.validate(structuredClone(example)).cards.length, 2);

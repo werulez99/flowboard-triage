@@ -39,7 +39,7 @@ function activate(context) {
       const preparation = new ReportPreparation(root, {
         configuration: () => { const config = vscode.workspace.getConfiguration('flowboardTriage', folder.uri), provider = config.get('semanticProvider', 'none');
           return { provider,engagementProfile:config.get('engagementProfile',''), executable: config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined,
-            budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 0),
+            model:config.get('codexModel',''),reasoningEffort:config.get('codexReasoningEffort','medium'),budget: config.get('semanticBudgetUSD', 1), requestLimit: config.get('reportRequestLimit', 0),
             findingRequestLimit: config.get('findingRequestLimit', 6), workers: config.get('preparationWorkers', 2),
             providerCapacity: config.get('providerConcurrency', 2), batchDeadlineMs: config.get('reportTimeLimitMinutes', 0) * 60000 }; },
         // Unsaved project dependencies affect every analysis. A finding JSON
@@ -471,7 +471,8 @@ function activate(context) {
     // Print runtime identity first: optional CLI diagnostics must never hide it.
     log.appendLine(JSON.stringify({ activeTriage: report.activeTriage, dependency: report.dependency, dependencyPath: report.dependencyPath }, null, 2)); log.show();
     try { report.provider = await require('./runtime-diagnostics').providerIdentity(provider,
-      config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined, vscode.workspace.isTrusted, receipts); }
+      config.get(provider === 'codex' ? 'codexPath' : 'claudePath', '') || undefined, vscode.workspace.isTrusted, receipts);
+      if(provider==='codex')report.provider.requestedSettings=require('./provider-settings').resolve({model:config.get('codexModel',''),reasoningEffort:config.get('codexReasoningEffort','medium')}); }
     catch { report.provider = { provider, versionStatus: 'Optional provider diagnostics failed; active extension identity is available above.' }; }
     log.appendLine(JSON.stringify(report, null, 2)); log.show();
   }));

@@ -167,7 +167,7 @@ async function start(options = {}) {
       const check=result.value.explanationReviews?.find(e=>e.evidenceId==='approval-guard');if(check)check.reason=explanation;
       if(input.checkOnly&&input.earlierDraft.evidence.find(e=>e.id==='approval-guard').explanation!==explanation)throw Error('The full qualification did not reach verification.');
     }
-    record.result = structuredClone(result); return result;
+    result.value=require('./fixtures/authoring-output').encode(result.value,input);record.result = structuredClone(result); return result;
   } : undefined;
   let replay;
   if (options.qualityResponses) {
@@ -197,7 +197,7 @@ async function start(options = {}) {
       providerCalls.push({ input, result }); return result;
     };
   }
-  const invoke = mixedInvoke || options.invoke || replay || (options.qualityCase || options.qualityBatch ? async (input, settings) => {
+  let invoke = mixedInvoke || options.invoke || replay || (options.qualityCase || options.qualityBatch ? async (input, settings) => {
     const record = { input: structuredClone(input) }; providerCalls.push(record);
     try { const result = await require(path.join(productionExtension, 'semantic-provider')).runProvider(input, settings); record.result = structuredClone(result); return result; }
     catch (error) { record.error = error.message; record.audit = error.audit; throw error; }
@@ -205,6 +205,7 @@ async function start(options = {}) {
   // Observing the real adapter must not bypass its shared capacity/health
   // boundary. Controlled and recorded responses are deliberately unmarked.
   if (invoke && !options.invoke && !replay && !mixedInvoke) invoke.isProviderTransport = true;
+  if(options.invoke)invoke=require('./fixtures/authoring-output').invoke(invoke);
   const TriageBoard = boardClass(storage, invoke, options.productionSelection ? trace : null);
   let reportPreparation, coordinatorOptions;
   if (options.reportPreparation && !options.productionSelection) {

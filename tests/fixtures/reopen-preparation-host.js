@@ -17,7 +17,7 @@ async function main() {
       calls.push(input.phase);
       const generation=path.join(root,'.flowboard/controlled-generation.json');
       const value = JSON.parse(fs.readFileSync(input.phase==='generate'&&fs.existsSync(generation)?generation:path.join(root, '.flowboard/controlled-answer.json'), 'utf8'));
-      return { value, audit: { provider: 'controlled-fresh-process-fixture', phase: input.phase, outcome: 'completed' } };
+      return { value:require('../../scripts/fixtures/authoring-output').encode(value,input), audit: { provider: 'controlled-fresh-process-fixture', phase: input.phase, outcome: 'completed' } };
     },
     changed: () => {
       if (!['crash-after-response', 'crash-after-challenge'].includes(mode)) return;

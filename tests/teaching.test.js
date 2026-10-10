@@ -10,7 +10,7 @@ for (const name of ['time', 'lifecycle', 'accounting','scenarios']) test(`ordina
   await importReport(path.join(base, 'report.md'), root, native, { deferMapping: true });
   const result = await analyze(native, root, { mode: 'source' }), catalog = new SourceCatalog(root, result.runner, result.result), packets = [];
   const runner = new ReportPreparation(root, { configuration: () => ({ provider: 'codex', requestLimit: 6 }), catalog: async () => catalog,
-    invoke: async input => { packets.push(input); return { value: require('../scripts/fixtures/teaching-output').response(input, name), audit: { phase: input.phase, outcome: 'completed', provider: 'fixed-local-control' } }; } });
+    invoke: require('../scripts/fixtures/authoring-output').invoke(async input => { packets.push(input); return { value: require('../scripts/fixtures/teaching-output').response(input, name), audit: { phase: input.phase, outcome: 'completed', provider: 'fixed-local-control' } }; }) });
   t.after(async () => { runner.dispose(); await runner.loop; fs.rmSync(root, { recursive: true, force: true }); });
   await runner.ensure(); const draft = engine.read(root, 'I-1');
   assert.ok(runner.published(draft), JSON.stringify({ error: draft?.error, publication: draft?.publication, sources: packets[0]?.sources.map(s => [s.name,s.line,s.endLine]) }));

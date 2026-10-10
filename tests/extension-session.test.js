@@ -80,7 +80,7 @@ async function setup(t, options = {}) {
     // Only the model response is controlled. Keep the real extension callback,
     // coordinator, source acquisition, source gate and artifact persistence.
     ReportPreparation: class extends ReportPreparation {
-      constructor(project, settings) { super(project, { ...settings, invoke: options.preparationInvoke, providerResources: options.providerResources }); }
+      constructor(project, settings) { super(project, { ...settings, invoke: require('../scripts/fixtures/authoring-output').invoke(options.preparationInvoke), providerResources: options.providerResources }); }
     }
   } : name === './runner-adapter' ? {
     analyze: async (...args) => {

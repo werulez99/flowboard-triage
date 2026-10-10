@@ -8,6 +8,41 @@ const { analyze } = require('../extension/runner-adapter'), { SourceCatalog } = 
 const engine = require('../extension/investigation-engine'), policy = require('../extension/guide-policy');
 const p = require('../extension/protocol');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
+for(const mode of ['omitted','unresolved','complete'])test(`first extraction report coverage through importer and fresh review: ${mode}`,{skip:!native},async t=>{
+ const extra='\n\nA separate route `Gate.other(false)` at `src/Gate.sol:7` is also alleged to complete. The proposed change is to remove require, not the current implementation.\n';
+ const source=code.replace('\n}\n','\n    function other(bool accepted) external pure { require(accepted, "other"); }\n}\n');
+ const f=await fixture(t,1,undefined,reportText(1)+(mode==='complete'?'':extra),source);f.runner.dispose();await f.runner.loop;
+ let calls=0;const phases=[],encode=require('../scripts/fixtures/authoring-output').encode;
+ f.options.invoke=async input=>{
+  calls++;phases.push(input.phase);const plain=require('../extension/packet-context').expand(input);assert.ok(plain.sources.some(s=>s.name?.includes('other')||s.code?.includes('function other'))||mode==='complete','Both original routes are supplied: '+plain.sources.map(s=>s.name).join(', '));
+  const value=encode(response(input),input);
+  if(input.phase==='generate'&&mode!=='complete'){
+    const p=input.finding.reportParagraphs.find(p=>p.text.includes('separate route'));
+    if(mode==='omitted')value.reportCoverage.dispositions=value.reportCoverage.dispositions.filter(d=>d.paragraphId!==p.id);
+    else{const d=value.reportCoverage.dispositions.find(d=>d.paragraphId===p.id);d.kind='unresolved';d.claimIds=[];d.reason='The original alternate route and its asserted consequence have not been assessed.';value.causal.outcome='blocked';value.walkthrough.assessment.result='unclear';}
+  }
+  return{value,audit:{phase:input.phase,outcome:'completed'}};
+ };
+ f.options.configuration=()=>({provider:'none',requestLimit:4});f.runner=new preparation.ReportPreparation(f.root,f.options);await f.runner.ensure();
+ if(mode!=='complete'){const catalog=await f.options.catalog(),{entries,report}=reconcile(f.root),draft=engine.create({findingId:'I-1',catalog,request:f.runner.request(entries[0],catalog,report),issue:f.runner.issue(entries[0])}),doc=catalog.document('src/Gate.sol'),fn=catalog.functions.find(fn=>fn.name==='other');
+  draft.localPreparation={contextHash:require('../extension/review-candidate').identity(draft),requirements:[{file:'src/Gate.sol',sourceHash:engine.hash(doc.text),line:fn.startLine,endLine:fn.endLine,reason:'The original report explicitly alleges this separate route; supply its complete implementation before generation.'}]};engine.write(f.root,draft);}
+ f.options.configuration=()=>({provider:'codex',requestLimit:4});await f.runner.continueFinding('I-1');const d=engine.read(f.root,'I-1'),a=policy.expose(d).assessmentProjection;
+ if(mode==='omitted'){assert.ok(d.lastRejected?.validationProblems?.some(p=>p.code==='REPORT_COVERAGE_GAP')||d.error?.includes('disposition'),d.error);assert.deepEqual(phases,['generate','generate'],'The existing single response-repair allowance cannot promote an unchanged omitted route to V.');assert.equal(a.technical.result,'not-assessed');}
+ else{assert.equal(calls,2,d.error);assert.equal(a.technical.result,mode==='complete'?'refuted':'insufficient-evidence');assert.equal(a.technical.coverage,mode==='complete'?'complete':'partial');assert.equal(d.publication.ready,mode==='complete');assert.ok(d.reportReview.reviewedIds.length);}
+ const before=calls;await f.runner.ensure();assert.equal(calls,before);assert.deepEqual(engine.read(f.root,'I-1').reportCoverage,d.reportCoverage);
+});
+test('owned mixed workload isolates repeated job deadlines but distinct failed peers open the shared circuit',{skip:!native},async t=>{
+ const f=await fixture(t,3),health=require('../extension/provider-health');f.options.providerResources={directory:path.join(f.root,'health')};
+ f.options.configuration=()=>({provider:'codex',workers:1,requestLimit:18});let slow=0;
+ const invoke=async(input,options)=>{
+  f.calls.push([input.finding.id,input.phase]);
+  if(input.finding.id==='I-1'){slow++;throw Object.assign(Error('Controlled job deadline'),{code:'PROVIDER_TIMEOUT',retryable:true,audit:{requestId:options.requestId,phase:input.phase,outcome:'timeout',failureKind:'timeout',finishedAt:new Date().toISOString(),teardown:{confirmed:true}}});}
+  return{value:response(input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',teardown:{confirmed:true}}};
+ };invoke.isProviderTransport=true;f.options.invoke=invoke;await f.runner.ensure();
+ assert.equal(slow,2);assert.ok(f.runner.artifact('I-2'));assert.ok(f.runner.artifact('I-3'));assert.equal(health.status('codex',f.options.providerResources).open,false);
+ for(const [i,jobKey]of ['peer-a','peer-b'].entries())await health.record('codex',{requestId:'wide-'+i,outcome:'timeout',failureKind:'timeout',teardown:{confirmed:true}},{...f.options.providerResources,jobKey});
+ assert.equal(health.status('codex',f.options.providerResources).open,true);await health.record('codex',{outcome:'completed',requestId:'late'},f.options.providerResources);assert.equal(health.status('codex',f.options.providerResources).open,true);
+});
 // Independently readable fictional behavior: require(false) reverts. No state
 // writes exist. Controlled responses test scheduling/reference plumbing only.
 const code = '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\ncontract Gate {\n    function finish(bool accepted) external pure {\n        require(accepted, "rejected");\n    }\n}\n';
@@ -1136,11 +1171,15 @@ test('one response repair survives generation yield and cannot be purchased agai
 
 test('deadline includes an authorization await and persists expiry through reopening without a reservation', { skip: !native }, async t => {
   const f = await fixture(t, 1); let release, entered;
+  // Drive the existing wall-clock boundary explicitly: machine load during
+  // indexing must not expire this control before its authorization hold exists.
+  let clock = Date.parse(require('../extension/store').readReport(f.root).importedAt);
+  t.mock.method(Date, 'now', () => clock);
   const hold = new Promise(resolve => release = resolve), started = new Promise(resolve => entered = resolve);
   f.options.configuration = () => ({ provider: 'codex', requestLimit: 6, batchDeadlineMs: 180 });
   f.options.authorizeRequest = async () => { entered(); await hold; };
   const pending = f.runner.ensure(); await started;
-  await new Promise(resolve => setTimeout(resolve, 210)); release(); await pending;
+  clock += 210; f.runner.armDeadline(); release(); await pending;
   assert.equal(f.calls.length, 0); assert.equal(f.runner.state.resources.requests, 0);
   assert.equal(f.runner.state.batch.outcome, 'deadline-exceeded'); const deadline = f.runner.state.batch.deadlineAt;
   await f.runner.ensure({ retry: true }); assert.equal(f.calls.length, 0); assert.equal(f.runner.state.batch.deadlineAt, deadline);

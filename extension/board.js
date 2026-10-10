@@ -535,7 +535,7 @@ class TriageBoard {
     delete model.investigationDraft.error;
     model.investigationJob = investigationEngine.advance({ root: this.root, catalog: model.catalog, request: model.request,
       issue: model.issue, findingId: model.id, draft: structuredClone(model.investigationDraft), provider, executable,
-      budget: config?.get('semanticBudgetUSD', 1), signal: abort.signal,
+      model:config?.get('codexModel',''),reasoningEffort:config?.get('codexReasoningEffort','medium'),budget: config?.get('semanticBudgetUSD', 1), signal: abort.signal,
       current: () => this.investigationCurrent(model), publish: draft => this.publishInvestigation(model, structuredClone(draft)),
       persist: this.callbacks.investigationPersistence !== false });
     try {

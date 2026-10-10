@@ -853,6 +853,7 @@ function accept(output, draft, units, { candidateOnly = false } = {}) {
   const accepted={ property, claims, evidence, transitions, questions, inputReviews, bindingPlan: output.bindingPlan || null, causal: output.causal ? structuredClone(output.causal) : null, walkthrough: prepared, conclusion: { status: 'insufficient-evidence',
     scopedStatus: text(output.conclusion.status, 100),
     text: text(output.conclusion.text), limitations: list(output.conclusion.limitations), origin: 'model-draft', humanReviewed: false } };
+  if(output.reportCoverage){accepted.reportCoverage=structuredClone(output.reportCoverage);accepted.reportReview=structuredClone(output.reportReview??null);}
   require('./review-content').equal(output,accepted);
   return accepted;
 }
@@ -948,7 +949,7 @@ function checkExplanations(output, previous, next, units, suppliedInput) {
   next.checkedContentHash=require('./review-content').hash(require('./review-content').project(next));
   return next;
 }
-async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false, prepareRequest, candidateSeed, recoveryReservation, preparationOnly = false }) {
+async function advance({ root, catalog, request, issue, findingId, draft, provider = 'none', executable, model, reasoningEffort, budget, signal, current, publish, persist = true, invoke = runProvider, onProgress, beforeRequest, onResult, onAccepted, onDispatchEnd, providerResources, yieldAfterStage = false, localOnly = false, prepareRequest, candidateSeed, recoveryReservation, preparationOnly = false }) {
   delete draft.yielded;
   const ensure = () => { if (signal?.aborted || !current()) throw Object.assign(new Error('Investigation superseded; partial work is preserved.'), { code: 'INVESTIGATION_SUPERSEDED' }); catalog.assertFresh(); };
   const save = async () => {
@@ -1100,6 +1101,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if(phase==='challenge'&&draft.rejectedProposal)previous=require('./rejected-proposal').material(draft,context.units,reviewSchema);
       let data = input(phase);
       if(!draft.pendingResponse)data.assessmentContract=require('./technical-assessment').VERSION;
+      if(!draft.pendingResponse&&provider==='codex'&&require('./provider-settings').explicit({model,reasoningEffort}))data.providerConfiguration=require('./provider-settings').resolve({model,reasoningEffort});
+      if(!draft.pendingResponse&&(phase==='generate'&&draft.semanticInput.reportText||draft.reportCoverage||draft.rejectedProposal?.proposal.reportCoverage||draft.reviewCandidate?.candidate.reportCoverage))data.reportCoverageContract=require('./report-coverage').VERSION;
       const reviewPurpose = phase === 'challenge' && !draft.pendingResponse ? candidates.purpose(draft, reviewSchema) : null;
       if (feedback) data.hostReview = feedback;
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
@@ -1133,7 +1136,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if(!draft.pendingResponse)require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
       const call = async input => {
         const transport = invoke === runProvider || invoke.isProviderTransport === true;
-        const health = require('./provider-health'), healthOptions = { ...providerResources, executable };
+        const health = require('./provider-health'), healthOptions = { ...providerResources, executable,model,reasoningEffort,jobKey:hash([draft.snapshot.reportHash,findingId]) };
         const checkpoint = require('./provider-result');
         const previousModel = phase === 'challenge' ? hash(challengeFormat.earlier(draft, reviewSchema)) : null;
         const cached = persist && checkpoint.read(root, findingId, draft.pendingResponse, {
@@ -1180,7 +1183,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         // Include metadata, instructions and schema in the bounded transport
         // preflight. Oversized local input must not spend a reservation.
         if (transport) require('./semantic-provider').requestMetrics(input);
-        if (transport) health.check(provider, healthOptions);
+        if (transport) {if(provider==='codex')require('./provider-settings').validate({executable,model,reasoningEffort});health.check(provider, healthOptions);}
         const release = transport ? await require('./provider-slots').acquire(provider, signal, { ...providerResources, onProgress }) : () => {};
         let reservation, terminalAudit, terminalNotified = false;
         const notifyTerminal = async () => {
@@ -1196,7 +1199,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           reservation = await beforeRequest?.({ phase, inputBytes: Buffer.byteLength(JSON.stringify(input)), input, capacity: release.capacity });
           if(input.reviewPurpose==='rejected-proposal-repair'&&persist){draft.rejectedProposal.state='repair-dispatched';await save();}
           if(input.reviewPurpose==='rejected-proposal-followup'&&persist){draft.rejectedProposal.followup.state='dispatched';await save();}
-          const result = await invoke(input, { provider, executable, budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
+          const result = await invoke(input, { provider, executable, model,reasoningEffort,budget, signal, onProgress, requestId: reservation?.id, capacity: release.capacity,
             onProcessStart: details => release.attachProcess?.(details) });
           terminalAudit = result.audit || {};
           let retainedResponse, storageFailure;
@@ -1276,7 +1279,9 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           const supplied = data.sources.find(item => item.id === unit.id), through = unit.readThrough ?? unit.source.line - 1;
           return supplied?.providedRanges?{...unit,readRanges:structuredClone(supplied.providedRanges)}:supplied && supplied.line <= through + 1 ? { ...unit, readThrough: Math.max(through, supplied.endLine) } : unit;
         });
-        const formatSchema = data.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
+        const formatSchema = structuredClone(data.bindingFormat === require('./source-bindings').VERSION ? require('./source-bindings').schema(reviewSchema) : reviewSchema);
+        if(data.reportCoverageContract)formatSchema.required.push('reportCoverage','reportReview');
+        else{delete formatSchema.properties.reportCoverage;delete formatSchema.properties.reportReview;}
         let authoringMapping;
         if (data.authoringFormat === require('./authoring-contract').VERSION && (data.candidateOnly || data.repairOnly)) {
           const compiled = require('./authoring-contract').compile(value, data, formatSchema, reviewUnits);
@@ -1288,6 +1293,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
             if (problems.length) throw require('./authoring-contract').failure(problems);
           }
           const proposed = authoringMapping ? value : challengeFormat.candidate(value, data.earlierDraft, formatSchema);
+          require('./report-coverage').assert(proposed,draft,{required:!!data.reportCoverageContract});
           const problems = [...require('./review-scope').referenceProblems(proposed), ...require('./authoring-contract').evidenceProblems(proposed.evidence,data,reviewUnits)];
           if (problems.length) throw require('./authoring-contract').failure(problems);
           const material = accept(proposed, draft, reviewUnits, { candidateOnly: true });
@@ -1316,6 +1322,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (value?.mode === challengeFormat.PATCH) value = previous ? challengeFormat.assemblePatch(value, data.earlierDraft, formatSchema) : challengeFormat.apply(value, data.earlierDraft, formatSchema);
         else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, formatSchema);
         try {
+        require('./report-coverage').assert(value,draft,{required:!!data.reportCoverageContract,review:phase==='challenge',previous:draft.reviewCandidate?.referenceBase||draft.reviewCandidate?.acceptedBase||data.earlierDraft});
         const accepted = accept(value, draft, reviewUnits);
         for (const entry of accepted.evidence) {
           const unit = context.units.find(item => item.id === entry.sourceId), supplied = data.sources.find(item => item.id === entry.sourceId);
@@ -1363,8 +1370,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (data.reviewPurpose) {
           // A completed checker disagreement is semantic feedback. A timeout,
           // malformed result or host binding error never opens a repair slot.
-          const formatSchema = data.bindingFormat ? require('./source-bindings').schema(reviewSchema) : reviewSchema;
-          if (data.checkOnly && challengeFormat.valid(response.value, challengeFormat.checkSchema(formatSchema, true)) &&
+          if (data.checkOnly && challengeFormat.valid(response.value, require('./semantic-provider').responseSchema(data)) &&
               response.value.result === 'repair' && response.value.problems.length) {
             const state = candidates.assertCurrent(draft, reviewSchema);
             state.verification = { result: 'repair', problems: response.value.problems, response: response.value,

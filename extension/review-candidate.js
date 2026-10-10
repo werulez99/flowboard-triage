@@ -10,6 +10,7 @@ const purposes = ['candidate-completion', 'candidate-verification', 'candidate-r
 function unchecked(value) {
   const result = structuredClone(value);
   result.inputReviews = []; result.explanationReviews = [];
+  if(result.reportCoverage)result.reportReview=null;
   if (result.causal) result.causal.checks = [];
   return result;
 }
@@ -31,7 +32,7 @@ function revision(original, candidate, origin) {
     } else changes.push({ path, before: before ?? null, afterHash: hash(after ?? null) });
   };
   for (const key of new Set([...Object.keys(original), ...Object.keys(candidate)]))
-    if (!['inputReviews', 'explanationReviews'].includes(key)) compare(original[key], candidate[key], '/' + key);
+    if (!['inputReviews', 'explanationReviews','reportReview'].includes(key)) compare(original[key], candidate[key], '/' + key);
   return { version: VERSION, ...(origin?{referenceBaseHash:hash(original),referenceOrigin:origin}:{acceptedBaseHash:hash(original)}), candidateHash: hash(candidate), changes };
 }
 function assertCurrent(draft, schema) {

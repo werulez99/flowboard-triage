@@ -4,6 +4,7 @@ const contract=require('../extension/authoring-contract'),format=require('../ext
 function fixture(candidateOnly=true){
   const make=s=>s.anyOf?make(s.anyOf[0]):s.type==='null'?null:s.enum?s.enum[0]:s.type==='array'?[]:s.type==='object'?Object.fromEntries(Object.entries(s.properties).map(([k,v])=>[k,make(v)])):s.type==='integer'?1:'';
   const earlierDraft=make(provider.schema),sourceHash='a'.repeat(64),code='function act() external {\n    // caf\u00e9\n    require(allowed);\n    return;\n}';
+  delete earlierDraft.reportCoverage;delete earlierDraft.reportReview; // legacy authoring reference has no new scope attestations
   earlierDraft.claims=[{...make(provider.schema.properties.claims.items),id:'claim-local',evidence:['note-local']}];
   earlierDraft.evidence=[{id:'note-local',claimId:'claim-local',sourceId:'source-local',line:3,endLine:3,quote:'    require(allowed);',stance:'context',explanation:'The guard checks allowed.'}];
   earlierDraft.causal.events=[{...make(provider.schema.properties.causal.properties.events.items),id:'event-local'}];
@@ -108,7 +109,7 @@ test('aggregate collection capacity reaches measured candidate and repair instru
   for(const candidateOnly of [true,false]){
     const {input,units}=fixture(candidateOnly),policy=require('../extension/review-capacity');
     assert.equal(policy.limits.evidence,64);assert.equal(policy.limits.explanationReviews,128);assert.equal(policy.POLICY,'checked-explanation-v9');
-    const bounds=contract.collectionBounds(input.earlierDraft,provider.schema),text=contract.aggregateInstruction(input,provider.schema),measured=provider.measureRequest(input);
+    const full=provider.fullSchema(input),bounds=contract.collectionBounds(input.earlierDraft,full),text=contract.aggregateInstruction(input,full),measured=provider.measureRequest(input);
     assert.deepEqual(bounds.find(b=>b.path==='/evidence'),{path:'/evidence',current:1,maximum:64});
     assert.ok(bounds.some(b=>b.path==='/causal/events/{new}/changes'));
     assert.ok(measured.system.includes(text));assert.match(text,/Replace preserves count/);

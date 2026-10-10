@@ -163,7 +163,7 @@ test('diagnostic distinguishes transport completion, full schema, and non-JSON w
   // Shape-only controlled output, NOT a checked guide or semantic quality case.
   const shape = s => s.enum ? s.enum[0] : s.anyOf ? shape(s.anyOf[0]) : s.type === 'object' ?
     Object.fromEntries(Object.entries(s.properties).map(([key, child]) => [key, shape(child)])) : s.type === 'array' ? [] : s.type === 'integer' ? 1 : s.type === 'null' ? null : '';
-  const completeInput = { ...input, earlierDraft: undefined }, response = shape(provider.schema);
+  const completeInput = { ...input, earlierDraft: undefined }, response = shape(provider.fullSchema(completeInput));
   const result = await provider.runResponseContractDiagnostic(completeInput, { spawn: fakeProcess({ stdout: wire(response) }) });
   assert.deepEqual(result.response, response); assert.equal(result.validation.fullGenerationSchema, true);
   assert.equal(result.audit.hostAcceptedAt, null); assert.equal(result.value, undefined);

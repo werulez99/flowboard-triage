@@ -155,15 +155,19 @@ function writableDirectory(root, directory) {
   }
   return destination;
 }
-function atomicJson(root, relative, value) {
+function atomicJson(root, relative, value, { compact = false } = {}) {
   const directory = writableDirectory(root, path.dirname(relative));
   const destination = path.join(directory, path.basename(relative));
   if (fs.existsSync(destination) && fs.lstatSync(destination).isSymbolicLink()) fail('Refusing to overwrite a symbolic link.');
   const temporary = path.join(directory, `.tmp-${crypto.randomUUID()}`);
+  // Compact journals reuse the exact serialized content for their optimistic
+  // ownership identity. Other human-readable records keep the existing format.
+  const encoded = JSON.stringify(value, null, compact ? undefined : 2);
   try {
-    fs.writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    fs.writeFileSync(temporary, encoded + '\n', { flag: 'wx', mode: 0o600 });
     fs.renameSync(temporary, destination);
   } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+  if (compact) return crypto.createHash('sha256').update(encoded).digest('hex');
 }
 function noteText(request, analysis, git) {
   const f = request.finding;
