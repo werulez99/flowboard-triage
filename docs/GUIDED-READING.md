@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.33
+# Checked finding walkthroughs — 0.19.34
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -18,6 +18,31 @@ rows. Dotted source-to-annotation connectors are not executable call arrows;
 checked transitions have labels and background exploration lines are subdued.
 
 ### Private construction and exact verification
+
+An unchanged saved argument with incomplete current checking can take a fresh
+verification-only operation. Local capability revalidation runs first; it does
+not regenerate an argument or grant missing checks. The same host-derived next
+operation controls eligibility, allocation, dispatch and the visible action.
+Content changes still require private authoring followed by full verification.
+Selected allocation adds only missing ordinary capacity, preserving spent usage,
+shared owed checks and fixed evaluation phase restrictions.
+
+The actual request includes `reviewRequirements`, an exact non-attesting
+inventory of current targets and required evidence/documentation, original-to-
+current note classifications, premises, report dispositions and revisions.
+The checker supplies its own reasoning and can disagree. A kept response with
+missing coverage remains inadmissible; no host fills a reference or approval.
+Provider schemas stay within the supported subset; cross-target/reference
+uniqueness and coverage are explicitly enforced locally. Historic receipts are
+not upgraded into newly required documentation attestations.
+
+Report progress stores compact summaries and content/owner-bound references to
+exact per-finding detail records. Selected feedback loads on demand. Legacy
+journals within the existing 48 MiB storage bound can migrate without a new
+request; compact writes are bounded to the 8 MiB reader policy before replacing
+the last usable journal. Oversize/corrupt records are errors, never fresh imports.
+Durable request, cancellation, invalidation and completion boundaries remain
+synchronous; background status does not duplicate all detailed reasoning.
 
 An unfinished argument can yield a typed `source-edits-v2` construction
 response, saved privately with its original accepted or explicitly unaccepted reference, source/premise identity,

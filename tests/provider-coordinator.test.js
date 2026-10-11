@@ -142,9 +142,10 @@ test('selected continuation in a paused mixed report reuses only its challenge a
   assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   assert.equal(f.runner.state.jobs['I-2'].state, 'failed');
   assert.equal(f.runner.state.jobs['I-3'].state, 'paused'); assert.equal(f.runner.state.jobs['I-4'].state, 'blocked');
-  const jobs = structuredClone(f.runner.state.jobs), limit = f.runner.state.resources.limit, count = f.calls.length;
+  const jobView=job=>{const value={...job,...Object.fromEntries(require('../extension/report-journal').fields.map(key=>[key,job[key]]))};delete value.detailReferences;delete value.assessmentSummary;return structuredClone(value);};
+  const jobs = Object.fromEntries(Object.entries(f.runner.state.jobs).map(([id,job])=>[id,jobView(job)])), limit = f.runner.state.resources.limit, count = f.calls.length;
   assert.throws(() => f.runner.continueFinding('removed-finding'), /no longer in this report/);
-  assert.deepEqual(f.runner.state.jobs, jobs); assert.equal(f.runner.state.mode, 'paused');
+  assert.deepEqual(Object.fromEntries(Object.entries(f.runner.state.jobs).map(([id,job])=>[id,jobView(job)])), jobs); assert.equal(f.runner.state.mode, 'paused');
   const a = engine.read(f.root, 'I-1').publication.digest;
   const note = path.join(f.root, '.flowboard/human-note.txt'); fs.writeFileSync(note, 'Keep my research notes and verdict.'); const human = fs.readFileSync(note);
   const before = engine.read(f.root, 'I-2'); assert.equal(before.checkpoint.stage, 'challenge');
@@ -157,7 +158,7 @@ test('selected continuation in a paused mixed report reuses only its challenge a
   recover = true; await f.runner.continueFinding('I-2');
   assert.deepEqual(f.calls.slice(count).map(c => [c.id, c.phase]), [['I-2', 'challenge']]);
   assert.equal(f.runner.state.mode, 'paused'); assert.equal(f.runner.state.resources.limit, limit);
-  for (const id of ['I-3', 'I-4']) assert.deepEqual(f.runner.state.jobs[id], jobs[id]);
+  for (const id of ['I-3', 'I-4']) assert.deepEqual(jobView(f.runner.state.jobs[id]), jobs[id]);
   assert.equal(engine.read(f.root, 'I-1').publication.digest, a); assert.ok(human.equals(fs.readFileSync(note)));
   assert.ok(f.runner.published(engine.read(f.root, 'I-2')));
   await f.runner.ensure(); assert.equal(f.calls.length, count + 1);

@@ -152,7 +152,7 @@ test('actual preparation renderer retains selected job reason and shows current 
   const source = require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'), 'utf8');
   const definitions = source.slice(source.indexOf('  const preparationJob'), source.indexOf('  const readyDraft'));
   const rendering = source.slice(source.indexOf('  function preparationContent'), source.indexOf('  function guideReveal'));
-  const node = (tag, cls, text = '') => ({ tag, text, children: [], hidden: false, disabled: false, scrollTop: 0,
+  const node = (tag, cls, text = '') => ({ tag, text, children: [], dataset:{}, hidden: false, disabled: false, scrollTop: 0,
     classList: { toggle() {} }, append(...nodes) { this.children.push(...nodes); }, prepend(...nodes) { this.children.unshift(...nodes); },
     replaceChildren() { this.children = []; }, setAttribute() {}, querySelectorAll() { return []; } });
   const flat = n => [n, ...n.children.flatMap(flat)], surface = node('div');
@@ -185,6 +185,14 @@ test('actual preparation renderer retains selected job reason and shows current 
   vm.runInNewContext('renderPreparation()', context);assert.ok(!flat(surface).some(n=>n.text==='Continue this finding'));
   context.reportPreparation.jobs.find(j=>j.id==='B').continueAction={available:true};
   vm.runInNewContext('renderPreparation()', context); assert.ok(flat(surface).some(n => n.text === 'Continue this finding'));
+  const job=context.reportPreparation.jobs.find(j=>j.id==='B');
+  job.failureKind='capability';job.verificationCompletion={result:'kept',published:false,checkingIncomplete:true};
+  job.validationProblems=[{code:'OBLIGATION_CHECK_COVERAGE',message:'Required evidence or documentation omitted.',kind:'structural'}];
+  vm.runInNewContext('renderPreparation()',context);
+  assert.ok(flat(surface).some(n=>n.text==='Continue this finding'),'The host-selected V operation is not vetoed by an unrelated capability category.');
+  assert.match(flat(surface).map(n=>n.text).join('\n'),/required checking is incomplete/);
+  assert.doesNotMatch(flat(surface).map(n=>n.text).join('\n'),/Full verification completed/);
+  delete job.verificationCompletion;delete job.validationProblems;delete job.failureKind;
   context.guideAvailability = { ready: false, reason: 'The walkthrough needs one missing function card.' };
   vm.runInNewContext('renderPreparation()', context);
   const refused = flat(surface).map(n => n.text).join('\n');

@@ -99,7 +99,9 @@ function gate(draft) {
   if (draft.claims.length > limits.claims || obligations.length > limits.obligations || events.length > limits.events || links.length > limits.relationships || checks.length > limits.checks) fail('The explanation exceeds its supported analytical capacity. No material claims may be dropped to fit.');
   const normalized = capacity.normalizeChecks(model), targetKeys = capacity.targets(model).map(item => item.key);
   if (new Set(targetKeys).size !== targetKeys.length || new Set(normalized.map(item => item.target)).size !== normalized.length || normalized.some(item => !targetKeys.includes(item.target))) fail('Challenge targets are duplicate, ambiguous or unknown. Use typed obligation, event and relationship identities.');
-  const check = (id, ids) => normalized.some(item => item.target === id && nonempty(item.reason) && refs(item.evidence, item.documentation) && ids.every(value => item.evidence.includes(value)));
+  const requirements=new Map(require('./review-requirements').targets(draft).map(r=>[r.target,r]));
+  const check = (id, ids) => normalized.some(item => item.target === id && nonempty(item.reason) && refs(item.evidence, item.documentation) &&
+    ids.every(value => item.evidence.includes(value)) && !(require('./review-requirements').missing(item,requirements.get(id)||{evidence:[],documentation:[]}).documentation.length));
   for(const claim of draft.claims){
     const factors=claim.severityFactors;
     if(factors&&(!refs(factors.evidence)||factors.evidence.some(id=>evidence.get(id)?.claimId!==claim.id&&evidence.get(id)?.claimId!=='')||!obligations.some(o=>o.claimId===claim.id&&o.kind==='impact'&&check(capacity.target('obligation',o),factors.evidence))))
@@ -115,8 +117,8 @@ function gate(draft) {
   for (const item of obligations) {
     if (!nonempty(item.id) || identities.has(item.id) || !claims.has(item.claimId) || !nonempty(item.question) || !nonempty(item.reason) ||
       !['established', 'refuted', 'not-applicable','open'].includes(item.state) || !refs(item.evidence, item.documentation) || !check(capacity.target('obligation', item), item.evidence)) {
-      const reviewed=normalized.find(c=>c.target===capacity.target('obligation',item)),missing=(item.evidence||[]).filter(id=>!reviewed?.evidence?.includes(id));
-      fail(`${item.claimId || 'Report'}: ${item.question || 'An evidence requirement'} remains open or unchecked.${missing.length?' Fresh check omits evidence: '+missing.join(', ')+'.':''}`,'structural',capacity.target('obligation',item),{code:'OBLIGATION_CHECK_COVERAGE',missingEvidence:missing,
+      const reviewed=normalized.find(c=>c.target===capacity.target('obligation',item)),missing=(item.evidence||[]).filter(id=>!reviewed?.evidence?.includes(id)),missingDocs=(item.documentation||[]).filter(id=>!reviewed?.documentation?.includes(id));
+      fail(`${item.claimId || 'Report'}: ${item.question || 'An evidence requirement'} remains open or unchecked.${missing.length?' Fresh check omits evidence: '+missing.join(', ')+'.':''}${missingDocs.length?' Fresh check omits documentation: '+missingDocs.join(', ')+'.':''}`,'structural',capacity.target('obligation',item),{code:'OBLIGATION_CHECK_COVERAGE',missingEvidence:missing,missingDocumentation:missingDocs,
         ...(missing.length?{action:'Fresh verification must assess these evidence references under explicit eligible authority. Do not edit the received check, inherit approval, or author an unnecessary candidate revision.'}:{})});
     }
     else if(item.state==='open') fail(`${item.claimId}: ${item.question} remains materially open after checking.`,'material-evidence',item.id);
@@ -158,7 +160,7 @@ function expose(draft, report = null, evaluation=null) {
   if (!draft) return null;
   const evaluated=evaluation||evaluate(draft),checked=evaluated.checked;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
-    const copy = structuredClone(draft); for(const key of ['revisionPredecessors','reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
+    const copy = structuredClone(draft); for(const key of ['retainedVerificationFeedback','revisionPredecessors','reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
     delete copy.technicalReview;delete copy.technicalReviewHistory;
     // Withheld optional assertions stay in the immutable private response,
     // not in the native/copy/export semantic DTO. This grants no new checks.
@@ -168,7 +170,7 @@ function expose(draft, report = null, evaluation=null) {
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for(const key of ['revisionPredecessors','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
+  for(const key of ['retainedVerificationFeedback','revisionPredecessors','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
   for (const field of ['reportCoverage','reportReview','causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   delete copy.technicalReview;delete copy.technicalReviewHistory;

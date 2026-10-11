@@ -15,6 +15,7 @@ function boolean(value, values, depth = 0) {
   if (values.has(text) && typeof values.get(text)==='boolean') return values.get(text);
   const equality=/^(.*?)(==|!=)(.*)$/.exec(text);
   if(equality){const inverse=equality[1]+(equality[2]==='=='?'!=':'==')+equality[3];if(typeof values.get(inverse)==='boolean')return !values.get(inverse);}
+  if(equality){const a=scalar(equality[1],values),b=scalar(equality[3],values);if(a!==null&&b!==null)return equality[2]==='=='?a===b:a!==b;}
   for (const op of ['||', '&&']) {
     let depth = 0;
     for (let at = 0; at < text.length - 1; at++) {
@@ -36,6 +37,10 @@ function boolean(value, values, depth = 0) {
   if (/^[\w$]+$/.test(text) && values.has(text)) return boolean(values.get(text), new Map(), depth + 1);
   if (text.startsWith('!') && !text.startsWith('!=')) { const inner = boolean(text.slice(1), values, depth + 1); return inner == null ? null : !inner; }
   return null;
+}
+function scalar(expression,values){
+  const text=String(expression).trim(),value=/^(?:0|[1-9]\d*)$/.test(text)?text:values.get(text)?.scalar;
+  return typeof value==='string'&&/^\d{1,78}$/.test(value)&&BigInt(value)<2n**256n?BigInt(value).toString():null;
 }
 function parse(unit) {
   const hit = cache.get(unit); if (hit?.code === unit.code) return hit;
@@ -114,10 +119,10 @@ function pathTo(unit, offset, initial, options = {}) {
           // Both branches must independently continue. A return/failure in
           // either branch is not dismissed because its condition is unknown.
           const before = new Map(values), yes = walk([node.yes]);
-          if (yes) return unknown('A possible preceding branch terminates or has an unresolved effect.');
+          if (yes) return unknown('A possible preceding branch terminates or has an unresolved effect.','BRANCH_PREMISE_UNKNOWN','material-evidence');
           const afterYes = new Map(values); values.clear(); for (const [key, value] of before) values.set(key, value);
           const no = node.no && walk([node.no]);
-          if (no) return unknown('A possible preceding branch terminates or has an unresolved effect.');
+          if (no) return unknown('A possible preceding branch terminates or has an unresolved effect.','BRANCH_PREMISE_UNKNOWN','material-evidence');
           for (const key of new Set([...values.keys(), ...afterYes.keys()])) if (JSON.stringify(values.get(key)) !== JSON.stringify(afterYes.get(key))) values.set(key, null);
           continue;
         }
@@ -158,6 +163,7 @@ function pathTo(unit, offset, initial, options = {}) {
       if (/^return\b/.test(clean)) return stopped('An earlier return terminates this function path.', 'return');
       const assignment = /^(?:([A-Za-z_$][\w$]*)\s+(?:memory\s+)?|)([A-Za-z_$][\w$]*)\s*=(?!=)([^;]+);$/.exec(clean);
       if (assignment) {
+        if(options.assignment){const result=options.assignment(assignment,node,values);if(result?.outcome==='unknown')return unknown(result.reason,result.code,result.kind);if(result?.outcome==='continue')continue;}
         if (assignment[1]) locals.add(assignment[2]);
         if (options.localWritesOnly && !assignment[1] && !locals.has(assignment[2]) && !initial.has(assignment[2])) return unknown('The helper may change shared state; its caller-side effect needs a checked derivation.');
         const value = boolean(assignment[3], values); values.set(assignment[2], value == null ? null : String(value)); continue;
@@ -182,4 +188,4 @@ function pathTo(unit, offset, initial, options = {}) {
   }
   return walk(tree.nodes) || (options.complete ? { reachable: true, outcome: 'continue', values, guards } : unknown('The selected statement is outside this function body.'));
 }
-module.exports = { parse, pathTo, boolean };
+module.exports = { parse, pathTo, boolean, scalar };

@@ -977,21 +977,28 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       }
       draft.pendingResponse=recovered.reference;await save();
     }
+    const operation=require('./next-review-operation').decide(draft,draft.checkpoint?.stage==='complete'?guidePolicy.gate(draft):undefined);
+    let retainedVerification=operation.kind==='verify';
+    if(retainedVerification)draft.reviewOperation={...operation,context:candidates.identity(draft)};
     const priorNoProgress = draft.checkpoint?.noProgress, priorRepeated = draft.checkpoint?.repeated || 0;
-    if (priorNoProgress && priorRepeated && sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && !draft.claims.some(claim => claim.needsReassessment)) {
+    if (!retainedVerification && priorNoProgress && priorRepeated && sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && !draft.claims.some(claim => claim.needsReassessment)) {
       draft.phase = 'blocked'; draft.failureKind = 'structural'; draft.error = 'The same explanation check failed again without new evidence. Accepted code and claims are saved; inspect the named check before retrying.';
       await save(); return draft;
     }
     const lastAccepted = [...draft.runs].reverse().find(run => run.resultAccepted);
     const resumeObservations = !draft.reviewCandidate && require('./technical-assessment').pendingObservations(draft).length > 0;
-    const resumeQuestions = !resumeObservations && draft.phase !== 'corrected' && !draft.claims.some(claim=>claim.needsReassessment) && draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' || draft.failureKind === 'local-reading');
+    const resumeQuestions = !retainedVerification && !resumeObservations && draft.phase !== 'corrected' && !draft.claims.some(claim=>claim.needsReassessment) && draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' || draft.failureKind === 'local-reading');
+    if(!draft.pendingResponse&&['revalidate','evidence'].includes(operation.kind)){
+      validateCurrent(catalog,draft);draft.publication=guidePolicy.gate(draft);draft.phase=draft.publication.ready?'ready':'blocked';draft.error=operation.reason;
+      await save();return draft;
+    }
     // An accepted incomplete generation can honestly have no evidence yet,
     // for example when its decisive statement lies in an unread local tail.
     // Requiring an existing quote here restarts that prefix forever instead
     // of restoring the reading cursor and challenging the saved question.
     const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && (draft.rejectedProposal || draft.claims.length &&
       (!draft.claims.some(claim => claim.needsReassessment)||draft.phase==='corrected'||draft.reviewCandidate) && (draft.phase==='corrected'||draft.checkpoint?.stage === 'challenge' ||
-        resumeQuestions || resumeObservations ||
+        retainedVerification || resumeQuestions || resumeObservations ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate'));
     if (resumeChallenge || draft.pendingResponse) {
       validateCurrent(catalog, draft);
@@ -1132,7 +1139,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if(!draft.pendingResponse&&(phase==='generate'&&draft.semanticInput.reportText||draft.reportCoverage||draft.rejectedProposal?.proposal.reportCoverage||draft.reviewCandidate?.candidate.reportCoverage))data.reportCoverageContract=require('./report-coverage').VERSION;
       // A terminal response may have its prospective repair packet inspected
       // locally. This does not reopen its lifecycle or reserve authoring.
-      const reviewPurpose = phase === 'challenge' && !draft.pendingResponse ?
+      const reviewPurpose = phase === 'challenge' && !draft.pendingResponse && !retainedVerification ?
         preparationOnly&&draft.reviewCandidate?.state==='terminal'?'candidate-repair':candidates.purpose(draft, reviewSchema) : null;
       if (feedback) data.hostReview = feedback;
       const hasNewCode = data.sources.some(source => source.endLine > (context.units.find(unit => unit.id === source.id)?.readThrough ?? source.line - 1));
@@ -1147,7 +1154,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           data.assembledEarlier = require('./source-bindings').derived(proposed);
         }
       }
+      if(retainedVerification&&phase==='challenge'&&!draft.pendingResponse){
+        data=candidates.retainedPacket(data,draft,reviewSchema);
+        const original=(draft.candidateHistory||[]).findLast(h=>h.candidateHash===draft.candidateVerification?.candidateHash);
+        if(original)previous={...draft,...accept(original.referenceBase||original.acceptedBase,draft,context.units,{candidateOnly:true})};
+      }
       if (!draft.pendingResponse && (data.candidateOnly || data.repairOnly)) data.authoringFormat = require('./authoring-contract').VERSION;
+      if(!draft.pendingResponse&&data.checkOnly)data.reviewRequirements=require('./review-requirements').derive(data);
       if(!draft.pendingResponse&&data.earlierDraft){
         const diagnostics=require('./tutorial-diagnostics'),subject=diagnostics.packetSubject(data,context.units,draft);
         draft.tutorialDiagnostics=diagnostics.inspect(subject);
@@ -1162,7 +1175,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         const metrics=require('./semantic-provider').requestMetrics(data);
         draft.localPreparation={...draft.localPreparation,preflight:{inputHash:metrics.inputHash,requestBytes:metrics.requestBytes,limit:metrics.limit,dispatchable:true,at:now()}};
         draft.phase='local-preparation-ready';draft.sources=context.units;
-        await save();throw Object.assign(new Error('Local preparation fits. Saved analysis still needs an explicitly requested model repair and full verification.'),{code:'LOCAL_PREPARATION_READY'});
+        await save();throw Object.assign(new Error(data.checkOnly?'Local preparation fits. The unchanged saved argument needs complete fresh verification; no generation or authoring is required.':'Local preparation fits. Saved analysis still needs an explicitly requested model repair and full verification.'),{code:'LOCAL_PREPARATION_READY'});
       }
       const call = async input => {
         const transport = invoke === runProvider || invoke.isProviderTransport === true;
@@ -1186,6 +1199,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           // saved source units, including test constants introduced by prime.
           // Discovery relevance is for a new packet, not paid-response replay.
           context.restore(recoveredUnits, draft, { exactResponse: true }); data = cached.input;
+          if(data.reviewPurpose==='retained-verification'){
+            retainedVerification=true;
+            const original=draft.candidateHistory?.findLast(h=>h.candidateHash===data.candidateIdentity.candidateHash);
+            if(original)previous={...draft,...accept(original.referenceBase||original.acceptedBase,draft,context.units,{candidateOnly:true})};
+          }
           // Reconcile a failed terminal receipt before any semantic replay.
           // The coordinator validates the original reservation under its lock.
           if(onResult)try{await onResult({...cached.result.audit,retainedResponse:draft.pendingResponse,responseStorage:{state:'retained'}},cached.reservation||recoveryReservation);}
@@ -1302,6 +1320,10 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       } };
       draft.runs.push({ ...response.audit, resultAccepted: false, ...(feedback ? { repair: true } : {}) });
       const validate = value => {
+        if(data.checkOnly&&data.reviewRequirements){
+          if(!challengeFormat.valid(value,require('./semantic-provider').responseSchema(data)))throw Object.assign(Error('The review response does not match the actual target/reference schema.'),{code:'REVIEW_REQUIREMENTS'});
+          require('./review-requirements').validate(value,data);
+        }
         // Source supplied in this completed invocation is available to its
         // interpretation checks, even before committing the reading cursor.
         // Keep this prospective coverage private; a failed answer must not
@@ -1353,7 +1375,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         if (value?.mode === challengeFormat.PATCH) value = previous ? challengeFormat.assemblePatch(value, data.earlierDraft, formatSchema) : challengeFormat.apply(value, data.earlierDraft, formatSchema);
         else if (phase === 'challenge' && value?.mode) value = challengeFormat.expand(value, data.earlierDraft, formatSchema);
         try {
-        require('./report-coverage').assert(value,draft,{required:!!data.reportCoverageContract,review:phase==='challenge',previous:draft.reviewCandidate?.referenceBase||draft.reviewCandidate?.acceptedBase||data.earlierDraft});
+        require('./report-coverage').assert(value,draft,{required:!!data.reportCoverageContract,review:phase==='challenge',previous:
+          require('./report-coverage').reference(data,draft.reviewCandidate?.referenceBase||draft.reviewCandidate?.acceptedBase||data.earlierDraft)});
         const accepted = accept(value, draft, reviewUnits);
         for (const entry of accepted.evidence) {
           const unit = context.units.find(item => item.id === entry.sourceId), supplied = data.sources.find(item => item.id === entry.sourceId);
@@ -1403,6 +1426,18 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           // malformed result or host binding error never opens a repair slot.
           if (data.checkOnly && challengeFormat.valid(response.value, require('./semantic-provider').responseSchema(data)) &&
               response.value.result === 'repair' && response.value.problems.length) {
+            if(data.reviewPurpose==='retained-verification'){
+              draft.retainedVerificationFeedback={requestId:response.audit?.requestId,inputHash:outboundHash,responseHash:hash(response.value),response:response.value,
+                candidateIdentity:data.candidateIdentity,at:now()};
+              const prior=draft.candidateHistory?.findLast(h=>h.candidateHash===data.candidateIdentity.candidateHash);
+              if(prior){
+                draft.reviewCandidate={...structuredClone(prior),state:'terminal',currentBaseHash:candidates.hash(candidates.wire(draft,reviewSchema)),retainedParentHash:hash(prior),
+                  verification:{result:'repair',problems:response.value.problems,response:response.value,requestId:response.audit.requestId,at:now(),candidateHash:prior.candidateHash,revisionHash:hash(prior.revisions),
+                    sourceReferences:require('./source-coverage').feedbackReferences(response.value,data,context.units,response.audit.requestId)}};
+              }
+              delete draft.pendingResponse;
+              throw error;
+            }
             const state = candidates.assertCurrent(draft, reviewSchema);
             const feedbackIds=(response.value.explanationReviews||[]).flatMap(r=>r.checkedSourceIds||[]);
             const archived=require('./provider-result').archivedSources(root,draft,feedbackIds.filter(id=>!context.units.some(u=>u.id===id)));
@@ -1432,6 +1467,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         draft.checkpoint = { stage: phase, snapshot: hash(draft.snapshot), repairUsed: true, followups, feedback: repairFeedback, at: now() }; await save();
         // One bounded repair with the exact rejected response and host error.
         // Never guess new line spans, silently fix meaning, or publish it.
+        delete data.reviewRequirements; // the author must not supply checker attestations
         data = require('./packet-context').compact({ ...data, checkOnly: false, repairOnly: phase === 'challenge', hostReview: repairFeedback,
           ...(phase === 'challenge' ? { authoringFormat: require('./authoring-contract').VERSION } : {}) });
         require('./source-coverage').packet(data,context.units,phase==='challenge'?[previous,require('./packet-context').expand(data).earlierDraft]:[]);
@@ -1446,7 +1482,11 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       }
       recordReading(); draft.runs.at(-1).resultAccepted = true;
       if(response.audit.reusedResponse){const replay=draft.localRevalidations?.at(-1);if(replay?.responseHash===hash(response.value)){replay.outcome='host-admitted';replay.hostAdmittedAt=now();}}
-      if(data.candidateOnly){delete draft.currentRejection;delete draft.validationProblems;}
+      if(data.candidateOnly||phase==='challenge'){
+        if(draft.currentRejection&&!draft.rejectionHistory?.some(r=>r.responseHash===draft.currentRejection.responseHash))
+          draft.rejectionHistory=[...(draft.rejectionHistory||[]),draft.currentRejection];
+        delete draft.currentRejection;delete draft.validationProblems;delete draft.failureCode;
+      }
       delete draft.pendingResponse;
       draft.runs.at(-1).hostAcceptedAt = now();
       await onAccepted?.(draft.runs.at(-1)); return accepted;
@@ -1519,7 +1559,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       draft.yielded = true; await save(); return true;
     };
     if (await saveCandidate(next)) return draft;
-    const candidateState = draft.reviewCandidate && candidates.assertCurrent(draft, reviewSchema);
+    const candidateState = draft.reviewCandidate ? candidates.assertCurrent(draft, reviewSchema) : retainedVerification ?
+      structuredClone(draft.candidateHistory?.findLast(h=>h.candidateHash===draft.candidateVerification?.candidateHash)||null) : null;
     if (next.walkthrough) next.walkthrough.reportText = issue?.reportText || request.finding.summary || '';
     let firstGate = guidePolicy.gate({ ...draft, ...next });
     while (!firstGate.ready) {
@@ -1529,7 +1570,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       // Stop if the missing fact cannot be obtained. A closed explanation with
       // invalid references/order gets one repair; open speculation does not.
       const structural = firstGate.details?.some(d=>d.kind==='structural'&&!require('./technical-assessment').presentation(d)) && next.causal?.outcome !== 'blocked' && next.claims.every(claim => claim.status !== 'unresolved' && !claim.unknowns.length) && !next.conclusion.limitations.length;
-      if (!candidateState && (progress || structural && !repairUsed)) {
+      if (!retainedVerification && !candidateState && (progress || structural && !repairUsed)) {
         if (progress) followups++; else repairUsed = true;
         const feedback = { problems: firstGate.problems, newLocalCode: progress,
           instruction: 'Check these exact failures against supplied evidence. Do not weaken the scope or erase material unknowns merely to satisfy the publication gate.' };
@@ -1546,6 +1587,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       return { claimId: claim.id, before: previous?.status || 'not-separated', after: claim.status, reason: claim.reason };
     });
     Object.assign(draft, next); draft.challengeChanges = changes;
+    if(retainedVerification)delete draft.reviewOperation;
     if (candidateState) {
       candidateState.verification = { result: 'kept', candidateHash: candidateState.candidateHash, revisionHash: hash(candidateState.revisions),
         requestId: draft.runs.at(-1)?.requestId, revisionChecks: draft.candidateVerification.checks, at: now() };

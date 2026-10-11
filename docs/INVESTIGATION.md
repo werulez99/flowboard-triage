@@ -1,4 +1,4 @@
-# Source investigation runtime — 0.19.2
+# Source investigation runtime — 0.19.34
 
 ## Staged tutorial diagnostics (0.19.26)
 
@@ -11,11 +11,17 @@ invented attestations or automatic declarations of invalidity. An honest
 incomplete explanation remains reviewable. Full publication still checks every
 premise, current/removed explanation, revision and causal target independently.
 
-The local modifier subset supports one exact local definition with a single
-top-level placeholder, bound arguments and supported guards. A rejecting prefix
+The local modifier subset supports one exact definition, including a unique
+owner resolved by the supplied inheritance/import scopes, with a single
+top-level placeholder, bound arguments and supported guards. Bounded private
+`uint256` constant/literal writes and exact zero-argument, nonvirtual private
+helpers are supported with complete source views. A rejecting prefix
 blocks body reachability. A failing postlude does not make the body unreachable,
-but it prevents transaction commitment. Writes, unhandled effects, composition,
-ambiguous inheritance and absent exact guard predicates remain distinct unknowns.
+but it prevents transaction commitment. Entry storage facts must be qualified;
+an unbound natural-language "non-nested" label is not a state-value proof.
+Body reachability, postlude completion and committed effects remain distinct.
+Aliases, assembly/transient storage, composition, ambiguous inheritance,
+unsupported writes and absent exact guard predicates remain distinct unknowns.
 Free-text unit labels are retained; differing wording is not proof of a currency
 or scale change, and renaming labels cannot excuse a changed source expression.
 
@@ -139,7 +145,7 @@ In the local check, all six installed-0.11.0 cases and six post-change cases had
 
 Claim status can be supported, contradicted, narrowed or unresolved **within that scope**. The generated finding-level status remains `insufficient-evidence`, with `humanReviewed: false`. A researcher decides confirmed, invalid, design-decision, insufficient-evidence or already-fixed in the separate manual Review workflow. Local JSON is editable; the draft is not a signed audit trail.
 
-Canonical source storage holds up to 40 complete local units, at most 1 MiB of characters each. A model packet contains at most 110,000 code characters, with explicit segmented reading and checked original line identities. The former 800-line/32,000-character prefix is no longer the function store. Generation, challenge, one response repair and two new-code checks remain bounded by report and finding allowances. Required unread material blocks publication. The shared capacity contract admits 8 claims, 24 exact evidence entries, 12 predictions, 18 events, 64 obligations, 30 relationships and 112 typed checks. No collection is silently truncated to meet these limits. The saved file has a separate 48 MiB aggregate byte limit; exceeding it preserves the previous draft and reports the local resource limit. A blocked dependency remains a question; reaching a search bound never establishes absence of recovery.
+Canonical source storage holds up to 64 complete local units, at most 1 MiB of characters each. The complete analytical request is bounded to 512 KiB, including instructions and enforced schema, with explicit supplied ranges and checked original line identities. Full functions remain stored for reading. Generation, challenge, bounded repairs and source follow-ups remain subject to report/finding allowances. Required unread material blocks publication. The shared contract admits 8 claims, 64 exact evidence entries, 128 original/current note reviews, 12 transitions, 18 events, 64 obligations, 30 relationships, 112 current typed checks and 160 separate revision checks. No collection is silently truncated. Finding storage has a separate 48 MiB aggregate bound; compact report journals have an 8 MiB bound with exact detailed feedback stored separately. Exceeding a bound preserves the last usable record and reports the local resource limit. A blocked dependency remains a question; reaching a search bound never establishes absence of recovery.
 
 ## Provider boundary
 

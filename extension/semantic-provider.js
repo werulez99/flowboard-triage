@@ -113,7 +113,7 @@ function fullSchema(input) {
   }
   return input.bindingFormat===require('./source-bindings').VERSION?require('./source-bindings').schema(result):result;
 }
-const responseSchema = input => input.authoringFormat === require('./authoring-contract').VERSION && (input.candidateOnly || input.repairOnly) ? require('./authoring-contract').schema(input, fullSchema(input)) : input.candidateOnly ? challengeFormat.candidateSchema(fullSchema(input)) : input.checkOnly ? challengeFormat.checkSchema(fullSchema(input), !!input.reviewPurpose) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
+const responseSchema = input => input.authoringFormat === require('./authoring-contract').VERSION && (input.candidateOnly || input.repairOnly) ? require('./authoring-contract').schema(input, fullSchema(input)) : input.candidateOnly ? challengeFormat.candidateSchema(fullSchema(input)) : input.checkOnly ? challengeFormat.checkSchema(fullSchema(input), !!input.reviewPurpose, input.reviewRequirements) : input.repairOnly ? challengeFormat.patchSchema(fullSchema(input)) : input.phase === 'challenge' ? challengeFormat.schemaFor(fullSchema(input)) : fullSchema(input);
 const targetSchema = input => JSON.stringify(fullSchema(input));
 const responseInstruction = input => input.checkOnly ? challengeFormat.checkInstruction : input.authoringFormat === require('./authoring-contract').VERSION && (input.candidateOnly || input.repairOnly) ? require('./authoring-contract').instruction + '\n' + require('./authoring-contract').task(input) + '\n' + require('./authoring-contract').aggregateInstruction(input,fullSchema(input)) : input.repairOnly ?
   challengeFormat.patchInstruction + '\nEvidence references in claims, events, obligations, relationships and causal checks must be evidence IDs, not source IDs. explanationReviews.checkedSourceIds alone references source IDs. Add an exact evidence entry when a new function supports a causal check.\nThe assembled review MUST follow this field schema, including the exact enum values. This is the target of each update, not the response shape:\n' + targetSchema(input) :
@@ -129,6 +129,7 @@ function measureRequest(input) {
     (input.sourceContextFormat ? '\n' + require('./packet-context').instructionFor(input) : '') +
     (input.provisionalWorkNotes ? '\n' + require('./provisional-work-note').instruction : '') +
     (input.reviewPurpose ? '\n' + require('./review-candidate').instruction : '') +
+    (input.reviewRequirements ? '\n'+require('./review-requirements').instruction : '') +
     (input.tutorialDiagnostics ? '\n' + require('./tutorial-diagnostics').instruction : '') +
     (input.assessmentContract ? '\n'+require('./technical-assessment').instruction+'\n'+require('./assessment-profile').instruction : '') +
     (input.reportCoverageContract ? '\n'+require('./report-coverage').instruction : ''), encodedSchema = JSON.stringify(responseSchema(input));

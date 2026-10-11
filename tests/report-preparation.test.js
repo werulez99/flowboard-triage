@@ -8,6 +8,40 @@ const { analyze } = require('../extension/runner-adapter'), { SourceCatalog } = 
 const engine = require('../extension/investigation-engine'), policy = require('../extension/guide-policy');
 const p = require('../extension/protocol');
 const native = process.env.FLOWBOARD_EXTENSION_PATH;
+for(const left of [0,1,2])test(`complete legacy checkpoint rechecks unchanged coverage without generation (${left} finding slots)`,{skip:!native},async t=>{
+ const f=await fixture(t,2);await f.runner.ensure();const d=engine.read(f.root,'I-1'),before=require('../extension/review-content').project(d);
+ // A controlled legacy receipt whose current coverage was not enforced by
+ // its old wire schema. No paid result or semantic content is changed.
+ d.causal.checks=d.causal.checks.filter(c=>c.target!=='obligation:rule');d.publication=policy.gate(d);d.phase='blocked';d.failureKind=left%2?'material-evidence':'capability';d.checkpoint.stage='complete';engine.write(f.root,d);
+ const calls=f.calls.length,sibling=structuredClone(f.runner.state.jobs['I-2']);let job=f.runner.state.jobs['I-1'];job.requestLimit=job.requests+left;job.publishable=false;f.runner.accepted.delete('I-1');f.runner.save();
+ f.options.configuration=()=>({provider:'none',requestLimit:8});await f.runner.ensure();
+ job=f.runner.state.jobs['I-1'];
+ assert.equal(f.calls.length,calls);assert.equal(f.runner.state.jobs['I-1'].nextOperation.kind,'verify');
+ f.options.configuration=()=>({provider:'codex',requestLimit:8});
+ const limit=f.runner.state.resources.limit;f.runner.state.resources.limit=f.runner.state.resources.requests;
+ assert.equal(f.runner.operationEligibility(job,job.nextOperation).available,false);f.runner.state.resources.limit=limit;
+ f.options.phasePlan=()=>['challenge'];f.options.remainingPhasePlan=()=>[{phase:'challenge',reviewPurpose:'candidate-repair'}];assert.equal(f.runner.operationEligibility(job,job.nextOperation).available,false);
+ f.options.remainingPhasePlan=()=>[{phase:'challenge',reviewPurpose:'retained-verification'}];assert.equal(f.runner.operationEligibility(job,job.nextOperation).available,true);
+ delete f.options.phasePlan;delete f.options.remainingPhasePlan;
+ await Promise.all([f.runner.continueFinding('I-1'),f.runner.continueFinding('I-1')]);
+ const after=engine.read(f.root,'I-1');assert.equal(f.calls.length,calls+1,after.error);assert.equal(f.calls.at(-1)[1],'challenge');assert.equal(f.calls.at(-1)[2],true);assert.ok(f.runner.artifact('I-1'),after.error);
+ assert.deepEqual(require('../extension/review-content').project(after),before);assert.equal(f.runner.state.jobs['I-2'].requestLimit,sibling.requestLimit);assert.equal(f.runner.state.jobs['I-2'].requests,sibling.requests);
+ assert.equal(f.runner.state.jobs['I-1'].requests,d.runs.length+1);await f.runner.ensure();assert.equal(f.calls.length,calls+1);
+});
+test('204 long-feedback jobs save compactly and reopen exact selected records without callbacks',{skip:!native},async t=>{
+ const f=await fixture(t,204);f.options.configuration=()=>({provider:'none'});await f.runner.ensure();
+ const long='Exact attributed review reasoning. '.repeat(40),expected=[];
+ for(const [i,job]of Object.values(f.runner.state.jobs).entries()){
+  job.state=i%2?'blocked':'completed';job.reviewReasoning=Array.from({length:42},(_,n)=>({id:`note-${n}`,result:'kept',message:long+`${i}/${n}`,sources:[]}));
+  job.validationProblems=[{code:'REVIEW_REQUIREMENTS',target:'obligation:rule',message:'Required document check omitted.'}];expected.push(structuredClone(job.reviewReasoning));
+ }
+ const raw=Buffer.byteLength(JSON.stringify({...f.runner.state,jobs:Object.fromEntries(Object.values(f.runner.state.jobs).map(j=>[j.id,{...j,reviewReasoning:j.reviewReasoning}]))}));assert.ok(raw>8*1024*1024);
+ const start=performance.now();f.runner.save();const file=path.join(f.root,'.flowboard/report-preparation.json'),bytes=fs.statSync(file).size;assert.ok(bytes<8*1024*1024);const summary=f.runner.status(undefined,'I-204');assert.equal(summary.jobs.filter(j=>j.reviewReasoning).length,1);
+ f.runner.save();const journal=require('../extension/report-journal'),saved=journal.attach(f.root,journal.read(f.root,'.flowboard/report-preparation.json'));
+ assert.deepEqual(saved.jobs['I-204'].reviewReasoning,expected[203]);assert.equal(saved.resources.requests,0);assert.equal(f.calls.length,0);
+ assert.equal(Buffer.byteLength(JSON.stringify(journal.pack(f.root,saved))),bytes-1);t.diagnostic(JSON.stringify({jobs:204,recordsPerJob:42,rawBytes:raw,journalBytes:bytes,saveReopenMs:performance.now()-start,callbacks:0}));
+ const old=fs.readFileSync(file,'utf8');f.runner.state.unbounded='x'.repeat(8*1024*1024);assert.throws(()=>f.runner.save(),/last usable journal/);assert.equal(fs.readFileSync(file,'utf8'),old);
+});
 for(const mode of ['omitted','unresolved','complete'])test(`first extraction report coverage through importer and fresh review: ${mode}`,{skip:!native},async t=>{
  const extra='\n\nA separate route `Gate.other(false)` at `src/Gate.sol:7` is also alleged to complete. The proposed change is to remove require, not the current implementation.\n';
  const source=code.replace('\n}\n','\n    function other(bool accepted) external pure { require(accepted, "other"); }\n}\n');
@@ -259,8 +293,8 @@ test('completed negative candidate verification exposes exact feedback and a ter
   const mismatched=structuredClone(draft);mismatched.reviewCandidate.verification.candidateHash='other-artifact';const projected={};
   f.runner.recoveryStatus(projected,mismatched);assert.equal(projected.verificationCompletion,null,'A received check cannot be attributed to another candidate.');
 });
-test('an explicit rejected-repair correction keeps exact feedback and spends only the remaining ordinary pair',{skip:!native},async t=>{
-  const f=await seedCorrectionRace(t);let bad=true,negative=true,raw;
+for(const findingLimit of [4,5,6])test(`an explicit rejected-repair correction allocates its ordinary pair (${findingLimit-4} slots)`,{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t,findingLimit);let bad=true,negative=true,raw;
   f.options.invoke=async(input,options)=>{
     f.calls.push([input.phase,input.reviewPurpose]);let value;
     if(input.candidateOnly){
@@ -590,7 +624,7 @@ test('FIRST pending-response recovery projects the recovered missing input throu
   const pending = engine.read(f.root, 'I-1'); assert.equal(pending.pendingResponse.phase, 'challenge');
   const ledger = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024).resources;
   const { TriageBoard } = require('../extension/board'), messages = [];
-  const board = Object.assign(Object.create(TriageBoard.prototype), { disposed: false, models: new Map(), callbacks: { reportPreparation: () => f.runner }, post: async m => messages.push(m) });
+  const board = Object.assign(Object.create(TriageBoard.prototype), { disposed: false, activeId:'I-1', models: new Map(), callbacks: { reportPreparation: () => f.runner }, post: async m => messages.push(m) });
   f.options.changed = () => board.reportProgress(); f.options.configuration = () => ({ provider: 'none', requestLimit: 2 });
   await f.runner.ensure(); await new Promise(resolve => setImmediate(resolve));
   const saved = engine.read(f.root, 'I-1'), job = f.runner.status().jobs[0], delivered = messages.at(-1).report.jobs[0];
@@ -1166,7 +1200,8 @@ test('ordinary private candidate and complete verification use separate guarded 
     const invoke=async(input,options)=>{
       const receipt=guard.dispatch(input,options.requestId);calls.push(input.reviewPurpose);
       const value=input.candidateOnly?{mode:'candidate-patch-v1',updates:[{path:'/questions',valueJSON:'[]'},
-        {path:'/evidence/guard/explanation',valueJSON:JSON.stringify('The false condition reaches require; it reverts instead of returning normally.')}]}:response(input);
+        {path:'/evidence/guard/explanation',valueJSON:JSON.stringify('The false condition reaches require; it reverts instead of returning normally.')},
+        {path:'/reportCoverage',valueJSON:JSON.stringify({...input.earlierDraft.reportCoverage,dispositions:input.earlierDraft.reportCoverage.dispositions.map((d,i)=>i?d:{...d,reason:'The original heading is context, not an additional allegation.'})})}]}:response(input);
       if(input.checkOnly){value.inputReviews=[];value.explanationReviews[0].result='repaired';value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The local guard supplies the previously requested explanation; the same false-input condition is retained.',evidence:['guard'],documentation:[]})));}
       const result={value:require('../scripts/fixtures/authoring-output').encode(value,input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'fixed-local',teardown:{confirmed:true}}};
       guard.result(receipt,input,result);return result;
@@ -1181,6 +1216,29 @@ test('ordinary private candidate and complete verification use separate guarded 
     owner.dispose();await owner.loop;
   }
   assert.deepEqual(calls,purposes);assert.equal(engine.read(f.root,entry.id).phase,'ready');
+  const retained=engine.read(f.root,entry.id);retained.causal.checks=retained.causal.checks.filter(c=>c.target!=='obligation:rule');
+  retained.publication=policy.gate(retained);retained.phase='blocked';retained.failureKind='capability';engine.write(f.root,retained);
+  let callbacks=0,enabled=true;
+  const resumed=new ReportPreparation(f.root,{...f.options,configuration:()=>({provider:enabled?'codex':'none',requestLimit:8}),invoke:async(input,options)=>{
+    callbacks++;assert.equal(input.reviewPurpose,'retained-verification');const value=response(input);value.explanationReviews[0].result='repaired';
+    value.checks.push(...input.candidateRevisionTargets.map(target=>({target,reason:'The original guard and complete report dispositions were compared.',evidence:['guard'],documentation:[]})));
+    return{value:require('../scripts/fixtures/authoring-output').encode(value,input),audit:{requestId:options.requestId,phase:'challenge',outcome:'completed',provider:'scripted',teardown:{confirmed:true}}};
+  }});t.after(()=>resumed.dispose());
+  const coverage=require('../extension/report-coverage'),originalAssert=coverage.assert;let rejected=false;
+  const faulty=t.mock.method(coverage,'assert',function(value,draft,options){
+    if(!rejected&&options?.review&&value.reportReview?.changes.length){rejected=true;throw Object.assign(Error('Controlled host rejection before report-reference recovery.'),{code:'REVIEW_REFERENCE_SCOPE'});}
+    return originalAssert(value,draft,options);
+  });
+  // The earlier explicit evaluation windows are spent. This fictional
+  // ordinary action allocates new report capacity, never reuses their guard.
+  await resumed.control('resume');await resumed.continueFinding(entry.id);faulty.mock.restore();enabled=false;
+  const spent=resumed.state.resources.requests;await resumed.ensure();
+  const replayed=engine.read(f.root,entry.id);assert.equal(callbacks,1,JSON.stringify(resumed.status()));assert.equal(resumed.state.resources.requests,spent);
+  assert.equal(replayed.phase,'ready',replayed.error);assert.ok(replayed.runs.at(-1).reusedResponse);
+  assert.equal(replayed.currentRejection,undefined);assert.equal(resumed.status().jobs[0].currentAttempt,null);
+  assert.ok(replayed.rejectionHistory.some(r=>r.validationProblems.some(p=>p.message.includes('Controlled host rejection'))));
+  assert.equal(replayed.candidateHistory.at(-1).verification.requestId,replayed.runs.at(-1).requestId);
+  assert.ok(replayed.reportReview.changes.length,'Original/current disposition review survives local replay.');
   function inputReady(purpose){return purpose==='candidate-verification'?1:0;}
 });
 

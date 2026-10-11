@@ -6,7 +6,7 @@ const format = require('./challenge-format');
 const scope = require('./review-scope');
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const VERSION = 'private-candidate-v1';
-const purposes = ['candidate-completion', 'candidate-verification', 'candidate-repair', 'candidate-reverification','rejected-proposal-repair','rejected-proposal-followup'];
+const purposes = ['candidate-completion', 'candidate-verification', 'candidate-repair', 'candidate-reverification','retained-verification','rejected-proposal-repair','rejected-proposal-followup'];
 function unchecked(value) {
   const result = structuredClone(value);
   result.inputReviews = []; result.explanationReviews = [];
@@ -42,11 +42,12 @@ function assertCurrent(draft, schema) {
       throw Object.assign(new Error('Private revision lost its immutable terminal predecessor.'),{code:'CANDIDATE_STALE'});}
   const rejected=state?.referenceOrigin&&require('./rejected-proposal').assertCurrent(draft,schema);
   if (!state || state.version !== VERSION || state.contextHash !== identity(draft) ||
-      (rejected ? state.referenceBaseHash!==rejected.proposalHash || hash(state.referenceOrigin)!==hash(rejected.origin) || hash(state.referenceBase)!==rejected.proposalHash : state.acceptedBaseHash !== hash(wire(draft, schema))) ||
+      (rejected ? state.referenceBaseHash!==rejected.proposalHash || hash(state.referenceOrigin)!==hash(rejected.origin) || hash(state.referenceBase)!==rejected.proposalHash : (state.currentBaseHash||state.acceptedBaseHash) !== hash(wire(draft, schema))) ||
       state.candidateHash !== hash(state.candidate) ||
       state.lineage?.at(-1)?.authoringMapping && state.lineage.at(-1).authoringMapping.canonicalHash !== state.candidateHash ||
       hash(state.revisions) !== hash(revision(state.referenceBase||state.acceptedBase, state.candidate,state.referenceOrigin)))
     throw Object.assign(new Error('Private candidate/source/premise/base or revision identity changed. No prior checks can be reused.'), { code: 'CANDIDATE_STALE' });
+  if(state.currentBaseHash&&!draft.candidateHistory?.some(h=>hash(h)===state.retainedParentHash&&hash(h.acceptedBase)===state.acceptedBaseHash))throw new Error('Retained revision lost its immutable original/current predecessor.');
   return state;
 }
 function save(draft, candidate, schema, provenance) {
@@ -65,7 +66,7 @@ function save(draft, candidate, schema, provenance) {
     versionNumber: (prior?.versionNumber || 0) + 1, candidate: proposed, candidateHash: hash(proposed), revisions,
     lineage: [...(prior?.lineage || []), { ...provenance, candidateHash: hash(proposed), revisionHash: hash(revisions) }],
     history: [...(prior?.history || []), ...(prior ? [{ candidate: prior.candidate, candidateHash: prior.candidateHash, verification: prior.verification || null }] : [])],
-    repairCount: prior?.repairCount || 0, ...(prior?.successor?{successor:prior.successor}:{}), verification: null };
+    repairCount: prior?.repairCount || 0, ...(prior?.currentBaseHash?{currentBaseHash:prior.currentBaseHash,retainedParentHash:prior.retainedParentHash}:{}), ...(prior?.successor?{successor:prior.successor}:{}), verification: null };
   return draft.reviewCandidate;
 }
 function needsCompletion(draft) {
@@ -115,6 +116,7 @@ function revise(draft,schema,request) {
   return draft.reviewCandidate;
 }
 function packet(input, draft, schema, selectedPurpose) {
+  if(selectedPurpose==='retained-verification')return retainedPacket(input,draft,schema);
   const state = draft.reviewCandidate && assertCurrent(draft, schema);
   const rejected=draft.rejectedProposal&&require('./rejected-proposal').assertCurrent(draft,schema);
   const candidate = state?.candidate || rejected?.proposal || wire(draft, schema);
@@ -151,6 +153,18 @@ function packet(input, draft, schema, selectedPurpose) {
     } }
   return result;
 }
+function retainedPacket(input,draft,schema){
+  const state=(draft.candidateHistory||[]).findLast(h=>h.candidateHash===draft.candidateVerification?.candidateHash);
+  if(!state)return{...input,checkOnly:true,reviewRequirements:undefined};
+  if(state.contextHash!==identity(draft)||state.candidateHash!==hash(state.candidate)||hash(state.revisions)!==hash(revision(state.referenceBase||state.acceptedBase,state.candidate,state.referenceOrigin)))
+    throw new Error('Retained original/current review lineage is not compatible with the current input.');
+  require('./review-content').equal(require('./review-content').fromWire(state.candidate,draft.sources),draft);
+  const result={...input,checkOnly:true,earlierDraft:state.candidate,reviewPurpose:'retained-verification',
+    candidateIdentity:{version:VERSION,contextHash:identity(draft),candidateHash:state.candidateHash,revisionHash:hash(state.revisions),acceptedBaseHash:state.acceptedBaseHash},
+    candidateRevisions:state.revisions,candidateRevisionTargets:revisionTargets(state.revisions)};
+  delete result.repairOnly;delete result.candidateOnly;delete result.hostReview;
+  return result;
+}
 function revisionTargets(revisions) {
   // Note revisions already have explicit kept/repaired/added/removed coverage.
   // Reuse the existing check shape for other material old-to-candidate changes,
@@ -162,7 +176,8 @@ function revisionTargets(revisions) {
 }
 function checkRevisions(value, input, draft) {
   const targets=revisionTargets(input.candidateRevisions), checks=value.checks.filter(item=>item.target.startsWith('revision:'));
-  const evidence=new Set([...(draft.rejectedProposal?.proposal.evidence||draft.evidence),...input.earlierDraft.evidence].map(item=>item.id));
+  const old=input.candidateRevisions.changes.filter(c=>c.path.startsWith('/evidence/')&&c.before).map(c=>c.before);
+  const evidence=new Set([...(draft.rejectedProposal?.proposal.evidence||draft.evidence),...input.earlierDraft.evidence,...old].map(item=>item.id));
   const docs=new Set((draft.documentation?.excerpts||[]).map(item=>item.id));
   if(checks.length!==targets.length || new Set(checks.map(item=>item.target)).size!==targets.length || checks.some(item=>
     !targets.includes(item.target) || !item.reason.trim() || !(item.evidence.length+item.documentation.length) ||
@@ -174,4 +189,4 @@ const instruction = `PRIVATE CANDIDATE LIFECYCLE. earlierDraft is the exact UNCH
 For a checkOnly request: overall kept means the CANDIDATE remains EXACTLY unchanged. Fresh explanationReviews classify each note relative to the ORIGINAL reference (accepted base, or explicitly unaccepted received proposal): unchanged=kept, changed=repaired, new=added, absent=removed. Review every current note AND every old changed/removed note in candidateRevisions, with their original and current sources. Check the reasons and dependent reference changes, all original claim groups, every current causal target and all premises. No approvals are inherited. If any edit is needed return repair with concrete affected IDs; do not rewrite the candidate. An indispensable missing fact stays a finite blocker, not a forced verdict.
 In that same checks array, additionally check EVERY exact target in candidateRevisionTargets. Explain why its exact original-to-candidate change/removal is justified (or reject it), using old/current evidence IDs or supplied documentation. These checks do not replace any current causal target or explanation review. Revision targets are separate from runtime events and never become tutorial steps.
 For candidateOnly: normal instructions demanding fresh inputReviews, explanationReviews and causal checks do NOT apply to this authoring request. Complete the WHOLE explanation across all material claim groups, rule basis, conditions, consequences and counterevidence, or retain exact indispensable blockers. Return only the enforced candidate authoring shape; it supplies no attestations. Keep unaffected content and stable IDs. A candidate-repair request may change only the stated problems and their necessary dependencies. untrustedAuthoring is a rejected earlier proposal, not the current candidate: its edits were NOT applied to earlierDraft. Independently use or reject its material reasoning against source and current diagnostics; never inherit its checks. The complete candidate will receive a separate fresh check.`;
-module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, instruction, revise };
+module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, retainedPacket, instruction, revise };

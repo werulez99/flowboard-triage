@@ -2,6 +2,11 @@
 // Translate deterministic fixture authoring, never retained/model answers.
 // Fixtures still pass through the exact new enforced schema and engine path.
 function encode(value, input) {
+  // Scripted legacy fixtures use short targets. Real provider replies are
+  // never normalized here; new requests expose exact typed target identities.
+  if(input.checkOnly&&input.reviewRequirements&&value?.checks){value=structuredClone(value);const plain=require('../../extension/packet-context').expand(input);
+    value.checks=require('../../extension/review-capacity').normalizeChecks({...plain.earlierDraft.causal,checks:value.checks});
+    if(!plain.semanticInput?.premises?.length)value.inputReviews??=[];}
   const contract=require('../../extension/authoring-contract');
   if(input.reportCoverageContract&&(value?.claims?.length||input.earlierDraft?.reportCoverage)){
     value=structuredClone(value);const plain=require('../../extension/packet-context').expand(input),coverage=require('../../extension/report-coverage');

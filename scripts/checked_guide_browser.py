@@ -757,7 +757,11 @@ try:
                 result['checks'].append('Received rejection has a factual recovery message, no replay disguised as repair and no unaccepted tutorial.')
             if selected_job and selected_job.get('verificationCompletion'):
                 correction = selected_job['verificationCompletion'].get('result') == 'repair'
-                assert ('Verifier returned · correction required.' if correction else 'Full verification completed · walkthrough unavailable.') in status_text
+                expected = ('Verifier returned · correction required.' if correction else
+                    'Review response received · required checking is incomplete.' if selected_job['verificationCompletion'].get('checkingIncomplete') else
+                    'Checked technical assessment · walkthrough unavailable.' if selected_job.get('assessmentProjection',{}).get('technical',{}).get('result','not-assessed') != 'not-assessed' else
+                    'Review response received · assessment admission blocked.')
+                assert expected in status_text
                 assert page.locator('.guide-verification-status').is_visible()
                 if selected_job.get('privateCandidateState') == 'terminal':
                     assert page.get_by_role('button', name='Continue this finding', exact=True).count() == 0

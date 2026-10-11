@@ -79,7 +79,7 @@ class TriageBoard {
     const profiles=require('./assessment-profile');Object.assign(evaluated.assessment,profiles.project(draft,evaluated.assessment));
     evaluated.assessment=profiles.remap(evaluated.assessment,mapping);
     const report = this.callbacks?.reportPreparation?.();
-    const status = report?.status(mapping);
+    const status = report?.status(mapping,this.activeId||null);
     return guidePolicy.expose(draft, status ? { findingId: draft?.findingId, findingReady: report.published(draft,evaluated) } : this.callbacks?.reportPreparation ? {
       findingId: draft?.findingId, findingReady: false } : null,evaluated);
   }
@@ -88,11 +88,11 @@ class TriageBoard {
     const mapping=this.profileMapping(),projection=this.exposed(model.investigationDraft,mapping).assessmentProjection;
     await this.post({type:'triage:assessmentProjection',issueId:model.id,token:model.token,artifact:projection.artifact,projection,
       mapping,profileObservation:this.profileObservation=(this.profileObservation||0)+1});
-    const report=this.callbacks.reportPreparation?.();if(report)await this.post({type:'triage:reportPreparation',report:report.status(mapping)});}
-  async reportProgress() {
+    const report=this.callbacks.reportPreparation?.();if(report)await this.post({type:'triage:reportPreparation',report:report.status(mapping,this.activeId||null)});}
+  async reportProgress(projection) {
     if (this.disposed) return;
     const report = this.callbacks.reportPreparation?.();
-    const status = report?.status();
+    const status = projection || report?.status(undefined,this.activeId||null);
     await this.post({ type: 'triage:reportPreparation', report: status });
     const model = this.models.get(this.activeId);
     // Token progress only updates status. No source scan, draft parse or digest

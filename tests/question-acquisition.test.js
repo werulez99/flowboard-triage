@@ -28,9 +28,12 @@ test('completed verification is distinct from publication and preserves original
     localRevalidations:[{requestId:'R2',previousRejection:{validationProblems:[{code:'CAPACITY',message:'historical capacity'}]}}]};
   const job={id:'generic',requests:4,requestLimit:4};
   coordinator(4).recoveryStatus(job,draft);
-  assert.deepEqual(job.verificationCompletion,{requestId:'V',result:'kept',at:'now',published:false});
+  assert.deepEqual(job.verificationCompletion,{requestId:'V',result:'kept',at:'now',published:false,checkingIncomplete:false});
   assert.deepEqual(job.rejectionHistory.map(item=>item.requestId),['G','R','R2']);assert.deepEqual(job.validationProblems,[]);
   assert.equal(job.retainedRejection,false);assert.equal(job.repairAvailable,false);
+  draft.runs=[{requestId:'V',resultAccepted:true}];draft.currentRejection={requestId:'V',validationProblems:[{code:'OLD_HOST_ERROR'}]};
+  draft.publication.details=[{code:'CURRENT_PREMISE',reason:'The rule remains unresolved.',kind:'material-evidence'}];
+  coordinator(4).recoveryStatus(job,draft);assert.equal(job.currentAttempt,null);assert.deepEqual(job.validationProblems.map(p=>p.code),['CURRENT_PREMISE']);
   draft.candidateVerification.candidateHash='changed';
   coordinator(4).recoveryStatus(job,draft);
   assert.equal(job.verificationCompletion,null,'An older verification cannot label a changed candidate checked.');

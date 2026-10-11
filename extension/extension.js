@@ -51,7 +51,8 @@ function activate(context) {
           return !!scope && (scope.kind !== 'finding' || scope.findingId === findingId);
         }),
         catalog: async signal => { trust(); const result = await sourceCatalog(folder, upstream(), { mode: 'source', slitherPath: '' }, p.gitState(root), { ...operation(folder, 'background'), signal }); return result.catalog; },
-        changed: () => { const board = boards.get(root); if (board && !board.disposed) return board.reportProgress?.(); },
+        selectedFinding:()=>boards.get(root)?.activeId||null,
+        changed: status => { const board = boards.get(root); if (board && !board.disposed) return board.reportProgress?.(status); },
         log: message => log.appendLine(message)
       });
       preparations.set(root, preparation); context.subscriptions.push({ dispose: () => preparation.dispose() });
@@ -466,7 +467,7 @@ function activate(context) {
     try { const index = store.readReport(folder.uri.fsPath); report.findings = index.issues.length; }
     catch (error) { report.reportWarnings.push(error.message); }
     let receipts = [];
-    try { receipts = Object.values(p.readWorkspaceJson(folder.uri.fsPath, '.flowboard/report-preparation.json', 8 * 1024 * 1024).resources?.receipts || {}); }
+    try { receipts = Object.values(require('./report-journal').read(folder.uri.fsPath, '.flowboard/report-preparation.json').resources?.receipts || {}); }
     catch (error) { if (error.code !== 'ENOENT') report.reportWarnings.push('Saved provider observations are unavailable.'); }
     // Print runtime identity first: optional CLI diagnostics must never hide it.
     log.appendLine(JSON.stringify({ activeTriage: report.activeTriage, dependency: report.dependency, dependencyPath: report.dependencyPath }, null, 2)); log.show();

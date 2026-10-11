@@ -11,6 +11,10 @@ const calls = [];
 let indexes = 0, catalog, coordinator;
 async function main() {
   coordinator = new ReportPreparation(root, {
+    // These saved-response compatibility controls intentionally exercise the
+    // pre-checklist wire contract, including its supported full-result form.
+    // New checklist requests have separate coordinator coverage controls.
+    prepareRequest:input=>{const legacy={...input};delete legacy.reviewRequirements;return legacy;},
     configuration: () => ({ provider: mode === 'restore' ? 'none' : 'codex', requestLimit: mode === 'crash-after-challenge' ? 2 : 4, workers: 1 }),
     catalog: async () => { if (!catalog) { indexes++; const prepared = await analyze(process.env.FLOWBOARD_EXTENSION_PATH, root, { mode: 'source' }); catalog = new SourceCatalog(root, prepared.runner, prepared.result); } return catalog; },
     invoke: async input => {

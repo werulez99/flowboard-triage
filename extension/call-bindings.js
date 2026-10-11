@@ -412,7 +412,7 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
   const modifier=suffix?require('./modifier-path').inspect(unit,suffix,values,units):null;
   if(modifier&&modifier.reachable!==true)return modifier;
   if (offset >= body.start && offset < body.bodyStart) return { reachable: true, values: new Map(values), guards: [] };
-  const result = execution.pathTo(unit, offset, values, { ...options,
+  const result = execution.pathTo(unit, offset, modifier?.values||values, { ...options,
     failureClass: (kind, args, absolute, custom) => unitFailure(unit, kind, args, absolute, custom), operation(node, current) {
     const provided = options.operation?.(node, current); if (provided) return provided;
     const sites = unitSites(unit).filter(site => site.span.start >= node.start && site.span.end <= node.end);

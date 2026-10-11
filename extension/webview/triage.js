@@ -74,11 +74,11 @@
   const canContinueFinding = () => {
     const job = preparationJob(active);
     return !localAdmission() && !sharedAllowanceExhausted() && job?.continueAction?.available===true && job.privateCandidateState!=='terminal' && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
-      !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
+      (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
-    job?.verificationCompletion?.result==='repair' ? 'Verifier returned · correction required' : job?.verificationCompletion ? 'Review completed · walkthrough blocked' :
+    job?.verificationCompletion?.result==='repair' ? 'Verifier returned · correction required' : job?.verificationCompletion?.checkingIncomplete ? 'Review received · checking incomplete' : job?.verificationCompletion ? 'Review received · walkthrough blocked' :
     job?.retainedRejection ? 'Received analysis needs correction' : job?.failureKind==='storage' ? 'Response storage needs recovery' : job?.hasPrivateCandidate ? 'Private candidate needs verification' : job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
     job?.failureKind === 'provider' ? 'Operational failure' : preparationLabel(job?.state);
   function selectedProjection(job=preparationJob(active)){
@@ -366,7 +366,14 @@
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
       if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.result==='repair'?
         'Verifier returned · correction required. No technical assessment or tutorial was accepted.':job.verificationCompletion.published?
-        'Full verification completed · checked tutorial available.':'Full verification completed · walkthrough unavailable. The technical assessment and the remaining evidence or presentation blockers are shown separately.'));
+        'Full verification completed · checked tutorial available.':job.verificationCompletion.checkingIncomplete?
+        'Review response received · required checking is incomplete. No current technical assessment or tutorial is admitted.':job.assessmentProjection?.technical?.result&&job.assessmentProjection.technical.result!=='not-assessed'?
+        'Checked technical assessment · walkthrough unavailable. Its scope and remaining blockers are shown separately.':'Review response received · assessment admission blocked. The exact remaining checks and source limitations are shown below.'));
+      if(job?.verificationCompletion?.checkingIncomplete){
+        const gaps=(job.validationProblems||[]).filter(p=>['OBLIGATION_CHECK_COVERAGE','REVIEW_REQUIREMENTS'].includes(p.code));
+        preparationSurface.append(element('p','guide-current-requirement',gaps.map(p=>p.message).join(' ')||'Required current target checking is incomplete.'),
+          element('p','guide-status-reason',job.continueAction?.reason||'Revalidate the unchanged saved argument before complete fresh verification.'));
+      }
       if(job?.verificationCompletion?.result==='repair'&&job.validationProblems?.length){
         preparationSurface.append(element('p','guide-current-requirement',job.validationProblems[0].message));
         if(job.validationProblems.length>1)preparationSurface.append(element('small','triage-muted',`${job.validationProblems.length-1} additional correction records below. Supporting review reasoning is separate and is not a defect count.`));
@@ -378,7 +385,7 @@
           reason:'Reconcile the current complete verifier feedback and its dependent argument against the supplied material sources.'}})));
       }
       if(blockerReturn)preparationSurface.append(button('Return to blockers',returnFromBlocker));
-      if(job?.verificationCompletion&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.length)
+      if(job?.verificationCompletion&&!job.verificationCompletion.checkingIncomplete&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.length)
         preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
       if(job?.validationProblems?.length){
         const groups=element('nav','guide-blocker-groups');groups.setAttribute('aria-label','Current blocker groups');

@@ -9,12 +9,20 @@ const reportCheck=full=>full.required.includes('reportCoverage')?{reportReview:r
 // A first challenge checks the argument without asking for a second copy of
 // the entire causal model. A disagreement takes the existing bounded repair
 // path. This is a smaller response contract, not a weaker publication gate.
-function checkSchema(full, revisions = false) {
-  return object({ ...reportCheck(full),result: { enum: ['kept', 'repair'] }, problems: { type: 'array', items: { type: 'string' }, maxItems: 12 },
+function checkSchema(full, revisions = false, requirements = null) {
+  const result=object({ ...reportCheck(full),result: { enum: ['kept', 'repair'] }, problems: { type: 'array', items: { type: 'string' }, maxItems: 12 },
     ...(full.properties.inputReviews ? { inputReviews: full.properties.inputReviews } : {}),
     explanationReviews: full.properties.explanationReviews,
     checks: revisions ? { ...full.properties.causal.properties.checks,
       maxItems: full.properties.causal.properties.checks.maxItems + require('./review-capacity').limits.revisionChecks } : full.properties.causal.properties.checks });
+  if(requirements){
+    result.properties.checks=structuredClone(result.properties.checks);
+    const ids=requirements.checks.map(c=>c.target);
+    result.properties.checks.items.properties.target={type:'string',enum:ids};
+    // The provider's supported array schema has min/maxItems, not uniqueItems.
+    // Cross-reference uniqueness is checked explicitly after receiving bytes.
+  }
+  return result;
 }
 function checked(value, previous, full) {
   if (full.properties.inputReviews && !previous.inputReviews?.length && value?.inputReviews === undefined) value = { ...value, inputReviews: [] };
@@ -27,7 +35,7 @@ function checked(value, previous, full) {
   result.causal.checks = value.checks;
   return result;
 }
-const checkInstruction = `This request is a CHECK, not a rewrite. The response schema below supersedes the output-shape instructions above. Read the whole supplied argument and relevant code, including new dependencies. Return result=kept ONLY when earlierDraft can be retained EXACTLY. Explain every evidence entry with result=kept and every causal target (events, obligations, relationships) with fresh evidence-grounded checks. One concrete sentence per check. If a note, condition, unresolved question, argument or outcome needs changing, return result=repair with precise problems and affected IDs; do not silently approve it. An honest incomplete argument may be kept with its blockers intact, but cannot become a published guide. Do not generate a replacement tutorial, repeat quotes or invent new evidence in this checking response. Location matching and model agreement alone do not establish truth.`;
+const checkInstruction = `This request is a CHECK, not a rewrite. The response schema below supersedes the output-shape instructions above. Read the whole supplied argument and relevant code, including new dependencies. Return result=kept ONLY when earlierDraft can be retained EXACTLY. Explain every original/current evidence entry using its original-to-current kept/repaired/added/removed classification, and every causal target (events, obligations, relationships) with fresh evidence-grounded checks. Without candidate revisions the unchanged notes are kept. One concrete sentence per check. If a note, condition, unresolved question, argument or outcome needs changing, return result=repair with precise problems and affected IDs; do not silently approve it. An honest incomplete argument may be kept with its blockers intact, but cannot become a published guide. Do not generate a replacement tutorial, repeat quotes or invent new evidence in this checking response. Location matching and model agreement alone do not establish truth.`;
 const PATCH = 'review-patch-v1';
 const CANDIDATE = 'candidate-patch-v1';
 function candidateSchema(full) {
@@ -121,7 +129,8 @@ function valid(value, schema, root = schema, references = new Set()) {
   if (schema.type === 'string' && (typeof value !== 'string' || schema.maxLength && Array.from(value).length > schema.maxLength || schema.pattern && !new RegExp(schema.pattern).test(value))) return false;
   if (schema.type === 'integer' && (!Number.isSafeInteger(value) || schema.minimum !== undefined && value < schema.minimum || schema.maximum !== undefined && value > schema.maximum)) return false;
   if (schema.type === 'boolean' && typeof value !== 'boolean') return false;
-  if (schema.type === 'array') return Array.isArray(value) && (!schema.maxItems || value.length <= schema.maxItems) && value.every(item => valid(item, schema.items, root, references));
+  if (schema.type === 'array') return Array.isArray(value) && (schema.maxItems===undefined || value.length <= schema.maxItems) &&
+    (schema.minItems===undefined||value.length>=schema.minItems)&&(!schema.uniqueItems||new Set(value.map(v=>JSON.stringify(v))).size===value.length)&&value.every(item => valid(item, schema.items, root, references));
   if (schema.type === 'object') return !!value && typeof value === 'object' && !Array.isArray(value) &&
     schema.required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => Object.hasOwn(schema.properties, key)) &&
     Object.entries(schema.properties).every(([key, child]) => !Object.hasOwn(value, key) || valid(value[key], child, root, references));

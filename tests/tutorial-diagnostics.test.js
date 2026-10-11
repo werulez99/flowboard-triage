@@ -7,6 +7,22 @@ function modifier(body,condition='guard()',values=new Map()){
   return {source,guard,units:new Map([[source.id,source],[guard.id,guard]]),values};
 }
 function path(f,complete=false){return bindings.sourcePath(f.source,complete?Infinity:f.source.code.indexOf('bool reached'),f.values,f.units,{complete});}
+test('inherited scalar guard follows exact private helpers; entry, cleanup and rollback stay separate',()=>{
+  const f=modifier('before(); _; after();');
+  for(const u of [f.guard]){u.contract='Base';u.name=u.name.replace('Local::','Base::');u.source.file='src/Base.sol';}
+  const add=(name,code,line,contextKind)=>{const u=unit(name,code,line);u.contract='Base';u.name='Base::'+name;u.source.file='src/Base.sol';u.contextKind=contextKind;f.units.set(u.id,u);return u;};
+  add('LOCKED','uint256 private constant LOCKED = 2;',20,'state');add('FREE','uint256 private constant FREE = 1;',21,'state');add('lock','uint256 private lock;',22,'state');
+  const before=add('before','function before() private { if (lock == LOCKED) revert Busy(); lock = LOCKED; }',24);
+  const after=add('after','function after() private { lock = FREE; }',26);
+  f.source.initialization={complete:true,scopes:[{file:'src/Base.sol',sourceHash:f.guard.source.sourceHash,contract:'Base'}]};
+  f.values.set('Base.lock',{scalar:'1'});let p=path(f);assert.equal(p.reachable,true,p.reason);assert.equal(p.guardState,undefined);assert.equal(p.modifier.guardState.get('lock').scalar,'2');assert.equal(p.modifier.postlude.values.get('lock').scalar,'1');
+  f.values.set('Base.lock',{scalar:'2'});assert.equal(path(f).reachable,false,'Reentry rejects before the body');
+  f.values.clear();f.values.set('lock',{scalar:'1'});assert.equal(path(f).code,'MODIFIER_GUARD_PREMISE','A same-named unqualified local cannot certify inherited storage');
+  f.values.set('Base.lock',{scalar:'1'});after.code='function after() private { lock = FREE; require(false); }';p=path(f);assert.equal(p.reachable,true);assert.equal(p.commitment,'reverts');assert.equal(path(f,true).bodyReached,true);
+  after.code='function after() private { assembly { sstore(0, 1) } }';assert.equal(path(f).code,'MODIFIER_EFFECT_UNSUPPORTED');
+  after.code='function after() private { lock = FREE; }';before.modelRanges=[];assert.equal(path(f).code,'MODIFIER_HELPER_VIEW_MISSING');
+  delete before.modelRanges;f.source.initialization.complete=false;assert.equal(path(f).code,'MODIFIER_OWNER_UNRESOLVED');
+});
 test('exact modifier prefix/body/postlude are separate; unsupported effects and missing source stay distinct',()=>{
   assert.equal(path(modifier('_;')).reachable,true);
   assert.equal(path(modifier('require(false); _;')).reachable,false);

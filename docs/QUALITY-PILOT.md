@@ -1,5 +1,125 @@
 # Bounded fresh quality pilot
 
+## Retained verification and local recovery (0.19.34)
+
+Baseline: `59338857f31c6c36bef3bef973ec6e291258656a`, 0.19.33.
+The declared case remains L-113, not a new import or a success-search replacement.
+It now has a **current, admissible insufficient-evidence assessment with partial
+coverage**, from a fresh real kept verifier and unpaid local recovery. All 25
+notes, both claim groups and semantic content remain unchanged. **There is still
+no complete real tutorial.** Model agreement is not independent adjudication.
+
+The ordinary host selects fresh V for incomplete checking instead of regenerating
+the saved argument or requesting an empty completion. Exact target/evidence/doc
+requirements and original/current note classifications reach the measured request.
+The returned V covers the three formerly omitted obligation references. It has
+25 note reviews, 54 current/revision checks, one premise review and a full report
+review with four original-to-current disposition reasons. The original report
+explicitly includes inability to act on L1; its conditional scope was not deleted.
+
+Two incremental requests were reserved/dispatched. The first failed before a
+response with a request-format error (3.638 monotonic adapter seconds). The new
+schema had introduced `uniqueItems`, outside the documented provider subset; it
+was removed from the wire schema while explicit local duplicate-reference checks
+remain. The sanitized error did not preserve the backend's full text, so exact
+causal attribution is limited. No identical retry or model change was used.
+The corrected V completed kept: 197,634 conservative bytes / 19 source units,
+137.018 monotonic adapter seconds / 150.009 wall seconds, 62,181 input / 6,757
+output tokens (121 reasoning tokens included in output). Model identity and cost
+were not returned. CLI default, medium effort, two slots and 240s stayed fixed.
+
+Initial host ingestion rejected that response against the wrong **current** report
+map; the response actually contained all four correct **original-to-current**
+review reasons. The generic retained/replay path now uses the immutable original
+map and note reference. The exact paid response was then admitted locally with
+zero requests; its initial rejection and bytes remain retained. No missing ID or
+reason was filled. The local replay segment took 24.599s including 11.951s indexing.
+
+Remaining distinct issues are (1) the expected collection entitlement/property,
+(2) conditional versus particular-account recovery and permanence, including
+recipient acceptance and destination authority, and (3) an unbound qualified
+guard entry-state predicate. The inherited owner, private scalar writes and exact
+private helper bodies are now supported in the bounded analyzer. The last issue
+is not missing guard source, and ordinary non-nested prose is not a machine-bound
+storage value. Prefix rejection, cleanup and a reverting postlude are tested
+separately; unsupported composition, aliases and assembly stay explicit.
+Rollback of this transaction does not establish usable collection of prior credit.
+A rule may be established by an applicable specification **or a freshly reviewed
+derived invariant**; the retained report-assumption basis is not such a derivation.
+The AI-only source read-through does not establish that these abstentions are
+independently correct or that a deployment observation is necessary for every
+conditional source claim. A substantive scope/property correction requires
+private authorship and fresh review, not editing the kept answer.
+
+Incremental counts: 2 reserved / 2 dispatched / 1 completed response / 1 host-
+admitted stage / 1 freshly kept verification / 1 admissible assessment / 0
+publications. Local replay is not a third request. L-113 lifetime: 8 dispatched /
+7 completed / 5 admitted / 1 admissible assessment / 0 tutorials. The old six-case
+history stays 17 / 14 / 10 / 1 / 0; the combined record is 25 / 21 / 15 / 2 / 0.
+Its automatic ordinary allocation is now 8 used of 12; the original user workspace
+and fixed historical pilot allowances were not changed. Queue wait was 16ms.
+L-113 accumulated adapter time is 1,156.570 monotonic seconds / 1,246.213 wall
+seconds. Incremental provider service was 140.656 monotonic seconds; the four
+preparation/execution/recovery segments total 217.487s, including 45.184s indexing.
+This excludes development, tests and later native inspection, and is not cold-import
+performance. No measured saving is assigned to a hypothetical avoided generation.
+
+New requirement inventory overhead, measured on identical in-memory inputs under
+the current instructions: smaller 19-source V 188,812 → 197,862 bytes (+9,050);
+archived larger 49-source V 314,199 → 327,022 (+12,823). The final checklist adds
+explicit report revision classifications; the actually dispatched V used its
+retained v1 checklist (197,634 bytes), supported by its own exact reviews. Archives
+were neither modified nor dispatched for this comparison. Byte counts do not
+establish token efficiency or semantic quality.
+
+The 204-job long-feedback storage control has 42 long records per job: 12,619,026
+bytes of inline report data become a compact journal plus exact content/owner-bound
+per-finding records. No diagnostic text is truncated. Reopen is zero-call; a compact
+overflow fails before replacing the last usable journal. Detail provenance survives
+adding a sibling report entry, without borrowing another report's approval.
+Status callbacks reuse their computed selected-detail projection. This is not a
+real 200-finding inference benchmark or evidence for a 20–30-minute SLA.
+
+Private evidence remains under `private-evaluations/v48-retained/`, including both
+pinned dispatch builds, raw input/schema/response/error records, `BEFORE.json`,
+`retry-RESULT.json` (historical ingestion failure), and `PREPARATION.json` (later
+local admission). Paid archives and original semantic content were hash-checked.
+
+Pre-native canonical gate with original native 1.2.0: **624/624**, zero failures/skips,
+148.533s. The unchanged 204-stage-pair fixture passed in 90.778s below 120s, with
+408 scripted callbacks and one catalog acquisition. The prior full run was
+612/624; it exposed legacy-contract compatibility, report-reference rebinding
+and stale fixture projection expectations, fixed with focused controls (41 and
+74 tests). Its failed record is retained. The large-feedback final sample was
+measured independently of real provider work; no broad throughput claim follows.
+
+The installed original native 1.2.0 renderer and installed companion 0.19.34 were
+then exercised with the actual saved L-113 and provider none (simulated editor
+I/O, not observed Cursor-window activation). The first capture exposed stale
+rejection projection after successful local admission; the harness also expected
+the obsolete completed-verification label. The receipt-bound current/history
+projection and its regression were corrected. The repeated native control passed
+all five blocked-assessment groups with no page/host errors or provider callbacks.
+At 1440x900 and 801x600, original claim lines 253–255 are readable beside the
+specific unresolved collection-property explanation, with the complete function
+and tail accessible. Return restores camera/selection; saved reopen preserves the
+assessment. Source open 958.901ms, Return 90.694ms and reopen 3,220.261ms are one
+sample each, not p95 or matched speedups. The AI screenshot read-through confirms
+useful source inspection, **not full Next/Previous tutorial playback** or a human
+comprehension study. Actual Cursor activation and general model accuracy remain
+unobserved. Private captures are in `v48-retained/native-corrected/`; the failed
+first capture remains in `v48-retained/native/`.
+
+After the native-discovered stale-rejection fix, the required final gate passed
+**624/624**, zero failures/skips, in 198.628s. The unchanged 204-job control passed
+in 112.073s (111.759s measured local/controlled work), below its 120s assertion.
+This later run was slower than the pre-native run; no performance improvement or
+environmental cause is inferred. The final long-feedback sample stored 160,063
+journal bytes versus 12,619,026 inline bytes and saved/reopened exact selected
+feedback in 268.670ms (one sample, zero callbacks). All 24 prior real input/schema/
+response/result archive files, canonical semantic content and saved corrections
+were rechecked unchanged; technical currentness remained true.
+
 ## Ordinary real import and bounded recovery (0.19.33)
 
 Baseline: `67f214a746f5b68e3e99b112d26f303f44034c34`, 0.19.32.

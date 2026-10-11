@@ -24,6 +24,58 @@ function delta(draft) {
     causal: Object.fromEntries(Object.keys(format.schemaFor(schema).properties.causal.properties).map(key => [key, key === 'checks' ? [...draft.causal.obligations.map(item => item.id), 'event'].map(target => ({ target, reason: 'The false condition reaches require and reverts the invocation.', evidence: ['guard'], documentation: [] })) : null])),
     explanationReviews: [{ evidenceId: 'guard', result: 'kept', reason: 'The require statement rejects the false condition.', checkedSourceIds: ['function'] }] };
 }
+test('actual verification contract lists current requirements without granting attestations or preventing disagreement',()=>{
+  const requirements=require('../extension/review-requirements'),provider=require('../extension/semantic-provider'),draft=example();
+  draft.causal.obligations[0].documentation=['spec-a'];
+  const input={phase:'challenge',checkOnly:true,earlierDraft:format.earlier(draft,schema)};
+  input.reviewRequirements=requirements.derive(input);
+  assert.deepEqual(input.reviewRequirements.checks[0].documentation,['spec-a']);
+  const value={result:'kept',problems:[],inputReviews:[],explanationReviews:delta(draft).explanationReviews,
+    checks:input.reviewRequirements.checks.map(r=>({...r,reason:'The supplied guard rejects the stated condition.'}))};
+  assert.equal(format.valid(value,provider.responseSchema(input)),true);
+  assert.doesNotThrow(()=>requirements.validate(value,input));
+  for(const mutate of [v=>v.checks[0].evidence=[],v=>v.checks[0].documentation=[],v=>v.checks.push({...v.checks[0],reason:'Repeated target, different prose.'}),v=>v.checks[0].target='event:unknown']){
+    const v=structuredClone(value);mutate(v);assert.throws(()=>requirements.validate(v,input),/Fresh check incomplete|Duplicate or unknown/);
+  }
+  const negative={...value,result:'repair',problems:['The rule link is disputed; revise the property.'],checks:[],explanationReviews:[]};
+  assert.equal(format.valid(negative,provider.responseSchema(input)),true);assert.doesNotThrow(()=>requirements.validate(negative,input));
+  assert.equal(JSON.stringify(provider.responseSchema(input)).includes('uniqueItems'),false,'Provider schema uses its supported subset; host enforces uniqueness.');
+  for(const field of ['evidence','documentation']){
+    const duplicate=structuredClone(value);duplicate.checks[0][field]=[...duplicate.checks[0][field],...duplicate.checks[0][field]];
+    assert.throws(()=>requirements.validate(duplicate,input),/Duplicate .* reference/);
+  }
+  assert.equal(format.valid([],{type:'array',minItems:1,items:{type:'string'}}),false);
+  assert.equal(format.valid(['x'],{type:'array',maxItems:0,items:{type:'string'}}),false);
+  input.reviewRequirements.notes[0].result='added';assert.throws(()=>requirements.validate(value,input),/exact argument/);
+});
+test('required document review is checked separately from merely known documentation identity',()=>{
+  const draft=example(),v=delta(draft);draft.documentation={excerpts:[{id:'spec-a',text:'Rejected operations do not persist.'}]};
+  draft.causal.obligations[0].documentation=['spec-a'];
+  const expanded=format.expand(v,format.earlier(draft,schema),schema),checked=engine.checkExplanations(expanded,draft,engine.accept(expanded,draft,draft.sources),draft.sources);
+  const missing=policy.gate({...draft,...checked});assert.ok(missing.details.some(d=>d.code==='OBLIGATION_CHECK_COVERAGE'&&d.missingDocumentation.includes('spec-a')));
+  checked.causal.checks[0].documentation=['spec-a'];assert.equal(policy.gate({...draft,...checked}).details.some(d=>d.code==='OBLIGATION_CHECK_COVERAGE'),false);
+});
+test('original-to-current note classifications remain independent of overall kept',()=>{
+  const req=require('../extension/review-requirements'),d=example(),a=format.earlier(d,schema),b=structuredClone(a);
+  b.evidence[0].explanation='The same guard rejects the scenario before any effect.';
+  b.evidence.push({...b.evidence[0],id:'new-note'});
+  const revisions=require('../extension/review-candidate').revision(a,b);
+  const input={checkOnly:true,earlierDraft:b,candidateRevisions:revisions,candidateRevisionTargets:[]};
+  assert.deepEqual(req.derive(input).notes.map(n=>[n.evidenceId,n.result]),[['guard','repaired'],['new-note','added']]);
+  b.evidence=[];input.candidateRevisions=require('../extension/review-candidate').revision(a,b);
+  assert.deepEqual(req.derive(input).notes.map(n=>[n.evidenceId,n.result]),[['guard','removed']]);
+});
+test('retained report revision requirements compare immutable original dispositions, not the current map',()=>{
+  const coverage=require('../extension/report-coverage'),req=require('../extension/review-requirements');
+  const before={dispositions:[{id:'old',reason:'Original wording'},{id:'removed'}]},after={dispositions:[{id:'old',reason:'Reconciled wording'},{id:'new'}]};
+  const input={checkOnly:true,earlierDraft:{causal:{},evidence:[],reportCoverage:after},candidateRevisions:{changes:[{path:'/reportCoverage',before}]}};
+  assert.deepEqual(coverage.reference(input).reportCoverage,before);
+  assert.deepEqual(req.derive(input).report.changes,[{id:'old',kind:'changed'},{id:'removed',kind:'removed'},{id:'new',kind:'added'}]);
+  assert.deepEqual(req.derive(input).report.reviewedIds,['old','removed','new']);
+  assert.deepEqual(coverage.changes(after,after),[],'Comparing with the current map would reject legitimate original-to-current reasons.');
+  input.reviewRequirements={version:'review-requirements-v1'};
+  assert.equal(req.derive(input).report.changes,undefined,'Replay preserves the original saved checklist contract, not fabricated new attestations.');
+});
 test('the stored outline is derived from the checked causal order instead of a competing model-authored outline', () => {
   const draft = example(), output = format.earlier(draft, schema);
   assert.equal(schema.properties.walkthrough.properties.steps, undefined);
