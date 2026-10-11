@@ -1,5 +1,189 @@
 # Bounded fresh quality pilot
 
+## Accepted-partial revision and bounded state predicates (0.19.35)
+
+Baseline: `c2a946c26f3054d84a3c2666e0d253b80fe4ebe2`, 0.19.34. The declared
+retained case is still L-113, not a fresh import or replacement. Its **previous
+current insufficient-evidence / partial-coverage assessment remains readable**.
+One explicitly requested private revision completed and passed authoring admission;
+the complete fresh verifier requested correction. **No new assessment or complete
+real tutorial was admitted.** The bounded experiment stops after its declared
+authoring/verification pair, not because account capacity is known to be exhausted.
+
+The new author received the original report, original/current argument, researcher
+premise, concrete revision question and all 19 source units, including the guard
+declaration, prelude/postlude helpers and complete local collection/relay context.
+It added three notes (25 to 28), represented the weakest sufficient guard-entry
+predicate as a conditional scenario assumption, and reconsidered the collection
+rule and recovery. The verifier received the same material source coverage and
+the full original-to-current revision inventory: 28 note reviews, 60 causal/revision
+checks, one premise review and a complete 15-disposition report review returned.
+These inventories establish coverage, not the correctness of the interpretation.
+
+The four correction problems identify a substantive omitted recovery alternative:
+an already stored accepting destination can differ from the rejecting cycle-specific
+recipient; permissionless relay of that configuration need not require a new action
+by the affected L1 actor. The global destination epoch matters to this alternative.
+The source read-through confirmed the relevant storage/read/update relationships,
+but does not establish deployed configuration or independent audit ground truth.
+The new categorical no-recovery language and removal of its open question were
+therefore not accepted. Inability to act on L1 remains part of the original scope.
+The independent collection entitlement/property also remains unresolved: the new
+author did not establish a derived invariant merely by inspecting accounting code.
+Rollback preserves this invocation's prior entitlement; it alone proves neither
+usable later collection nor permanent loss. No paid answer was rewritten.
+
+The next concrete corrective work is to preserve the original allegation while
+examining the stored-destination recovery condition and the applicable collection
+right. Conditional source reasoning does not automatically require deployment
+evidence; an assertion about a particular account's permanence would need its
+applicable configuration/capability evidence. The ordinary explicit Revise action
+can fund another authoring/full-V pair from the two remaining requests, with no
+additional allocation. It was **not** dispatched in this experiment. Continue
+cannot replay the terminal review unchanged. No new real case was substituted.
+
+| Boundary | Before | Delivered control |
+| --- | --- | --- |
+| Modifier/scalar path | Helper modifiers could be ignored; scalar entry facts bypassed normal authoring; prefix writes could leave stale or shadowed values | Helpers with unsupported modifier suffixes stop explicitly. Source/hash/declaration/receiver/invocation-bound `uint256` equality/inequality assumptions cross authoring, fresh checks, path validation and replay. Prefix storage facts reach the body without borrowing shadowed parameters. |
+| Completed partial recovery | Selected Recheck could skip acquisition; a kept partial assessment had no private substantive revision action | Local acquisition precedes validation, zero provider calls. Concrete targeted revision preserves the immutable accepted predecessor, including exact unpaid-replay receipt lineage and subsequent terminal corrections. |
+| Report projection | Ordinary unselected views materialized every long detail; one missing auxiliary record could abort the report | Summary-only library/progress plus selected details; exact owner/hash errors stay finding/field-local. Required assessment-detail failure withdraws that assessment. Core journal/accounting corruption is not swallowed. |
+| Reader/status | A useful assessment resembled only a failed guide; material dispatch was doubly nested | Separate assessment counts/filters, Read assessment versus Start walkthrough, host-derived next actions, visible checked caller/failure context and displayed-guide-owned result. New rejection wording does not deny a retained accepted predecessor. |
+
+The scalar subset deliberately does not authenticate runtime observations or infer
+arbitrary later state from constructor initialization. Unsupported derivations,
+compound effects, helper modifier composition, aliases and unsupported language
+forms remain typed limitations. Actual parameter declarations, not authored type
+labels, constrain scalar inputs: `uint256`/`uint` is supported; a `uint8` parameter
+cannot be certified from a fabricated `uint256` label. Negative controls include
+wrong receiver/hash, conflicting predicates, locked entry, changed prefix state,
+shadowing, inherited storage, compound writes, late revert and wrong-width inputs.
+These are defensive deterministic host controls, not exploit execution or proof
+that a past published finding had a wrong verdict.
+
+Increment: **2 reserved/dispatched, 2 completed responses, 1 admitted private
+authoring stage, 0 kept verifications, 0 new admissible assessments, 0 tutorials**.
+L-113 lifetime is **10 / 9 / 6 / 1 / 0** (dispatched/completed/admitted/assessed/
+tutorials), used 10 of 12 ordinary finding/shared requests. Combined history is
+**27 / 23 / 16 / 2 / 0**; the original six-case 17 / 14 / 10 / 1 / 0 denominator
+and fixed historical pilot allowances are unchanged. An accepted unpaid replay
+is not another dispatch. The initial local admission failed before reservation
+because its accepted replay did not itself own the original response receipt;
+the exact same-request archive/cleanup binding was corrected and tested before
+the pair ran. No generation, extra model precheck or permission ledger was added.
+
+Measured continuation (one retained case, warm source catalog; not cold import):
+
+| Stage | Complete conservative packet / actual stdin + schema | Sources | Monotonic adapter service | Returned input / output tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Private R | 214,264 / 214,186 bytes | 19 | 150.646s | 66,234 / 6,128 |
+| Complete V | 207,202 / 207,124 bytes | 19 | 177.496s | 64,647 / 7,653 |
+
+Queue waits were 12ms and 22ms. Total continuation elapsed was 372.463s, including
+23.240s indexing; adapter service was 328.142s (328.143s wall). The remaining
+roughly 21.047s combines preparation, validation, persistence and driver overhead;
+it is not a separately instrumented ingestion measurement. Cumulative L-113
+adapter time is 1,484.712s monotonic / 1,574.356s wall. Incremental returned tokens
+are 130,881 input / 13,781 output; the 660 reasoning tokens are included in output.
+CLI 0.162.1, CLI-default model, medium effort, two shared slots and 240s deadline
+were unchanged. Actual model identity, monetary cost and remote quota remain
+unknown. Both invocations used zero provider tools; startup disabled-tool-host
+diagnostics were nonterminal, not inferred causes of failure.
+
+The immutable dispatched 0.19.35 build and inputs were pinned before dispatch;
+all 173 pinned files remain byte-identical. Subsequent local changes narrowed
+parameter type validation, preserved deeper accepted-predecessor lineage, and
+clarified native labels; no live result is attributed to those later bytes.
+Provider preflight now rejects unsupported schema keywords locally under
+`structured-output-local-subset-v1` before reservation; safe diagnostic classes
+and known codes are retained without arbitrary provider text. It does not promise
+backend acceptance. Same-input overhead, n=1 each, without dispatch or archive
+modification: 19-source V 197,634 to 199,063 bytes and 49-source V 314,199 to
+315,628 bytes, both +1,429 instruction bytes with unchanged schema. The actual
+new candidate packet above has different content and is not a matched speedup.
+
+The controlled 204-job report has 42 long feedback records per job: compact
+journal 211,245 bytes; explicit full-detail export 13,964,360 bytes. Actual board
+messages were library 199,457, selected load 274,342, progress 201,236 and review
+save 268,798 bytes. Initial detail reads: zero; selecting one finding: two; later
+progress/save: no additional reads. Single observations were 7.567/34.128/6.948/
+16.724ms respectively; a later concurrent-development run was slower. These are
+payload/local observations, not a latency percentile, matched speedup or provider
+throughput result. Exact long detail text remains on disk.
+
+The first final gate was **649/652**, not green: two controls expected the old
+unselected-detail projection or a later parameter-type rejection point, and the
+unchanged 204-job/408-scripted-response control reached 128 jobs before its 120s
+deadline. The two controls were updated to assert the new explicit selection and
+earlier canonical declaration rejection; their original no-dispatch, preservation
+and sibling guarantees remain tested. An exact-control profile also reached 128
+jobs: 2,270 journal saves consumed 81.558s inclusive, with 36.403s in JSON
+serialization. A second diagnostic run, adding byte attribution, reached 158:
+2,671 journal writes totalled 2.103GB, with a final 1,517,689-byte journal. Those
+are incomplete controlled workloads, not matched throughput samples. Report reads
+and local semantic gates were not the dominant measured work. No assertion,
+deadline, durable reservation/receipt boundary or provider setting was relaxed.
+The correction serializes the compact journal once at atomic persistence, where
+its exact UTF-8 bytes including newline are checked before replacement. Standalone
+packing keeps its original size guard. Exact deeply frozen detail identity and
+owner-bound reference can reuse their existing digest/summary; changed owner,
+reference or content cannot. This does not cache mutable admission/currentness or
+coalesce durable saves. The control uses Node 20.20.1 on Linux/WSL, 16 fixture
+slots and 2ms/4ms scripted responses—not the real two-slot provider configuration.
+The same instrumented control after that correction completed all 204 findings
+and 408 stages in 81.174s (81.530s test process), with one catalog acquisition.
+It retained 3,270 synchronous saves, writing 3.108GB across journal replacements;
+the final journal was 1,843,809 bytes. Save time was 57.878s inclusive, packing
+8.762s inclusive / 7.217s self, and JSON serialization 12.435s across 139,153
+calls. CPU was 50.738s user / 15.410s system; peak RSS was 1,201,008 KiB.
+Inclusive timers overlap and must not be added. Each profile is one observation;
+the incomplete pre-fix runs are not equal-work speedup or memory comparisons.
+The remaining write volume and memory observation are disclosed, not evidence of
+real-provider scalability. Focused persistence controls also cover unchanged
+ownership hashes and prior bytes after capacity refusal, symlinks, shallow-frozen
+nested content, changed owners/references and assessment withdrawal.
+
+Native acceptance used the installed original Solidity Flowboard 1.2.0 renderer
+with the working companion and simulated editor I/O, at 1440x900 and 801x600.
+Predeclared fictional supported and refuted cases each traversed all two steps,
+Next/Previous, outline, keyboard, source detour/Return, original function tails
+and saved reopen. Both passed 12 native groups. Each used two scripted callbacks,
+zero external calls and zero extra playback/reopen requests. A mixed fixture kept
+one Ready finding usable while its sibling worked, preserved human text/caret,
+and exposed a genuinely unresolved sibling without unchecked teaching. The actual
+saved L-113 passed six inspection groups, with accepted-predecessor/correction
+attribution, complete original rows and exact range, Return and zero-call reopen;
+**this was blocked assessment/source inspection, not tutorial playback**.
+
+AI-only read-through and captures are private. No human comprehension study or
+observed Cursor activation is claimed. Final fixture navigation samples, n=6 each,
+were supported 45.5–109.1ms and refuted 90.4–276.8ms; saved-click reopen, n=1 each,
+415.8/459.7ms. Actual retained-case inspection/Return/reopen, n=1, were
+8,281/2,443/22,558ms including harness state and diagnostic roundtrips. These slow
+retained-path observations are not isolated paint timings and were not hidden
+behind fixture numbers. Earlier failed harness assumptions and focused-control
+failures remain recorded; no paid output or gate was modified to make them pass.
+
+Preservation check: 36 earlier private input/contract/response/result files unchanged;
+original imported report, researcher corrections and accepted semantic content
+unchanged. Only the private successor contains the new unaccepted interpretation.
+Final canonical gate, with the installed native 1.2.0 source/panel integration:
+**656/656 passed, zero skips**, 141.435s, after the final code changes. The earlier
+649/652 gate and both incomplete exact-control profiles remain recorded. Packaging
+and installed-byte verification are recorded with the final delivery; installation
+does not establish activation in a running Cursor window.
+
+Next bounded experiment, not dispatched here: prospectively pin a small set from
+distinct source/claim families, including a source-complete support, decisive
+refutation and genuine unknown, with reference reasoning frozen outside input.
+Mark author/AI-only references provisional until independently adjudicated. Measure
+unsupported confirmation, wrong refutation, supported scope lost to abstention or
+host rejection, tutorial completion/read-through, first usable result and actual
+queue/service/tail times separately. Preserve every selected failure. Use measured
+service and feasible account capacity before a mixed-case scale experiment; 200
+cold two-stage findings at two slots would require at most nine average service
+seconds per request to fit 30 minutes before overhead. That is arithmetic, not an
+established SLA. No paid case substitution, large corpus or model routing was run.
+
 ## Retained verification and local recovery (0.19.34)
 
 Baseline: `59338857f31c6c36bef3bef973ec6e291258656a`, 0.19.33.

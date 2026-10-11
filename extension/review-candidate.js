@@ -38,8 +38,10 @@ function revision(original, candidate, origin) {
 function assertCurrent(draft, schema) {
   const state = draft.reviewCandidate;
   if(state?.successor){const parent=(draft.revisionPredecessors||[]).find(p=>p.id===state.successor.id);
-    if(!parent||hash(parent.candidate)!==state.successor.parentHash||parent.candidate.state!=='terminal')
-      throw Object.assign(new Error('Private revision lost its immutable terminal predecessor.'),{code:'CANDIDATE_STALE'});}
+    const accepted=state.successor.kind==='accepted-partial';
+    if(!parent||hash(accepted?parent.accepted:parent.candidate)!==state.successor.parentHash||
+      (accepted?!acceptedPredecessor(draft):parent.candidate.state!=='terminal'))
+      throw Object.assign(new Error('Private revision lost its immutable accepted or terminal predecessor.'),{code:'CANDIDATE_STALE'});}
   const rejected=state?.referenceOrigin&&require('./rejected-proposal').assertCurrent(draft,schema);
   if (!state || state.version !== VERSION || state.contextHash !== identity(draft) ||
       (rejected ? state.referenceBaseHash!==rejected.proposalHash || hash(state.referenceOrigin)!==hash(rejected.origin) || hash(state.referenceBase)!==rejected.proposalHash : (state.currentBaseHash||state.acceptedBaseHash) !== hash(wire(draft, schema))) ||
@@ -54,6 +56,8 @@ function save(draft, candidate, schema, provenance) {
   const prior = draft.reviewCandidate && assertCurrent(draft, schema);
   const rejected=draft.rejectedProposal&&require('./rejected-proposal').assertCurrent(draft,schema);
   const acceptedBase = rejected?rejected.proposal:prior?.acceptedBase || wire(draft, schema), proposed = unchecked(candidate);
+  if(prior?.state==='revision-pending'&&prior.successor?.kind==='accepted-partial'&&hash(proposed)===prior.candidateHash)
+    throw Object.assign(new Error('The requested substantive revision made no material argument change. The exact author response is retained; an unchanged fresh verification would not resolve this work.'),{code:'REVISION_NO_CHANGE'});
   require('./review-content').bounds(proposed);
   const wireSchema=proposed.bindingFormat?require('./source-bindings').schema(schema):schema;
   if(!format.valid(proposed,wireSchema))throw new Error('Private candidate exceeds its supported structural contract; it was not frozen.');
@@ -99,6 +103,7 @@ function purpose(draft, schema) {
   return state.repairCount ? 'candidate-reverification' : 'candidate-verification';
 }
 function revise(draft,schema,request) {
+  if(!draft.reviewCandidate)return reviseAccepted(draft,schema,request);
   const state=assertCurrent(draft,schema);
   if(state.successor?.id===request?.id)return state; // consumed identities never restart
   const feedback=require('./review-feedback').current(state);
@@ -113,6 +118,67 @@ function revise(draft,schema,request) {
   draft.phase='candidate-revision-pending';draft.failureKind=null;draft.failureCode=null;
   draft.error='Explicit private revision requested. Previous review remains terminal and unaccepted; fresh authoring and verification are required.';
   delete draft.localPreparation?.preflight;
+  return draft.reviewCandidate;
+}
+// The accepted predecessor stays the canonical displayed argument while its
+// successor is authored privately. This identity is not an approval of edits.
+function acceptedRevision(draft,schema) {
+  if(!draft||draft.reviewCandidate||draft.rejectedProposal||draft.pendingResponse||draft.recoveryRequired)return null;
+  const technical=require('./technical-assessment'),publication=require('./guide-policy').gate(draft);
+  const assessed=technical.project(draft,publication);
+  if(!technical.current(draft)||assessed.technical.result==='not-assessed'||assessed.technical.coverage!=='partial')return null;
+  const targets=[{path:'/property',label:'Expected property and its source-grounded basis'},
+    ...draft.questions.map(q=>({path:'/questions/'+q.id,label:q.text})),
+    ...draft.claims.filter(c=>c.unknowns?.length||c.status==='unresolved').map(c=>({path:'/claims/'+c.id,label:c.allegation})),
+    ...(draft.causal?.obligations||[]).filter(o=>o.state==='open').map(o=>({path:'/causal/obligations/'+o.id,label:o.reason||o.kind}))];
+  return {kind:'accepted-partial',assessmentIdentity:draft.technicalReview.identity,reviewRequestId:draft.technicalReview.requestId,
+    candidateHash:hash(wire(draft,schema)),contextHash:identity(draft),sourceHash:hash(draft.sources),targets};
+}
+function acceptedPredecessor(draft) {
+  let successor=draft?.reviewCandidate?.successor,before;const seen=new Set();
+  // Further explicit corrections can descend through terminal private
+  // proposals. Only their immutable lineage leads back to the accepted
+  // artifact; none of the intervening explanations or checks is inherited.
+  while(successor){
+    if(seen.has(successor.id))return null;seen.add(successor.id);
+    const parent=draft.revisionPredecessors?.find(p=>p.id===successor.id);
+    if(successor.kind==='accepted-partial'){
+      before=parent?.accepted;if(!before||hash(before)!==successor.parentHash)return null;break;
+    }
+    if(!parent?.candidate||parent.candidate.state!=='terminal'||hash(parent.candidate)!==successor.parentHash)return null;
+    successor=parent.candidate.successor;
+  }
+  const sourceIdentity=unit=>{const value={...unit};for(const key of ['readThrough','readRanges','modelRanges','reason'])delete value[key];return hash(value);};
+  if(!before||identity(before)!==identity(draft)||
+    !before.sources.every(u=>draft.sources.some(v=>v.id===u.id&&sourceIdentity(v)===sourceIdentity(u)))||
+    hash(require('./technical-assessment').observations(before))!==hash(require('./technical-assessment').observations(draft))||
+    hash(require('./review-content').project(before))!==hash(require('./review-content').project(draft))||
+    !require('./technical-assessment').current(before))return null;
+  return before;
+}
+function reviseAccepted(draft,schema,request) {
+  const base=acceptedRevision(draft,schema),fail=()=>{throw new Error('A current accepted partial assessment, concrete revision target and exact review/source identity are required.');};
+  if(!base||typeof request?.id!=='string'||!/^[A-Za-z0-9._-]{1,100}$/.test(request.id)||typeof request.reason!=='string'||!request.reason.trim()||request.reason.length>2400||!Array.isArray(request.targets)||!request.targets.length||
+    request.targets.some(t=>!base.targets.some(x=>x.path===t))||new Set(request.targets).size!==request.targets.length||
+    ['kind','assessmentIdentity','reviewRequestId','candidateHash','contextHash','sourceHash'].some(k=>request[k]!==base[k]))return fail();
+  const workHash=hash([base.contextHash,base.candidateHash,base.sourceHash,request.reason.trim(),[...request.targets].sort()]);
+  if((draft.revisionPredecessors||[]).some(p=>p.id===request.id||p.workHash===workHash))throw new Error('This exact revision work was already requested; inspect its outcome before proposing different corrective work.');
+  const predecessor=structuredClone(draft),parentHash=hash(predecessor),current=wire(draft,schema);
+  const original=(draft.candidateHistory||[]).findLast(h=>h.candidateHash===draft.candidateVerification?.candidateHash);
+  // Preserve original-to-current obligations from a prior private revision.
+  const acceptedBase=original?.acceptedBase||current;
+  if(original?.referenceOrigin)throw new Error('The accepted result retains an unaccepted proposal origin; that reference needs its existing explicit recovery path.');
+  draft.revisionPredecessors=[...(draft.revisionPredecessors||[]),{id:request.id,kind:'accepted-partial',workHash,accepted:predecessor,response:request.archive}];
+  draft.reviewCandidate={version:VERSION,state:'revision-pending',contextHash:identity(draft),acceptedBaseHash:hash(acceptedBase),acceptedBase,
+    ...(original?{currentBaseHash:hash(current),retainedParentHash:hash(original)}:{}),
+    versionNumber:(original?.versionNumber||0)+1,candidate:current,candidateHash:hash(current),revisions:revision(acceptedBase,current),
+    lineage:[],history:[],repairCount:original?.repairCount||0,verification:null,
+    successor:{id:request.id,kind:'accepted-partial',parentHash,assessmentIdentity:base.assessmentIdentity,reviewRequestId:base.reviewRequestId,
+      reason:request.reason.trim(),targets:[...request.targets],at:new Date().toISOString()}};
+  draft.phase='candidate-revision-pending';draft.failureKind=null;draft.failureCode=null;
+  draft.error='The accepted partial assessment is retained. Its explicit private revision needs authoring and complete fresh verification.';
+  draft.checkpoint={...draft.checkpoint,stage:'challenge'};delete draft.checkpoint.feedback;delete draft.checkpoint.noProgress;delete draft.checkpoint.repeated;
+  delete draft.reviewOperation;delete draft.localPreparation?.preflight;
   return draft.reviewCandidate;
 }
 function packet(input, draft, schema, selectedPurpose) {
@@ -150,7 +216,10 @@ function packet(input, draft, schema, selectedPurpose) {
       result.authoringFollowup={id:f.id,requestId:f.requestId,inputHash:f.inputHash,responseHash:f.fromResponseHash,originalProposalHash:rejected.origin.recordHash};
       result.candidateProblems=f.diagnostics;
       result.untrustedAuthoring={status:'RECEIVED BUT REJECTED; NO EDIT WAS APPLIED; NOT A CANDIDATE OR APPROVAL',proposal:require('./authoring-contract').guidance(f.response)};
-    } }
+    }
+    if(state?.successor){result.revisionRequest={kind:state.successor.kind||'terminal-feedback',reason:state.successor.reason,
+      ...(state.successor.targets?{targets:state.successor.targets}:{}),attribution:'Explicit researcher-requested corrective work; not a changed premise or approval.'};}
+  }
   return result;
 }
 function retainedPacket(input,draft,schema){
@@ -188,5 +257,5 @@ function checkRevisions(value, input, draft) {
 const instruction = `PRIVATE CANDIDATE LIFECYCLE. earlierDraft is the exact UNCHECKED candidate, not an accepted review. candidateRevisions spans the immutable original reference to this candidate; its before fields are exact old content, afterHash identifies content in earlierDraft. When referenceOrigin.kind=received-rejected, the original was NEVER accepted; it supplies material scope and revision lineage, not evidence of correctness or approvals. rejected-proposal-repair must resolve the typed candidateProblems and all material local questions/dependencies across the entire original claim scope, retaining genuine blockers. Review scope never disappears when a note is removed. No diagnostic or candidate checks confer approval.
 For a checkOnly request: overall kept means the CANDIDATE remains EXACTLY unchanged. Fresh explanationReviews classify each note relative to the ORIGINAL reference (accepted base, or explicitly unaccepted received proposal): unchanged=kept, changed=repaired, new=added, absent=removed. Review every current note AND every old changed/removed note in candidateRevisions, with their original and current sources. Check the reasons and dependent reference changes, all original claim groups, every current causal target and all premises. No approvals are inherited. If any edit is needed return repair with concrete affected IDs; do not rewrite the candidate. An indispensable missing fact stays a finite blocker, not a forced verdict.
 In that same checks array, additionally check EVERY exact target in candidateRevisionTargets. Explain why its exact original-to-candidate change/removal is justified (or reject it), using old/current evidence IDs or supplied documentation. These checks do not replace any current causal target or explanation review. Revision targets are separate from runtime events and never become tutorial steps.
-For candidateOnly: normal instructions demanding fresh inputReviews, explanationReviews and causal checks do NOT apply to this authoring request. Complete the WHOLE explanation across all material claim groups, rule basis, conditions, consequences and counterevidence, or retain exact indispensable blockers. Return only the enforced candidate authoring shape; it supplies no attestations. Keep unaffected content and stable IDs. A candidate-repair request may change only the stated problems and their necessary dependencies. untrustedAuthoring is a rejected earlier proposal, not the current candidate: its edits were NOT applied to earlierDraft. Independently use or reject its material reasoning against source and current diagnostics; never inherit its checks. The complete candidate will receive a separate fresh check.`;
-module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, retainedPacket, instruction, revise };
+For candidateOnly: normal instructions demanding fresh inputReviews, explanationReviews and causal checks do NOT apply to this authoring request. Complete the WHOLE explanation across all material claim groups, rule basis, conditions, consequences and counterevidence, or retain exact indispensable blockers. Return only the enforced candidate authoring shape; it supplies no attestations. Keep unaffected content and stable IDs. A candidate-repair request may change only the stated problems and their necessary dependencies. revisionRequest names concrete requested corrective work; it is attributed guidance, not an established premise, negative verifier decision or approval. An accepted-partial predecessor may be substantively revised without fabricating negative feedback; test its open property/question/scope against all supplied evidence and retain genuine unknowns. untrustedAuthoring is a rejected earlier proposal, not the current candidate: its edits were NOT applied to earlierDraft. Independently use or reject its material reasoning against source and current diagnostics; never inherit its checks. The complete candidate will receive a separate fresh check.`;
+module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, retainedPacket, instruction, revise, acceptedRevision, acceptedPredecessor };

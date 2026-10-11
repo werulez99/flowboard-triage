@@ -76,7 +76,8 @@
     return !localAdmission() && !sharedAllowanceExhausted() && job?.continueAction?.available===true && job.privateCandidateState!=='terminal' && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
-  const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
+  const assessmentAvailable = job => job?.assessmentAvailable===true || !!(job?.assessmentProjection?.technical.identity && ['supported','refuted','insufficient-evidence'].includes(job.assessmentProjection.technical.result));
+  const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : assessmentAvailable(job) ? 'Checked assessment · tutorial unavailable' : job?.state === 'completed' ? 'Checking saved walkthrough' :
     ['running', 'waiting-for-provider-capacity', 'queued'].includes(job?.state) ? preparationLabel(job.state) :
     job?.verificationCompletion?.result==='repair' ? 'Verifier returned · correction required' : job?.verificationCompletion?.checkingIncomplete ? 'Review received · checking incomplete' : job?.verificationCompletion ? 'Review received · walkthrough blocked' :
     job?.retainedRejection ? 'Received analysis needs correction' : job?.failureKind==='storage' ? 'Response storage needs recovery' : job?.hasPrivateCandidate ? 'Private candidate needs verification' : job?.failureKind === 'material-evidence' ? 'Needs evidence' : job?.failureKind === 'capability' ? 'Analysis capability missing' : ['validation', 'structural'].includes(job?.failureKind) ? 'Review structure rejected' :
@@ -94,10 +95,11 @@
       const selected=row.dataset.findingId===active,stale=sourceStale&&selected;
       const assessment=selected?selectedProjection(job):job?.assessmentProjection,technical=assessment?.technical;
       if (badge) { badge.textContent = stale?'Needs recheck':technical&&technical.result!=='not-assessed'?technical.label+' · '+jobLabel(job):jobLabel(job); badge.dataset.state = stale?'stale':job?.publishable ? 'ready' : job?.state || 'not-started'; badge.title = job?.reason || ''; }
-      if (action) action.hidden = stale||!job?.publishable;
+      if (action) {action.hidden = stale||!job?.publishable&&!assessmentAvailable(job);action.textContent=job?.publishable?'Start walkthrough':'Read assessment';}
       const reason = row.querySelector('.triage-job-reason');
-      if (reason) { reason.textContent = stale?'Code or report changed. Previous AI projections are historical.':(technical&&technical.result!=='not-assessed'?[technical.why,technical.remaining?.[0], 'Suggested severity: '+(assessment.severity?.label||'Not assessed')+' '+(assessment.severity?.conditions||[]).join('; ')].filter(Boolean).join(' · '):technical?.why||job?.reason)||''; reason.hidden = !reason.textContent; }
+      if (reason) { reason.textContent = stale?'Code or report changed. Previous AI projections are historical.':(technical&&technical.result!=='not-assessed'?[technical.why,technical.remaining?.[0], 'Suggested severity: '+(assessment.severity?.label||'Not assessed')+' '+(assessment.severity?.conditions||[]).join('; ')].filter(Boolean).join(' · '):job?.reason||technical?.why)||''; reason.hidden = !reason.textContent; }
       if (queueMode.startsWith('preparation:')) row.hidden = queueMode === 'preparation:ready' ? !job?.publishable : job?.state !== queueMode.slice(12);
+      if(queueMode.startsWith('assessment:'))row.hidden=queueMode==='assessment:available'?!assessmentAvailable(job):assessmentAvailable(job);
     }
     const counts = drawer.querySelector('.triage-preparation-counts');
     if (counts) counts.textContent = preparationCounts();
@@ -105,7 +107,13 @@
   function preparationCounts() {
     const jobs = reportPreparation?.jobs || [];
     const ready = jobs.filter(job => job.publishable).length, working = jobs.filter(job => ['running', 'queued', 'retry-scheduled', 'waiting-for-provider-capacity'].includes(job.state)).length;
-    return jobs.length ? `${ready} ready · ${working} preparing · ${jobs.filter(job => job.state === 'blocked').length} blocked · ${jobs.filter(job => job.state === 'failed').length} failed` : 'Preparation is separate from your saved review result.';
+    return jobs.length ? `${jobs.filter(assessmentAvailable).length} assessments available · ${jobs.filter(job=>!assessmentAvailable(job)).length} not assessed · ${ready} tutorials ready · ${working} working · ${jobs.filter(job => job.state === 'failed').length} operational failures` : 'Preparation is separate from your saved review result.';
+  }
+  function readAssessment(){
+    if(sourceStale||!selectedProjection()?.technical.identity)return;
+    guideIntent='waiting';preparationExpanded=true;show('brief');renderPreparation();
+    const result=preparationSurface.querySelector('.guide-technical-result')||drawer.querySelector('.guide-opinion');
+    if(result){result.tabIndex=-1;result.focus({preventScroll:true});result.scrollIntoView({block:'nearest'});}
   }
   const statusLabel = FlowboardReading.issue;
   const bar = document.createElement('div'); bar.id = 'triage-bar';
@@ -240,11 +248,13 @@
     if (reportPreparation) {
       const progress = reportPreparation, running = progress.mode === 'running', selectedJob = preparationJob(active);
       parent.append(element('h2', '', selectedJob ? jobLabel(selectedJob) : running ? 'Preparing report' : 'Preparation incomplete'),
-        element('p', '', `${progress.ready} of ${progress.total} walkthroughs ready · ${progress.reportName}`),
+        element('p', '', `${progress.assessmentAvailable||0} assessments available · ${progress.ready} of ${progress.total} walkthroughs ready · ${progress.reportName}`),
         element('p', '', preparationJob(active)?.reason || progress.reason || 'Ready walkthroughs are available immediately. Other findings continue preparing in the background.'),
         element('small', 'triage-muted', `${progress.requests} of ${progress.requestLimit} model requests used${progress.ambiguities ? ` · ${progress.ambiguities} report sections need classification` : ''}`));
       for (const job of progress.active || []) parent.append(element('p', '', `${job.id} · ${job.stage || 'Locating code'}`));
       appendAdmission(parent);
+      for(const problem of selectedJob?.detailProblems||[])parent.append(element('p','triage-warning',`${problem.field}: ${problem.message}`),
+        element('p','triage-muted',problem.nextAction||'Recheck the selected local record; no provider request is needed.'));
       if (selectedJob?.missingInputs?.length) {
         const first = selectedJob.missingInputs[0];
         parent.append(element('h3', '', 'What still needs checking'), element('p', '', `${first.claimId} · ${first.text}`),
@@ -304,7 +314,7 @@
       parent.append(controls);
       const details = element('details'); details.append(element('summary', '', 'Progress and stopped checks'));
       details.append(element('p', '', Object.entries(progress.counts || {}).map(([state, count]) => `${state}: ${count}`).join(' · ')));
-      if (progress.plan) details.append(element('p', '', `${progress.plan.eligible} queued findings · about ${progress.plan.estimatedRequests} further requests before repairs · ${progress.plan.remainingAllowance} requests left.`),
+      if (progress.plan) details.append(element('p', '', `${progress.plan.eligible} actionable findings · ${progress.plan.estimatedRequests} planned requests before repairs · ${progress.plan.remainingAllowance} requests left.`),
         element('p', '', `Used ${progress.requests} / maximum allowed ${progress.requestLimit} reserved attempts. Remaining bounded stage demand: up to ${progress.plan.maximumRequests ?? 'unknown'}. Monetary cost: ${progress.costUSD == null ? 'unknown' : '$' + progress.costUSD}.`),
         element('p', 'triage-muted', progress.plan.basis));
       if (progress.plan?.scenario) details.append(element('p', 'triage-muted', `${progress.plan.scenario.label}: at 60 active seconds/request and ${progress.plan.effectiveConcurrency} configured effective slots, at least ${Math.ceil(progress.plan.scenario.lowerBoundMinutes)} minutes. At least ${progress.plan.scenario.requiredConcurrency20}/${progress.plan.scenario.requiredConcurrency30} slots for 20/30 minutes, before overhead. ${progress.plan.scenario.excludes}`));
@@ -337,6 +347,8 @@
     preparationSurface.hidden = !waiting; document.body.classList.toggle('guide-preparing', waiting);
     const scroll = preparationSurface.scrollTop;
     const openDetails = [...preparationSurface.querySelectorAll('details')].map(node => node.open);
+    const previousForm=preparationSurface.querySelector?.('.guide-revision-form');
+    const focusedRevision=previousForm?.contains(document.activeElement)?document.activeElement:null;
     preparationSurface.replaceChildren(); preparationSurface.classList.toggle('expanded', preparationExpanded);
     if (waiting) {
       const progress = reportPreparation, state = preparationState || investigationDraft?.preparation;
@@ -365,10 +377,12 @@
       const activeWork = (progress?.active || []).map(job => `${job.id}: ${stageLabel(job.stage)}${job.startedAt ? ` (${Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 1000))}s)` : ''}`).join(' · ');
       preparationSurface.append(element('p', 'guide-status-context', `Selected: ${selected}${activeWork ? ` · Working: ${activeWork}` : ''}`));
       if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.result==='repair'?
-        'Verifier returned · correction required. No technical assessment or tutorial was accepted.':job.verificationCompletion.published?
+        'Verifier returned · correction required. This review did not approve a new assessment or tutorial.':job.verificationCompletion.published?
         'Full verification completed · checked tutorial available.':job.verificationCompletion.checkingIncomplete?
-        'Review response received · required checking is incomplete. No current technical assessment or tutorial is admitted.':job.assessmentProjection?.technical?.result&&job.assessmentProjection.technical.result!=='not-assessed'?
+        'Review response received · required checking is incomplete. This response does not admit a new assessment or tutorial.':job.assessmentProjection?.technical?.result&&job.assessmentProjection.technical.result!=='not-assessed'?
         'Checked technical assessment · walkthrough unavailable. Its scope and remaining blockers are shown separately.':'Review response received · assessment admission blocked. The exact remaining checks and source limitations are shown below.'));
+      if(technical?.revisionStatus)preparationSurface.append(element('p','guide-status-reason',technical.revisionStatus));
+      for(const problem of job?.detailProblems||[])preparationSurface.append(element('p','guide-current-requirement',`${problem.field}: ${problem.message}`),element('small','triage-muted',problem.nextAction||'Recheck the selected local saved record.'));
       if(job?.verificationCompletion?.checkingIncomplete){
         const gaps=(job.validationProblems||[]).filter(p=>['OBLIGATION_CHECK_COVERAGE','REVIEW_REQUIREMENTS'].includes(p.code));
         preparationSurface.append(element('p','guide-current-requirement',gaps.map(p=>p.message).join(' ')||'Required current target checking is incomplete.'),
@@ -379,10 +393,30 @@
         if(job.validationProblems.length>1)preparationSurface.append(element('small','triage-muted',`${job.validationProblems.length-1} additional correction records below. Supporting review reasoning is separate and is not a defect count.`));
       }
       if(job?.privateCandidateState==='terminal')preparationSurface.append(element('p','guide-status-reason guide-current-requirement','The bounded candidate repair cycle is finished. Inspect the verifier’s corrections and source; continuing unchanged cannot start another request.'));
-      if(job?.privateCandidateState==='terminal'&&job.revisionAction){
+      if(job?.revisionAction&&(job.privateCandidateState==='terminal'||job.revisionAction.kind==='accepted-partial')){
         preparationSurface.append(element('p','guide-status-reason',job.revisionAction.reason));
-        if(job.revisionAction.available&&!sourceStale)preparationSurface.append(button('Revise analysis',()=>send('triage:reviseAnalysis',{revision:{id:crypto.randomUUID(),candidateHash:job.revisionAction.candidateHash,feedbackHash:job.revisionAction.feedbackHash,feedbackRequestId:job.revisionAction.feedbackRequestId,
-          reason:'Reconcile the current complete verifier feedback and its dependent argument against the supplied material sources.'}})));
+        if(job.revisionAction.available&&!sourceStale){
+          const action=job.revisionAction;
+          if(action.kind==='accepted-partial'){
+            const key=active+':'+action.assessmentIdentity;
+            let form=previousForm?.dataset.identity===key?previousForm:null;
+            if(!form){
+              form=element('form','guide-revision-form');form.dataset.identity=key;
+              const target=element('select');target.setAttribute('aria-label','Unresolved revision target');
+              for(const item of action.targets||[]){const option=element('option','',item.label);option.value=item.path;target.append(option);}
+              const reason=element('textarea');reason.maxLength=2400;reason.required=true;reason.setAttribute('aria-label','Concrete revision reason');reason.placeholder='What evidence, property or scoped reasoning should be reconsidered, and why?';
+              const submit=element('button','','Revise analysis');submit.type='submit';submit.disabled=true;
+              reason.oninput=()=>{submit.disabled=!reason.value.trim();};
+              form.append(element('label','','Revise an unresolved part of this checked assessment'),target,reason,submit,
+                element('small','triage-muted','Private authorship + fresh full verification. The accepted predecessor remains readable; no verdict or approval is inherited.'));
+              form.onsubmit=event=>{event.preventDefault();if(!reason.value.trim()||sourceStale)return;submit.disabled=true;
+                send('triage:reviseAnalysis',{revision:{id:crypto.randomUUID(),kind:action.kind,assessmentIdentity:action.assessmentIdentity,reviewRequestId:action.reviewRequestId,
+                  candidateHash:action.candidateHash,contextHash:action.contextHash,sourceHash:action.sourceHash,targets:[target.value],reason:reason.value.trim()}});};
+            }
+            preparationSurface.append(form);if(focusedRevision&&form===previousForm)focusedRevision.focus({preventScroll:true});
+          }else preparationSurface.append(button('Revise analysis',()=>send('triage:reviseAnalysis',{revision:{id:crypto.randomUUID(),candidateHash:action.candidateHash,feedbackHash:action.feedbackHash,feedbackRequestId:action.feedbackRequestId,
+            reason:'Reconcile the current complete verifier feedback and its dependent argument against the supplied material sources.'}})));
+        }
       }
       if(blockerReturn)preparationSurface.append(button('Return to blockers',returnFromBlocker));
       if(job?.verificationCompletion&&!job.verificationCompletion.checkingIncomplete&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.length)
@@ -771,7 +805,7 @@
     back.disabled = guideIndex === 0 || sourceStale || !!preparing; next.disabled = guideIndex === guide.steps.length - 1 || sourceStale || !!preparing;
     guideControls.append(counter, back, next, element('span', 'guide-current-title', step.title));
     guideControls.append(guideMode === 'guided' ? button('Explore freely', guidePause) : button(guideMode === 'detour' ? 'Return to step' : 'Resume walkthrough', guideRestore));
-    const opinionLabel = FlowboardWalkthrough.assessment(investigationDraft?.phase === 'ready' ? guide.draft : investigationDraft, sourceStale);
+    const opinionLabel = FlowboardWalkthrough.assessment(guide.draft, sourceStale);
     const extras = element('details', 'guide-options'); extras.append(element('summary', '', 'Options'));
     extras.append(button('Restart', () => guideGo(0)), button('Readable size', () => { const card = cards.get(selectedCard); if (card) focusReadable(card); }), button(guideWrap ? 'Turn wrapping off' : 'Wrap code', () => { guideWrap = !guideWrap; renderGuide(); schedulePersist(); }),
       button(guideOpinion ? 'Hide assessment' : 'Show assessment', () => { if(!guideOpinion)revealGuideSection('assessment');else {guideOpinion=false;renderGuide();schedulePersist();} }));
@@ -786,6 +820,7 @@
     if (focusedControl) ([...guideControls.querySelectorAll('button')].find(item => item.textContent === focusedControl && !item.disabled) || next.disabled && back || next).focus({ preventScroll: true });
     measureGuideControls();
     guideAside.append(element('small', 'triage-muted', `${issueIdentifier()} · Checked against saved code, not an executed trace`));
+    guideAside.append(element('p', 'guide-current-assessment', opinionLabel.label));
     const mechanism = element('details', 'guide-mechanism');
     const orientationKey = `orientation:${guide.key}:${step.id}`;
     const orientationScrollKey = `${orientationKey}:scroll`;
@@ -842,6 +877,15 @@
       if (statement) note.append(statement);
       if (step.caller || step.actor) note.append(element('p', 'guide-caller', `Who: ${step.actor || step.caller}${step.caller && step.caller !== step.actor ? ' · Caller: ' + step.caller : ''}${step.receiver ? ' → ' + step.receiver : ''}`));
       if (step.conditions?.length) note.append(element('p', 'guide-condition', `When: ${step.conditions.join('; ')}`));
+      if (step.statePredicates?.length) {
+        const entry = element('section', 'guide-entry-assumptions'); entry.append(element('h3', '', 'Checked scenario entry assumptions'));
+        for (const fact of step.statePredicates) {
+          entry.append(element('p', '', `${fact.owner}.${fact.variable} ${fact.operator} ${fact.value} · receiver ${fact.receiver}`),
+            element('p', '', fact.reason), element('small', 'triage-muted', 'Conditional source reasoning, not an observed deployment value.'));
+          const refs=element('details');refs.append(element('summary','','Entry assumption evidence'));evidenceActions(refs,fact.evidence);entry.append(refs);
+        }
+        note.append(entry);
+      }
       if (step.transaction || step.invocationId) {
         const frames = [...new Set(guide.steps.filter(s => s.unit?.id === step.unit?.id && s.transaction === step.transaction).map(s => s.invocationId))];
         if (frames.length > 1) note.append(element('p', 'guide-invocation', `Invocation ${frames.indexOf(step.invocationId) + 1} of ${frames.length} of this function in the stated transaction`));
@@ -852,14 +896,14 @@
       }
       if (step.handoff?.dispatch && step.handoff.dispatch.kind !== 'not-applicable') {
         const dispatch = step.handoff.dispatch;
-        const detail = element('details', 'guide-execution-context'); detail.append(element('summary', '', 'Caller and execution context'),
+        const detail = element('section', 'guide-execution-context'); detail.setAttribute('aria-label','Caller and execution context');detail.append(element('h3', '', 'Caller and execution context'),
           element('p', '', `Receiver expression: ${dispatch.receiver}`),
           element('p', '', `Implementation: ${guide.draft.sources.find(unit => unit.id === dispatch.implementation)?.name || dispatch.implementation}`));
         const context = { same: 'Internal call: the execution address and EVM msg.sender stay the same.', call: 'External call: the callee executes in its own address context.', delegatecall: 'Delegate call: implementation code executes in the caller’s address context.', staticcall: 'Static call: the callee cannot write state.', creation: 'Contract creation starts a constructor context.' }[dispatch.context];
         if (context) detail.append(element('p', '', context));
         const failure = { propagates: 'Failure propagates to the caller on this checked route.', caught: 'The caller catches this failure; check its handler before claiming a full transaction rollback.', 'returns-status': 'The call reports success or failure as a value. Check how the caller uses it.' }[dispatch.failure];
         if (failure) detail.append(element('p', '', failure));
-        evidenceActions(detail, dispatch.evidence); note.append(detail);
+        const references=element('details');references.append(element('summary','','Dispatch evidence'));evidenceActions(references,dispatch.evidence);detail.append(references);note.append(detail);
       }
       if (step.inputs?.length || step.changes?.length || step.effect) {
         const values = element('details', 'guide-values'); values.open = true; values.append(element('summary', '', 'Inputs and changes · source interpretation'));
@@ -896,7 +940,7 @@
       // Primary narration, conditions and values precede diagnostic identities.
       const proof = element('details', 'guide-supporting'); proof.append(element('summary', '', 'Supporting claim and execution details'));
       if (step.role) proof.append(element('p', 'guide-function-role', step.role));
-      for (const item of note.querySelectorAll(':scope > .guide-frame, :scope > .guide-statement, :scope > .guide-execution-context, :scope > .guide-stance')) proof.append(item);
+      for (const item of note.querySelectorAll(':scope > .guide-frame, :scope > .guide-statement, :scope > .guide-stance')) proof.append(item);
       note.append(proof);
       const source = button(`${entry.source.file}:${entry.source.line} · Open in editor`, () => step.inputReference ? send('triage:openReference', { file: entry.source.file, line: entry.source.line }) : guide.draft.evidence.some(item => item.id === entry.id) ? guideEvidence(entry, true) : inspectEvidence(entry), 'guide-file-link'); note.append(source);
       if (guideIndex && guideMode === 'guided' && step.handoff) note.append(element('p', 'guide-relationship', `How we got here: ${step.handoff.explanation}`));
@@ -1321,6 +1365,7 @@
           element('p', 'triage-muted', `Reported severity: ${finding.reportedSeverity || 'Not supplied'} · Your result: ${statusLabel(finding.status)}`),
           element('p', '', 'Preparation details are beside the code. The original report and your saved review remain available.'),
           button('Read report', () => show('report')), button('Edit your review', () => show('review')));
+        if(!sourceStale&&selectedProjection()?.technical.identity)original.append(button('Read assessment',readAssessment,'primary'));
         drawer.append(original);
       } else preparationContent(drawer);
       renderOpinion(drawer);
@@ -1351,8 +1396,9 @@
       for (const [state, label] of [['ready', 'Ready walkthroughs'], ['queued', 'Queued'], ['running', 'Checking'], ['waiting-for-provider-capacity', 'Waiting for capacity'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['stale', 'Code changed']]) {
         const option = element('option', '', label); option.value = `preparation:${state}`; modes.append(option);
       }
+      for(const [state,label] of [['available','Assessments available'],['not-assessed','Not assessed']]){const option=element('option','',label);option.value=`assessment:${state}`;modes.append(option);}
       modes.value = queueMode; modes.onchange = () => { queueMode = modes.value; renderDrawer(); }; drawer.append(modes);
-      const visible = FlowboardReview.queue(library, filter, queueMode.startsWith('preparation:') ? 'all' : queueMode);
+      const visible = FlowboardReview.queue(library, filter, /^(preparation|assessment):/.test(queueMode) ? 'all' : queueMode);
       drawer.append(element('p', 'triage-muted triage-preparation-counts', preparationCounts()));
       if (library.some(issue => issue.mappingPending)) drawer.append(element('p', 'triage-muted', reportPreparation ? 'Report preparation runs in the background. Choose a finding to explore its code; saved reviews are kept.' : 'Choose a finding to read its code. Your saved reviews are kept.'));
       const list = element('div', 'triage-list');

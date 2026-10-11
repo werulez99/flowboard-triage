@@ -42,6 +42,54 @@ test('204 long-feedback jobs save compactly and reopen exact selected records wi
  assert.equal(Buffer.byteLength(JSON.stringify(journal.pack(f.root,saved))),bytes-1);t.diagnostic(JSON.stringify({jobs:204,recordsPerJob:42,rawBytes:raw,journalBytes:bytes,saveReopenMs:performance.now()-start,callbacks:0}));
  const old=fs.readFileSync(file,'utf8');f.runner.state.unbounded='x'.repeat(8*1024*1024);assert.throws(()=>f.runner.save(),/last usable journal/);assert.equal(fs.readFileSync(file,'utf8'),old);
 });
+test('ordinary 204-finding library/load/progress/review-save messages load only selected exact detail and isolate auxiliary loss',{skip:!native},async t=>{
+ const f=await fixture(t,204);f.options.configuration=()=>({provider:'none'});await f.runner.ensure();
+ const journal=require('../extension/report-journal'),store=require('../extension/store'),{TriageBoard}=require('../extension/board'),long='Preserved attributed reasoning, not a new approval. '.repeat(30);
+ for(const [i,job]of Object.values(f.runner.state.jobs).entries()){
+  job.state=i%2?'blocked':'completed';job.reviewReasoning=Array.from({length:42},(_,n)=>({id:`${job.id}-${n}`,result:n%2?'kept':'repaired',message:long+`${i}/${n}`}));
+  // Controlled projection payloads exercise storage/transport, not semantics.
+  job.assessmentProjection={artifact:{findingId:job.id,identity:'controlled-'+i},technical:{identity:'controlled-'+i,result:i%2?'insufficient-evidence':'refuted',coverage:i%2?'partial':'complete',why:'Scripted projection transport fixture.',evidence:[]},tutorial:{state:'blocked'}};
+ }
+ f.runner.save();const journalBytes=fs.statSync(path.join(f.root,'.flowboard/report-preparation.json')).size;
+ const ledger=structuredClone(f.runner.state.resources),reopen=()=>{f.runner.state=journal.attach(f.root,journal.read(f.root,'.flowboard/report-preparation.json'));};reopen();
+ let detailLoads=0;const read=p.readWorkspaceJson;t.mock.method(p,'readWorkspaceJson',(...args)=>{if(args[1].startsWith('.flowboard/report-details/'))detailLoads++;return read(...args);});
+ const messages=[],timings=[],board=Object.assign(Object.create(TriageBoard.prototype),{root:f.root,ready:Promise.resolve(),activeId:null,models:new Map(),sessions:new Map(),renderWaiters:new Map(),
+  callbacks:{reportPreparation:()=>f.runner},log:{appendLine(){}},native:{panel:{reveal(){},viewColumn:2}},startInvestigation:async()=>{},
+  vscode:{Uri:{file:fsPath=>({fsPath})},workspace:{isTrusted:true,textDocuments:[],getConfiguration:()=>({get:(_key,fallback)=>fallback}),openTextDocument:async uri=>({uri,isDirty:false})}},
+  post:async message=>{messages.push(message);if(message.type==='triage:load')board.renderWaiters.get(message.token)?.resolve();return true;}});
+ let start=performance.now();await board.showLibrary();timings.push({scene:'library',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.at(-1)))});
+ assert.equal(detailLoads,0);assert.equal(messages.at(-1).reportPreparation.jobs.filter(j=>j.reviewReasoning).length,0);
+ assert.equal(messages.at(-1).reportPreparation.assessmentAvailable,204);assert.equal(messages.at(-1).reportPreparation.notAssessed,0);
+ const {report,entries}=reconcile(f.root),entry=entries.at(-1),request=f.runner.request(entry,f.getCatalog(),report),issue=store.readIssue(f.root,entry.id);
+ store.writeDraft(f.root,entry.id,request);
+ start=performance.now();await board.open(request,f.getCatalog(),{mode:'source'},p.gitState(f.root),issue);timings.push({scene:'selected-load',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.findLast(m=>m.type==='triage:load')))});
+ assert.equal(detailLoads,2);assert.equal(messages.at(-1).reportPreparation.jobs.filter(j=>j.reviewReasoning).length,1);
+ assert.equal(messages.at(-1).reportPreparation.jobs.at(-1).reviewReasoning.length,42);
+ start=performance.now();await board.reportProgress();timings.push({scene:'progress',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.findLast(m=>m.type==='triage:reportPreparation')))});assert.equal(detailLoads,2);
+ await board.reportProgress(f.runner.status(undefined,null));const selectedProgress=messages.findLast(m=>m.type==='triage:reportPreparation').report;
+ assert.equal(selectedProgress.jobs.filter(j=>j.reviewReasoning).length,1);assert.equal(selectedProgress.assessmentAvailable,204);assert.equal(selectedProgress.notAssessed,0);assert.equal(detailLoads,2);
+ start=performance.now();await board.receive({type:'triage:save',issueId:entry.id,token:board.activeToken,editVersion:1,patch:{summary:'Preserve the researcher’s own text.'}});
+ timings.push({scene:'review-save',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.findLast(m=>m.type==='triage:reviewSaved')))});assert.equal(detailLoads,2);
+ assert.equal(store.readDraft(f.root,entry.id).finding.summary,'Preserve the researcher’s own text.');
+ assert.ok(timings.every(x=>x.bytes<1024*1024),JSON.stringify(timings));
+ const explicit=f.runner.status(undefined,undefined,{fullDetails:true});assert.equal(explicit.jobs.filter(j=>j.reviewReasoning).length,204);const fullBytes=Buffer.byteLength(JSON.stringify(explicit));assert.ok(fullBytes>8*1024*1024);
+ reopen();detailLoads=0;const missing=f.runner.state.jobs['I-1'].detailReferences.reviewReasoning,file=path.join(f.root,missing.file),original=fs.readFileSync(file);
+ fs.unlinkSync(file);await board.showLibrary();assert.equal(detailLoads,2,'The selected finding alone reloads; missing unselected reasoning never aborts the library.');
+ const lost=f.runner.status(undefined,'I-1').jobs[0];assert.equal(lost.detailProblems[0].code,'REPORT_DETAIL_MISSING');assert.equal(lost.assessmentAvailable,true,'Nonessential review reasoning loss does not erase separately intact checked projection.');
+ assert.equal(lost.localRecheckAvailable,true);assert.equal(lost.reviewReasoning,undefined);
+ fs.writeFileSync(file,original);assert.equal(f.runner.status(undefined,'I-1').jobs[0].reviewReasoning.length,42);assert.deepEqual(f.runner.status(undefined,'I-1').jobs[0].detailProblems,[]);
+ for(const [mode,expected]of [['tamper','REPORT_DETAIL_HASH'],['owner','REPORT_DETAIL_OWNER']]){
+  reopen();const ref=f.runner.state.jobs['I-2'].detailReferences.assessmentProjection,target=path.join(f.root,ref.file),bytes=fs.readFileSync(target),record=JSON.parse(bytes);
+  if(mode==='tamper')record.value.technical.why='Untrusted changed text';else record.findingId='I-1';fs.writeFileSync(target,JSON.stringify(record));
+  const row=f.runner.status(undefined,'I-2').jobs[1];assert.equal(row.detailProblems[0].code,expected);assert.equal(row.assessmentAvailable,false);assert.equal(row.assessmentProjection,undefined);assert.equal(row.assessmentState,'unavailable');
+  assert.equal(f.runner.status().jobs[1].assessmentProjection,undefined,'A subsequent summary cannot resurrect the invalid detail as current.');
+  fs.writeFileSync(target,bytes);assert.equal(f.runner.status(undefined,'I-2').jobs[1].assessmentAvailable,true);
+ }
+ assert.deepEqual(f.runner.state.resources,ledger);assert.equal(f.calls.length,0);assert.equal(store.readDraft(f.root,entry.id).finding.summary,'Preserve the researcher’s own text.');
+ const legacy={...structuredClone(journal.read(f.root,'.flowboard/report-preparation.json')),jobs:{legacy:{id:'legacy',reviewReasoning:[{message:'Exact inline legacy reasoning'}]}}};
+ assert.deepEqual(journal.attach(f.root,legacy).jobs.legacy.reviewReasoning,[{message:'Exact inline legacy reasoning'}]);
+ t.diagnostic(JSON.stringify({jobs:204,recordsPerJob:42,journalBytes,fullDiagnosticBytes:fullBytes,scenes:timings,detailLoadsBeforeFullExport:2,callbacks:0}));
+});
 for(const mode of ['omitted','unresolved','complete'])test(`first extraction report coverage through importer and fresh review: ${mode}`,{skip:!native},async t=>{
  const extra='\n\nA separate route `Gate.other(false)` at `src/Gate.sol:7` is also alleged to complete. The proposed change is to remove require, not the current implementation.\n';
  const source=code.replace('\n}\n','\n    function other(bool accepted) external pure { require(accepted, "other"); }\n}\n');
@@ -157,6 +205,160 @@ test('selected local recheck works with exhausted allowance and provider none wi
   assert.equal(f.runner.state.resources.requests,before.resources.requests);assert.deepEqual(f.runner.state.resources.receipts,before.resources.receipts);
   assert.equal(f.runner.state.jobs['I-2'].requests,0);assert.equal(f.runner.state.jobs['I-1'].repairAvailable,false);
   await f.runner.ensure();assert.equal(f.calls.length,calls);assert.equal(engine.read(f.root,'I-1').localPreparation.preflight.dispatchable,true);
+});
+function partialResponse(input){
+  const value=response(input);if(input.checkOnly)return value;
+  value.claims[0].status='unresolved';value.claims[0].unknowns=['The independently alleged caller entitlement remains unspecified.'];
+  value.claims[0].reason='The false guard is source-established, but the additional stated entitlement is unresolved.';
+  value.causal.outcome='blocked';value.causal.obligations.find(o=>o.kind==='rule').state='open';
+  value.conclusion={status:'insufficient-evidence',text:value.claims[0].reason,limitations:[value.claims[0].unknowns[0]]};
+  value.walkthrough.assessment.result='unclear';return value;
+}
+test('completed retained assessment selected Recheck acquires its exact missing local helper before validation without calls',{skip:!native},async t=>{
+  const helper='pragma solidity ^0.8.20;\ncontract Extra {\n function localHelper() internal pure returns(bool) {\n  return true;\n }\n}\n';
+  const f=await fixture(t,2,partialResponse,reportText(2),code,{'src/Extra.sol':helper});await f.runner.ensure();
+  const draft=engine.read(f.root,'I-1'),before=require('../extension/review-content').project(draft),used=f.runner.state.resources.requests,calls=f.calls.length;
+  assert.equal(draft.checkpoint.stage,'complete');assert.equal(require('../extension/technical-assessment').current(draft),true);
+  assert.ok(!draft.sources.some(u=>u.name.includes('localHelper')),'Unrelated discovery did not already supply the helper.');
+  const fn=f.getCatalog().functions.find(u=>u.name==='localHelper'),doc=f.getCatalog().document('src/Extra.sol');
+  f.options.configuration=()=>({provider:'none'});const sibling=engine.read(f.root,'I-2');
+  await f.runner.continueFinding('I-1',{recheckLocalPreparation:true,requirements:[{file:'src/Extra.sol',sourceHash:engine.hash(doc.text),line:fn.startLine,endLine:fn.endLine,
+    reason:'Inspect this exact local definition for the remaining property question; it is not interpreted by the old review.'}]});
+  const after=engine.read(f.root,'I-1');assert.ok(after.sources.some(u=>u.name.includes('localHelper')),after.error);
+  assert.ok(after.localPreparation.coverage.some(r=>r.outcome==='supplied'));assert.equal(after.localPreparation.revalidation.providerRequests,0);
+  assert.deepEqual(require('../extension/review-content').project(after),before);assert.equal(f.calls.length,calls);assert.equal(f.runner.state.resources.requests,used);
+  assert.equal(policy.expose(after).assessmentProjection.technical.result,'not-assessed','Newly acquired material source must be interpreted, not locally sealed as checked.');
+  assert.deepEqual(engine.read(f.root,'I-2'),sibling);await f.runner.ensure();assert.equal(f.calls.length,calls);
+});
+for(const left of [0,1,2])test(`accepted partial assessment has one explicit private revision pair with immutable readable predecessor (${left} slots)`,{skip:!native},async t=>{
+  const f=await fixture(t,2);f.options.configuration=()=>({provider:'codex',requestLimit:12,workers:1});
+  let revising=false,seenAuthoring=false,seenCheck=false;
+  f.options.invoke=async(input,options)=>{
+    f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
+    let value=partialResponse(input);
+    if(!revising&&left===2&&input.finding.id==='I-1'){
+      if(input.phase==='generate')value.questions=[{id:'local-guard',claimId:'c1',text:'Interpret the supplied guard.',action:'inspect',target:value.evidence[0].sourceId,why:'This exact guard is part of the current argument.'}];
+      else if(input.candidateOnly){value=partialResponse({...input,checkOnly:false});value.evidence[0].explanation+=' This remains an exact source-only guard observation.';value=candidatePatch(value);}
+      else if(input.reviewPurpose)value=checkedCandidate(input);
+    }
+    if(revising){
+      const saved=engine.read(f.root,'I-1'),projected=policy.expose(saved);
+      assert.equal(projected.assessmentProjection.technical.result,'insufficient-evidence');assert.equal(projected.assessmentProjection.artifact.retained,true);
+      assert.equal(projected.reviewCandidate,undefined);assert.equal(projected.revisionPredecessors,undefined);assert.deepEqual(projected.evidence,[]);
+      if(input.candidateOnly){seenAuthoring=true;assert.equal(input.hostReview,null);assert.equal(input.revisionRequest.kind,'accepted-partial');
+        assert.deepEqual(input.revisionRequest.targets,['/property']);value=candidatePatch(response({...input,checkOnly:false}));}
+      else{seenCheck=true;assert.equal(input.reviewPurpose,'candidate-reverification');value=checkedCandidate(input);
+        value.explanationReviews=value.explanationReviews.map(r=>({...r,result:input.reviewRequirements.notes.find(n=>n.evidenceId===r.evidenceId).result}));}
+    }
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};
+  };
+  await f.runner.ensure();const before=engine.read(f.root,'I-1'),candidates=require('../extension/review-candidate'),job=f.runner.state.jobs['I-1'];
+  assert.equal(before.reviewCandidate,undefined);assert.equal(policy.expose(before).assessmentProjection.technical.result,'insufficient-evidence');
+  if(left===2)assert.ok(before.candidateHistory.at(-1).revisions.changes.some(c=>c.path==='/evidence/guard'),'Accepted revision keeps the true original, not the latest accepted note, as its review reference.');
+  const base=candidates.acceptedRevision(before,require('../extension/semantic-provider').schema),calls=f.calls.length,used=job.requests,sibling=structuredClone(f.runner.state.jobs['I-2']);
+  const revision={...base,id:'accepted-partial-revision',targets:['/property'],reason:'Reconcile the reported caller entitlement with the exact guard and retain or resolve that scoped property question.'};
+  const stale={...revision,assessmentIdentity:'stale'};assert.throws(()=>candidates.revise(structuredClone(before),require('../extension/semantic-provider').schema,stale),/current accepted partial/);
+  job.requestLimit=used+left;f.runner.save();f.options.configuration=()=>({provider:'none'});
+  await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls);assert.equal(engine.read(f.root,'I-1').reviewCandidate,undefined);
+  f.options.configuration=()=>({provider:'codex',requestLimit:12,workers:1});const limit=f.runner.state.resources.limit;f.runner.state.resources.limit=f.runner.state.resources.requests+1;f.runner.save();
+  await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls);assert.equal(engine.read(f.root,'I-1').reviewCandidate,undefined);
+  f.runner.state.resources.limit=limit;f.runner.save();
+  assert.equal(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],engine.read(f.root,'I-1')).additionalAllocation,2-left);
+  revising=true;
+  if(left===1){
+    const begin=engine.beginCandidateRevision;engine.beginCandidateRevision=args=>{begin(args);throw Error('Controlled interruption after accepted predecessor persisted.');};
+    try{await f.runner.continueFinding('I-1',{reviseAnalysis:revision});}finally{engine.beginCandidateRevision=begin;}
+    assert.equal(engine.read(f.root,'I-1').reviewCandidate.state,'revision-pending');assert.equal(f.calls.length,calls);
+    f.runner.dispose();await f.runner.loop;f.runner=new ReportPreparation(f.root,f.options);await f.runner.ensure();assert.equal(f.calls.length,calls);
+    await f.runner.continueFinding('I-1');
+  }else await Promise.all([f.runner.continueFinding('I-1',{reviseAnalysis:revision}),f.runner.continueFinding('I-1',{reviseAnalysis:revision})]);
+  const after=engine.read(f.root,'I-1');assert.equal(f.calls.length,calls+2,after.error);assert.ok(seenAuthoring&&seenCheck,after.error);
+  assert.ok(f.runner.artifact('I-1'),after.error);assert.equal(after.reviewCandidate,undefined);assert.equal(f.runner.state.jobs['I-1'].requests,used+2);
+  const retained=after.revisionPredecessors.find(p=>p.id===revision.id);assert.deepEqual(retained.accepted,before);assert.deepEqual(after.corrections,before.corrections);
+  assert.equal(f.runner.state.jobs['I-2'].requestLimit,sibling.requestLimit);assert.equal(f.runner.state.jobs['I-2'].requests,sibling.requests);
+  await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls+2);
+  f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(f.calls.length,calls+2);
+});
+test('accepted partial revision with no changed argument retains the response and stops before V, including reopen',{skip:!native},async t=>{
+  const f=await fixture(t,1);f.options.configuration=()=>({provider:'codex',requestLimit:6});
+  f.options.invoke=async(input,options)=>{f.calls.push([input.phase,input.reviewPurpose]);return{value:input.candidateOnly?{mode:'candidate-edit-v2',edits:[]}:partialResponse(input),
+    audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};};
+  await f.runner.ensure();const before=engine.read(f.root,'I-1'),base=require('../extension/review-candidate').acceptedRevision(before,require('../extension/semantic-provider').schema);
+  await f.runner.continueFinding('I-1',{reviseAnalysis:{...base,id:'unproductive-revision',targets:['/property'],reason:'Resolve the concrete open collection-property basis from the supplied source.'}});
+  const after=engine.read(f.root,'I-1');assert.equal(f.calls.length,3,after.error);assert.equal(after.currentRejection.validationProblems[0].code,'REVISION_NO_CHANGE');
+  assert.ok(after.pendingResponse);assert.equal(after.runs.at(-1).resultAccepted,false);assert.equal(after.reviewCandidate.state,'revision-pending');
+  assert.equal(policy.expose(after).assessmentProjection.technical.result,'insufficient-evidence');
+  f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(f.calls.length,3);assert.equal(f.runner.state.resources.requests,3);
+  const replayed=engine.read(f.root,'I-1');assert.equal(replayed.currentRejection.validationProblems[0].code,'REVISION_NO_CHANGE');
+  assert.deepEqual(replayed.revisionPredecessors[0].accepted,before);assert.deepEqual(replayed.corrections,before.corrections);
+});
+test('ordinary accepted partial revision retains the exact verifier receipt after unpaid host replay',{skip:!native},async t=>{
+  const f=await fixture(t,1);f.options.configuration=()=>({provider:'codex',requestLimit:6});let revising=false;
+  f.options.invoke=async(input,options)=>{
+    f.calls.push([input.phase,input.reviewPurpose]);
+    const value=revising?(input.candidateOnly?candidatePatch(response({...input,checkOnly:false})):checkedCandidate(input)):partialResponse(input);
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,inputHash:engine.hash(input),teardown:{confirmed:true}}};
+  };
+  const coverage=require('../extension/report-coverage'),originalAssert=coverage.assert;let rejected=false;
+  const faulty=t.mock.method(coverage,'assert',(value,draft,options)=>{
+    if(!rejected&&options?.review){rejected=true;throw Object.assign(Error('Controlled host reference rejection before unpaid replay.'),{code:'REVIEW_REFERENCE_SCOPE'});}
+    return originalAssert(value,draft,options);
+  });
+  await f.runner.ensure();faulty.mock.restore();const rejectedDraft=engine.read(f.root,'I-1');
+  assert.equal(f.calls.length,2,rejectedDraft.error);assert.ok(rejectedDraft.pendingResponse);assert.equal(rejectedDraft.runs.at(-1).resultAccepted,false);
+  const reference=structuredClone(rejectedDraft.pendingResponse),responseBytes=fs.readFileSync(path.join(f.root,'.flowboard/provider-results/I-1.json'),'utf8');
+  f.options.configuration=()=>({provider:'none',requestLimit:6});await f.runner.ensure();
+  const before=engine.read(f.root,'I-1'),acceptedRun=before.runs.at(-1),received=before.runs.findLast(r=>r.requestId===acceptedRun.requestId&&r.retainedResponse);
+  assert.equal(f.calls.length,2);assert.equal(f.runner.state.resources.requests,2);
+  assert.equal(acceptedRun.reusedResponse,true);assert.equal(acceptedRun.resultAccepted,true);assert.equal(acceptedRun.retainedResponse,undefined);
+  assert.equal(received.resultAccepted,false);assert.equal(received.retainedResponse.hash,reference.hash);
+  assert.equal(policy.expose(before).assessmentProjection.technical.result,'insufficient-evidence');
+  const base=require('../extension/review-candidate').acceptedRevision(before,require('../extension/semantic-provider').schema);
+  const revision={...base,id:'accepted-after-replay',targets:['/property'],reason:'Reconcile the open entitlement with the exact current source guard and retain any genuinely distinct uncertainty.'};
+  const {report,entries}=reconcile(f.root),entry=entries[0],args={root:f.root,catalog:f.getCatalog(),request:f.runner.request(entry,f.getCatalog(),report),issue:f.runner.issue(entry),revision};
+  const mismatched=structuredClone(before);mismatched.runs.at(-1).inputHash='different-request-input';
+  assert.throws(()=>engine.beginCandidateRevision({...args,draft:mismatched}),/exact owned response checkpoint/);
+  const unsafe=structuredClone(before);unsafe.runs.findLast(r=>r.retainedResponse).teardown.confirmed=false;
+  assert.throws(()=>engine.beginCandidateRevision({...args,draft:unsafe}),/confirmed cleanup/);
+  assert.equal(engine.read(f.root,'I-1').reviewCandidate,undefined);assert.equal(f.calls.length,2);
+  revising=true;f.options.configuration=()=>({provider:'codex',requestLimit:6});
+  await f.runner.continueFinding('I-1',{reviseAnalysis:revision});
+  const after=engine.read(f.root,'I-1');assert.equal(f.calls.length,4,after.error);assert.ok(f.runner.artifact('I-1'),after.error);
+  const predecessor=after.revisionPredecessors.find(p=>p.id===revision.id);
+  assert.deepEqual(predecessor.accepted,before);assert.equal(predecessor.response.hash,reference.hash);
+  assert.equal(fs.readFileSync(path.join(f.root,predecessor.response.archive),'utf8'),responseBytes);
+  assert.equal(f.runner.state.resources.requests,4);assert.deepEqual(after.corrections,before.corrections);
+  f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(f.calls.length,4);
+});
+test('terminal correction of an accepted partial successor preserves its immutable accepted ancestor',{skip:!native},async t=>{
+  const f=await fixture(t,1);f.options.configuration=()=>({provider:'codex',requestLimit:6});let revision=0,original;
+  f.options.invoke=async(input,options)=>{
+    f.calls.push([input.phase,input.reviewPurpose]);let value=partialResponse(input);
+    if(revision){
+      const saved=engine.read(f.root,'I-1'),projected=policy.expose(saved);
+      assert.equal(projected.assessmentProjection.technical.identity,original.technicalReview.identity);
+      assert.equal(projected.assessmentProjection.technical.result,'insufficient-evidence');assert.equal(projected.assessmentProjection.artifact.retained,true);
+      assert.equal(projected.reviewCandidate,undefined);assert.equal(projected.revisionPredecessors,undefined);
+      if(input.candidateOnly){value=partialResponse({...input,checkOnly:false});value.evidence[0].explanation+=` Private correction proposal ${revision}.`;value=candidatePatch(value);}
+      else {value=checkedCandidate(input);value.result='repair';value.problems=['The proposed entitlement still needs a source-grounded reconciliation with the reported condition.'];}
+    }
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};
+  };
+  await f.runner.ensure();original=engine.read(f.root,'I-1');const candidates=require('../extension/review-candidate');
+  revision=1;await f.runner.continueFinding('I-1',{reviseAnalysis:{...f.runner.revisionEligibility(f.runner.state.jobs['I-1'],original),id:'accepted-first',targets:['/property'],reason:'Reconcile the unresolved source-grounded entitlement.'}});
+  const terminal=engine.read(f.root,'I-1');assert.equal(terminal.reviewCandidate.state,'terminal');assert.equal(f.calls.length,4);
+  assert.deepEqual(candidates.acceptedPredecessor(terminal),original);assert.deepEqual(terminal.technicalReview,original.technicalReview);
+  const action=f.runner.revisionEligibility(f.runner.state.jobs['I-1'],terminal);assert.equal(action.available,true);assert.equal(action.additionalAllocation,0);
+  revision=2;await f.runner.continueFinding('I-1',{reviseAnalysis:{...action,id:'accepted-second',reason:'Address the recorded contrary-condition objection while retaining the original unresolved entitlement.'}});
+  const after=engine.read(f.root,'I-1');assert.equal(f.calls.length,6,after.error);assert.equal(after.reviewCandidate.state,'terminal');
+  assert.deepEqual(candidates.acceptedPredecessor(after),original);assert.deepEqual(after.technicalReview,original.technicalReview);
+  assert.deepEqual(after.revisionPredecessors.find(p=>p.id==='accepted-second').candidate,terminal.reviewCandidate);
+  assert.equal(policy.expose(after).assessmentProjection.technical.revisionStatus,'Accepted predecessor; private revision needs correction');
+  const damaged=structuredClone(after);damaged.revisionPredecessors.find(p=>p.id==='accepted-second').candidate.candidate.claims[0].reason='Tampered private lineage';
+  assert.equal(candidates.acceptedPredecessor(damaged),null);assert.equal(policy.expose(damaged).assessmentProjection.technical.result,'not-assessed');
+  const stale=structuredClone(after);stale.corrections.push({text:'Changed material premise'});assert.equal(candidates.acceptedPredecessor(stale),null);
+  f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(f.calls.length,6);
+  assert.deepEqual(candidates.acceptedPredecessor(engine.read(f.root,'I-1')),original);assert.equal(f.runner.state.resources.requests,6);
 });
 function checkedCandidate(input) {
   const value=response({...input,checkOnly:true});value.inputReviews=[];
@@ -627,7 +829,7 @@ test('FIRST pending-response recovery projects the recovered missing input throu
   const board = Object.assign(Object.create(TriageBoard.prototype), { disposed: false, activeId:'I-1', models: new Map(), callbacks: { reportPreparation: () => f.runner }, post: async m => messages.push(m) });
   f.options.changed = () => board.reportProgress(); f.options.configuration = () => ({ provider: 'none', requestLimit: 2 });
   await f.runner.ensure(); await new Promise(resolve => setImmediate(resolve));
-  const saved = engine.read(f.root, 'I-1'), job = f.runner.status().jobs[0], delivered = messages.at(-1).report.jobs[0];
+  const saved = engine.read(f.root, 'I-1'), job = f.runner.status(undefined,'I-1').jobs[0], delivered = messages.at(-1).report.jobs[0];
   assert.equal(saved.failureKind, 'material-evidence'); assert.equal(job.failureKind, saved.failureKind);
   assert.deepEqual(job.missingInputs.map(({id,claimId,text,why})=>({id,claimId,text,why})), saved.questions.map(({ id, claimId, text, why }) => ({ id, claimId, text, why })));
   assert.equal(job.missingInputs[0].action,'missing-context');

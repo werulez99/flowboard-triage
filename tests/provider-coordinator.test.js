@@ -447,11 +447,14 @@ test('sealed projected input drift is withdrawn durably on first reopen without 
   delete draft.bindingPlan;
   draft.publication = { ready: true, policy: policy.POLICY, problems: [], digest: policy.digest(draft) }; draft.revision++; engine.write(f.root, draft);
   const preserved = JSON.stringify([draft.claims, draft.evidence, draft.causal, draft.runs]), resources = structuredClone(f.runner.state.resources);
-  f.runner.dispose(); const messages = [], reopened = new ReportPreparation(f.root, { ...f.options, changed: status => messages.push(status) });
+  f.runner.dispose(); const messages = [], reopened = new ReportPreparation(f.root, { ...f.options, selectedFinding: () => 'I-1', changed: status => messages.push(status) });
   t.after(() => reopened.dispose()); await reopened.ensure();
-  const after = engine.read(f.root, 'I-1'), job = reopened.status().jobs.find(job => job.id === 'I-1');
+  const after = engine.read(f.root, 'I-1'), job = reopened.status(undefined,'I-1').jobs.find(job => job.id === 'I-1');
   assert.equal(after.failureCode, 'LOCAL_GATE_WITHDRAWN', JSON.stringify(job)); assert.equal(after.checkpoint.stage, 'challenge'); assert.equal(after.phase, 'blocked');
   assert.equal(job.state, 'blocked'); assert.ok(job.validationProblems.length); assert.match(job.reason, /checked semantic content/);
+  const summary=reopened.status().jobs.find(job=>job.id==='I-1');
+  assert.equal(summary.validationProblems,undefined,'The report library stays summary-only; detailed drift diagnostics belong to the explicitly selected finding.');
+  assert.equal(summary.state,'blocked');assert.equal(summary.reason,job.reason);
   assert.equal(policy.expose(after).causal, undefined); assert.equal(reopened.published(engine.read(f.root, 'I-2')), true);
   assert.equal(JSON.stringify([after.claims, after.evidence, after.causal, after.runs]), preserved);
   assert.deepEqual(reopened.state.resources, resources); assert.equal(f.calls.length, 4);

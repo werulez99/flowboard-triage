@@ -171,7 +171,10 @@ try:
         page.locator('#triage-bar').get_by_role('button',name='Findings',exact=True).click()
         assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
         assert 'supplied remote receiver' in page.locator('[data-finding-id="I-3"]').inner_text()
-        assert 'no usable claim/evidence structure' in page.locator('[data-finding-id="I-4"]').inner_text()
+        result['failedRow']={'text':page.locator('[data-finding-id="I-4"]').inner_text(),'job':job(state,'I-4')}
+        page.screenshot(path=str(output/'mixed-ready-rows.png'))
+        assert result['failedRow']['job']['reason'] and result['failedRow']['job']['reason'] in result['failedRow']['text'],result['failedRow']
+        assert 'No current completed substantive assessment is available.' not in result['failedRow']['text'],result['failedRow']
         page.screenshot(path=str(output/'mixed-ready-rows.png'))
         result['checks'].append('B becomes independently Ready through challenge and host validation; A keeps its function, highlight, camera, manual text and caret. B enables without refresh.')
         if args.external_reimport:
@@ -184,7 +187,7 @@ try:
             assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').inner_text().endswith('Ready')
             page.evaluate('status=>window.dispatchEvent(new MessageEvent("message",{data:{type:"triage:reportPreparation",report:status,reportObservation:999999}}))',old_status)
             assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
-            assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
+            assert '2 tutorials ready' in page.locator('.triage-preparation-counts').inner_text()
             page.get_by_label('Finding queue filter').select_option('preparation:ready')
             assert page.locator('[data-finding-id="I-2"]').is_visible() and not page.locator('[data-finding-id="I-3"]').is_visible()
             assert len(request('/state')['providerCalls'])==used
@@ -213,7 +216,7 @@ try:
                 assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').get_attribute('data-state') == 'ready'
                 assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').inner_text().endswith('Ready')
                 assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
-                assert '2 ready' in page.locator('.triage-preparation-counts').inner_text()
+                assert '2 tutorials ready' in page.locator('.triage-preparation-counts').inner_text()
                 assert 'supplied remote receiver' in page.locator('[data-finding-id="I-3"]').inner_text()
                 page.get_by_label('Finding queue filter').select_option('preparation:ready')
                 assert page.locator('[data-finding-id="I-1"]').is_visible()
@@ -234,6 +237,38 @@ try:
             assert job(state,'I-1')['publishable'] and job(state,'I-2')['publishable']
             assert state['reportPreparation']['mode']=='paused' and len(state['providerCalls'])==used
         result['checks'].append('Pause, controller reopen and a new coordinator/controller using persisted artifacts keep A/B readable and A’s draft/reading position, with zero extra controlled requests.')
+        # The third predeclared fixture is an honest checked unknown, not a
+        # tutorial failure interpreted as refutation. Inspect its actual DTO
+        # and native source action, not an injected assessment.
+        open_finding('I-3',ready=False);state=request('/state');partial=state['exposedInvestigation']['assessmentProjection']['technical']
+        assert partial['result']=='insufficient-evidence' and partial['coverage']=='partial',partial
+        assert not job(state,'I-3')['publishable'] and not page.locator('.guide-annotation').count()
+        result['unresolvedAssessment']={'technical':partial,'viewports':[],'extraProviderCallbacks':0,'inspection':'Original source via explicitly attributed material-evidence blocker; no decisive note is approved for this withheld claim.'}
+        used=len(state['providerCalls'])
+        for width,height in [(1440,900),(801,600)]:
+            page.set_viewport_size({'width':width,'height':height});page.wait_for_timeout(150)
+            page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
+            page.wait_for_selector('.guide-technical-result:visible')
+            assert 'Insufficient evidence' in page.locator('.guide-technical-result').inner_text()
+            assert 'implementation' in page.locator('.guide-preparation').inner_text()
+            page.screenshot(path=str(output/f'unresolved-assessment-{width}.png'))
+            expand=page.locator('.guide-preparation').get_by_role('button',name='Details',exact=True)
+            if expand.count():expand.click()
+            action=page.locator('.guide-blocker').get_by_role('button',name='Inspect code ·',exact=False).first
+            action.scroll_into_view_if_needed();before=page.evaluate('()=>({scale,panX,panY,scroll:document.querySelector(".guide-preparation").scrollTop})')
+            action.click();page.wait_for_selector('.guide-blocker-return:visible')
+            focus=page.evaluate('()=>window.hostMessages.filter(m=>m.type==="triage:blockerFocus").at(-1)')
+            card=page.locator('[data-id='+json.dumps(focus['id'])+']')
+            assert card.locator('.triage-claim-line').evaluate_all('(ns)=>ns.map(n=>Number(n.dataset.sourceLine))')==[14]
+            assert 'remote.finish(accepted);' in card.locator('.card-code').inner_text()
+            assert card.locator('[data-source-line]').evaluate_all('(ns)=>ns.map(n=>Number(n.dataset.sourceLine))')==[13,14,15]
+            assert card.locator('.triage-claim-line').evaluate('(n)=>{const r=n.getBoundingClientRect(),b=n.closest(".card-code").getBoundingClientRect();return r.top>=b.top&&r.bottom<=b.bottom;}')
+            page.screenshot(path=str(output/f'unresolved-source-{width}.png'))
+            page.get_by_role('button',name='Return to blockers',exact=True).first.click();page.wait_for_selector('.guide-technical-result:visible')
+            assert page.evaluate('()=>({scale,panX,panY,scroll:document.querySelector(".guide-preparation").scrollTop})')==before
+            assert len(request('/state')['providerCalls'])==used
+            result['unresolvedAssessment']['viewports'].append({'size':[width,height],'sourceLines':[13,14,15],'citedLines':[14],'returnRestored':True})
+        result['checks'].append('I-3 remains a current insufficient-evidence partial assessment, not Ready: the exact unknown implementation is visible, full original remoteFinish source and line14 inspection/Return work in both viewports with zero requests.')
         result.update({'productionExtension':host['productionExtension'],'productionVersion':host['productionVersion'],
             'firstReadyOpenMs':first_readable_ms,'releaseToAcceptedObservedMs':accepted_observed_ms,
             'controlledRequests':len(state['providerCalls']),'externalProviderRequests':0,

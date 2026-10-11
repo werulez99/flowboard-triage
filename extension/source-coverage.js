@@ -98,6 +98,7 @@ function packet(input, units, models = []) {
     requireSpan(unit.source.file,unit.source.sourceHash,line,endLine,`Review of evidence ${note.id}`);
   }
   for(const model of models.filter(Boolean)){
+    for(const event of model.causal?.events||[])for(const fact of event.statePredicates||[])requireUnit(fact.sourceId,`State predicate ${event.id}/${fact.id}`);
     for(const entry of model.bindingPlan?.entries||model.causal?.entryBindings||[]){
       const caller=known.get(entry.sourceId),callee=known.get(entry.implementationSourceId);
       const site=caller&&require('./call-bindings').exactSite(caller,entry.callSiteId);

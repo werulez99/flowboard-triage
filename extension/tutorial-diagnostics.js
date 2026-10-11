@@ -3,7 +3,7 @@
 // attestations, mutates a candidate, acquires code, or advances a lifecycle.
 const crypto=require('node:crypto'),bindings=require('./call-bindings'),capacity=require('./review-capacity');
 const {lexicalCode}=require('./solidity-text');
-const VERSION='tutorial-diagnostics-v3';
+const VERSION='tutorial-diagnostics-v4';
 const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const actions={structural:'Correct these exact explanation fields and their dependent checks in a private revision; do not retry an unchanged verification.',
   capability:'Inspect the linked supplied code. This operation is outside the supported local analysis; more copies of that code will not resolve it.',
@@ -30,6 +30,7 @@ function inspect(draft) {
     premises:draft.semanticInput,corrections:draft.corrections,sourceSnapshot:draft.snapshot,bindingPlan:draft.bindingPlan});
   if(!model)return {version:VERSION,identity,details,admissible:true};
   const resolved=require('./event-source').resolver(draft),{units,evidence}=resolved;
+  for(const problem of require('./state-predicates').assert(draft))fail(problem.reason,problem.kind,'event:'+problem.eventId,problem);
   // Source-valid references, NOT fresh explanation approvals. The final gate
   // independently requires all original/current/revision attestations.
   const refs=ids=>Array.isArray(ids)&&ids.length>0&&ids.every(id=>{
@@ -53,11 +54,12 @@ function inspect(draft) {
       else participants.set(event.invocationId,current);
     }
     if(unit?.contextKind&&event.effect!=='read')fail(`${event.title}: a declaration is context, not evidence of an executed operation or committed change. Anchor the operation in its function and keep the declaration as a read step.`,'structural',target,{code:'CONTEXT_NOT_EXECUTION'});
-    if(unit&&!unit.contextKind&&event.effect==='committed'){
+    if(unit&&!unit.contextKind&&(event.effect==='committed'||event.statePredicates?.length&&!event.callSiteId)){
       const note=event.anchor||evidence.get(event.evidenceId),lines=unit.code.split('\n'),start=lines.slice(0,note?.source.line-unit.source.line).join('\n').length+(note?.source.line>unit.source.line?1:0);
-      const path=bindings.sourcePath(unit,start+Math.max(0,lexicalCode(unit.code.slice(start)).search(/\S/)),new Map(),units);
-      if(path.commitment==='reverts')fail(`${event.title}: the body operation can be reached, but the modifier postlude reverts; it cannot commit.`,'structural',target,{code:'MODIFIER_COMMITMENT',source:path.modifier.source});
-      else if(path.modifier&&path.commitment==='unknown')fail(`${event.title}: modifier postlude completion is unresolved; reaching the body does not establish commitment.`,'capability',target,{code:'MODIFIER_POSTLUDE_UNKNOWN',source:path.modifier.source});
+      const path=bindings.sourcePath(unit,start+Math.max(0,lexicalCode(unit.code.slice(start)).search(/\S/)),bindings.callerConstraints(event,unit,units,evidence),units);
+      if(path.reachable!==true&&(event.statePredicates?.length||path.code?.startsWith('MODIFIER_')))fail(`${event.title}: cannot establish this operation under its exact entry predicates. ${path.reason}`,path.kind||'capability',target,{code:path.code||'STATE_PATH_UNKNOWN',source:path.source||unit.source});
+      if(event.effect==='committed'&&path.commitment==='reverts')fail(`${event.title}: the body operation can be reached, but the modifier postlude reverts; it cannot commit.`,'structural',target,{code:'MODIFIER_COMMITMENT',source:path.modifier.source});
+      else if(event.effect==='committed'&&path.modifier&&path.commitment==='unknown')fail(`${event.title}: modifier postlude completion is unresolved; reaching the body does not establish commitment.`,'capability',target,{code:'MODIFIER_POSTLUDE_UNKNOWN',source:path.modifier.source});
     }
     for(const change of event.changes||[]){const problem=require('./checked-calculation').problem(change);if(problem)fail(`${event.title}: ${problem}`,'structural',target,{code:'VALUE_CALCULATION'});}
   }

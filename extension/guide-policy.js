@@ -38,6 +38,9 @@ const schema = object({
   order: strings,
   checks: { type: 'array', maxItems: limits.checks, items: object({ target: str, reason: str, evidence: strings, documentation: strings }) }
 });
+// Optional in canonical/historical records. New provider contracts make it
+// explicit; no old paid review gains new assumptions during replay.
+schema.properties.events.items.properties.statePredicates=require('./state-predicates').schema;
 function gate(draft) {
   if(draft.recoveryRequired)return {ready:false,policy:POLICY,problems:[draft.recoveryRequired.reason],details:[]};
   const fidelity=require('./review-content').mismatch(draft);
@@ -138,6 +141,10 @@ function gate(draft) {
     eventIds.add(event.id);
     if (event.effect !== 'read' && (!nonempty(event.actor) || !nonempty(event.caller) || !nonempty(event.receiver))) fail(`${event.title}: the relevant caller and receiver are missing.`);
     for (const input of list(event.inputs)) if (!['name', 'expression', 'type', 'units', 'origin'].every(key => nonempty(input[key])) || !refs(input.evidence)) fail(`${event.title}: an input has no checked origin or units.`);
+    for(const fact of event.statePredicates||[]){
+      if(!refs(fact.evidence)||!check(capacity.target('event',event),fact.evidence)||!obligations.some(o=>o.claimId===event.claimId&&o.kind==='conditions'&&check(capacity.target('obligation',o),fact.evidence)))
+        fail(`${event.title}: the attributed storage-entry predicate needs fresh event and conditions review of all its evidence.`,'structural',capacity.target('event',event),{code:'STATE_PREDICATE_REVIEW'});
+    }
     for (const change of list(event.changes)) {
       if (!['name', 'before', 'operation', 'after', 'units'].every(key => nonempty(change[key])) || !refs(change.evidence)) fail(`${event.title}: a displayed value change lacks evidence.`);
     }

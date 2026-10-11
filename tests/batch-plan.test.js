@@ -11,6 +11,21 @@ test('capacity scenarios distinguish expected, bounded maximum, shared allowance
     assert.match(plan.scenario.label, /not an ETA/);
   }
 });
+test('planning counts the admitted operation, not every unavailable tutorial as two requests',()=>{
+  const jobs=[
+    {id:'ready',publishable:true},
+    {id:'external',nextOperation:{kind:'evidence',phases:0}},
+    {id:'local',nextOperation:{kind:'acquire',phases:0}},
+    {id:'verify',nextOperation:{kind:'verify',phases:1},requests:5,requestLimit:6},
+    {id:'revise',nextOperation:{kind:'revision',phases:2},requests:4,requestLimit:6},
+    {id:'forbidden',nextOperation:{kind:'revision',phases:2},requests:0,requestLimit:6},
+    {id:'terminal',state:'failed',requests:1,requestLimit:6}
+  ];
+  const plan=batch.plan(jobs,{requests:10,limit:20},2,2,job=>({available:job.id!=='forbidden'}));
+  assert.equal(plan.expectedRequests,3);assert.equal(plan.maximumRequests,3);assert.equal(plan.eligible,2);
+  assert.equal(plan.awaitingEvidence,1);assert.equal(plan.localActions,1);assert.equal(plan.admissionBlocked,1);
+  assert.deepEqual(plan.phases,{verificationOnly:1,authoringAndVerification:1});
+});
 test('configured shared pool admits four, waits FIFO, refuses conflicting project capacity and retains default two', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-capacity-test-')), held = [];
   t.after(() => { for (const release of held) release(); fs.rmSync(directory, { recursive: true, force: true }); });

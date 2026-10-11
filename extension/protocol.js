@@ -155,7 +155,8 @@ function writableDirectory(root, directory) {
   }
   return destination;
 }
-function atomicJson(root, relative, value, { compact = false } = {}) {
+function atomicJson(root, relative, value, { compact = false, maxBytes } = {}) {
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new TypeError('JSON output byte limit must be a positive safe integer.');
   const directory = writableDirectory(root, path.dirname(relative));
   const destination = path.join(directory, path.basename(relative));
   if (fs.existsSync(destination) && fs.lstatSync(destination).isSymbolicLink()) fail('Refusing to overwrite a symbolic link.');
@@ -163,6 +164,10 @@ function atomicJson(root, relative, value, { compact = false } = {}) {
   // Compact journals reuse the exact serialized content for their optimistic
   // ownership identity. Other human-readable records keep the existing format.
   const encoded = JSON.stringify(value, null, compact ? undefined : 2);
+  // Check the bytes that will actually be written, including the final newline,
+  // without serializing again or replacing the last usable record on failure.
+  if (maxBytes !== undefined && Buffer.byteLength(encoded) + 1 > maxBytes) throw Object.assign(
+    new Error(`JSON output exceeds ${maxBytes} bytes; the last usable journal or record was preserved.`), { code: 'JSON_STORAGE_LIMIT', maxBytes });
   try {
     fs.writeFileSync(temporary, encoded + '\n', { flag: 'wx', mode: 0o600 });
     fs.renameSync(temporary, destination);

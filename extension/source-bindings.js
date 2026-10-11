@@ -85,7 +85,11 @@ function compile(value, units) {
     plan.links.push({ key: key(link), entryBindingId: id }); delete link.entryBindingId;
   }
   if (used.size !== byId.size) throw failure('BINDING_RELATIONSHIP', '', 'Every entry binding needs its actual entering call relationship.');
+  const inputProblems = model.events.flatMap(event => calls.parameterInputProblems(event, resolved.event(event)).map(problem => ({ ...problem, target: 'event:' + event.id, message: problem.reason })));
+  if (inputProblems.length) throw Object.assign(new Error(inputProblems.map(problem => problem.reason).join('\n')), { code: 'BINDING_PARAMETER', validationProblems: inputProblems });
   delete model.entryBindings; delete result.bindingFormat; result.bindingPlan = plan;
+  const stateProblems=require('./state-predicates').assert({...result,sources:units,evidence:result.evidence.map(n=>({...n,source:n.source||{...units.find(u=>u.id===n.sourceId)?.source,line:n.line,endLine:n.endLine}}))}).filter(p=>p.kind==='structural');
+  if(stateProblems.length)throw Object.assign(new Error(stateProblems.map(p=>p.reason).join('\n')),{code:'STATE_PREDICATE_BINDING',validationProblems:stateProblems.map(p=>({...p,target:'event:'+p.eventId,message:p.reason}))});
   return result;
 }
 function wire(canonical, plan) {

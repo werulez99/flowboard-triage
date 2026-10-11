@@ -627,6 +627,11 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-state-row > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:8px; }
 .guide-state-row code { white-space:pre-wrap; overflow-wrap:anywhere; }
 .guide-frame,.guide-statement,.guide-execution-context { margin:12px 0; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); font-size:12px; }
+.guide-execution-context { padding:12px; box-shadow:0 2px 4px #0002; }
+.guide-execution-context h3 { margin:0 0 8px; font-size:13px; }
+.guide-execution-context p { margin:8px 0; }
+.guide-revision-form { display:grid; gap:8px; padding:12px; margin:12px 0; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); }
+.guide-revision-form textarea { width:100%; min-height:80px; box-sizing:border-box; font:inherit; color:var(--fg); background:var(--card-bg); }
 .guide-frame p { font-family:var(--vscode-editor-font-family,monospace); }
 .guide-invocation { font-weight:600; }
 .guide-values td button { font-size:12px; padding:4px; min-width:80px; }

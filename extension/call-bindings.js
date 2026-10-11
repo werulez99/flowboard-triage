@@ -34,6 +34,34 @@ function parameterSpans(code, name, line = 1) {
       declarationSpan: span(code, range.start, range.end, line) };
   });
 }
+// Only the bounded uint256 subset can seed scalar execution facts. A model's
+// type label is not the declaration; uint is Solidity's identical spelling.
+function parameterType(parameter) {
+  if (!parameter?.name) return '';
+  const declaration = lexicalCode(parameter.declaration);
+  return declaration.slice(0, declaration.lastIndexOf(parameter.name)).trim().replace(/\s+/g, ' ');
+}
+const uint256Type = type => /^(?:uint256|uint)$/.test(String(type || '').trim());
+function parameterInputProblems(event, unit) {
+  if (!unit) return [];
+  const parameters = parameterSpans(unit.code, unit.name.split('::').at(-1)), problems = [];
+  for (const input of event.inputs || []) {
+    const parameter = parameters.find(item => item.name === input.name);
+    if (!parameter) continue;
+    const declared = parameterType(parameter), claimed = String(input.type || '').trim();
+    if (!uint256Type(declared) && !uint256Type(claimed)) continue;
+    if (!uint256Type(declared) || !uint256Type(claimed)) {
+      problems.push({ code: 'PARAMETER_DECLARATION_TYPE', reason: `${event.title}: input ${input.name} claims ${claimed}, but the exact source parameter is ${declared}; an authored type cannot establish a scalar entry fact.` });
+    } else if (/^-?\d+$/.test(String(input.expression || '').trim()) && execution.scalar(input.expression, new Map()) === null) {
+      problems.push({ code: 'PARAMETER_VALUE_RANGE', reason: `${event.title}: the explicit input ${input.name} is outside the source uint256 range 0 through 2^256 - 1.` });
+    }
+  }
+  return problems;
+}
+function parameterScalar(unit, name, expression, values) {
+  const parameter = parameterSpans(unit.code, unit.name.split('::').at(-1)).find(item => item.name === name);
+  return uint256Type(parameterType(parameter)) ? execution.scalar(expression, values) : null;
+}
 function boundArgument(site, parameter, header) {
   if (parameter === 'msg.value') {
     if (site.internalLibrary || site.relationship === 'call') return null;
@@ -260,11 +288,15 @@ function invocationInputs(event, body) {
   }
   return result;
 }
-function callerConstraints(event, unit) {
+function callerConstraints(event, unit, units=new Map(), evidence=new Map()) {
   const body = unit && functionParts(unit.code, unit.name.split('::').at(-1)), values = new Map();
   if (!body || !event) return values;
   for (const input of invocationInputs(event, body)) if (parameterNames(body.header).includes(input.name) && /^(true|false)$/.test(expression(input.expression))) {
     values.set(input.name, expression(input.expression));
+  }
+  for (const input of event.inputs || []) if (uint256Type(input.type)) {
+    const scalar = parameterScalar(unit, input.name, input.expression, new Map());
+    if (scalar !== null) values.set(input.name, { scalar });
   }
   for (const condition of event.conditions || []) {
     const range = /^(\w+) is an integer from (\d+) through (\d+)$/.exec(condition);
@@ -273,17 +305,18 @@ function callerConstraints(event, unit) {
     // prose such as "authorized" into an address/role proof.
     if (/^\s*msg\.sender\s*(?:==|!=)\s*address\(\w+\)\s*$/.test(condition)) values.set(expression(condition),true);
   }
-  return values;
+  const state=require('./state-predicates').entry(event,unit,units,evidence);
+  return state.problems.length?values:require('./state-predicates').frame(unit,require('./state-predicates').transfer(values,state.values),units);
 }
-function callTimeConstraints(event, unit, evidence) {
-  const values = callerConstraints(event, unit);
+function callTimeConstraints(event, unit, evidence,units=new Map()) {
+  const values = callerConstraints(event, unit,units,evidence);
   for (const [name, initial] of values) {
-    if(name.startsWith('msg.sender'))continue;
+    if(name.startsWith('msg.sender')||name.startsWith('@')||initial?.storage)continue;
     const state = parameterValue(unit, name, initial, event, evidence);
     // A root input describes entry. The first displayed event may occur only
     // after a write. Never treat that entry premise as the call-time value.
-    const actual = state.known ? booleanValue(state.value, new Map()) : null;
-    values.set(name, actual == null ? null : String(actual));
+    const actual = state.known ? booleanValue(state.value, new Map()) : null,scalar=state.known?execution.scalar(state.value,new Map()):null;
+    values.set(name, state.known&&state.value?.scalar?state.value:scalar!==null?{scalar}:actual == null ? null : String(actual));
   }
   return values;
 }
@@ -333,6 +366,8 @@ function checkBooleanPremise(draft, condition, review, resolved = require('./eve
 function validateInvocations({ events, links, units, evidence, fail, resolved }) {
   const frame = event => resolved ? resolved.event(event) : units.get(evidence.get(event?.evidenceId)?.sourceId);
   const entered = new Set(), constraints = new Map();
+  for (const event of events) for (const problem of parameterInputProblems(event, frame(event)))
+    fail(problem.reason, 'structural', 'event:' + event.id, { code: problem.code });
   const coherent = (event, input, state) => {
     if (!state.known) return false;
     if (!input.condition) return expression(input.expression) === expression(state.value || '');
@@ -402,6 +437,7 @@ function unitFailure(unit, kind, args, absolute, custom = false) {
   });
 }
 function sourcePath(unit, offset, values, units, options = {}, stack = []) {
+  const state=require('./state-predicates');values=state.frame(unit,values,units);
   if(unit.modelRanges&&!require('./source-coverage').covers(unit.modelRanges,unit.source.line,unit.source.endLine))return {reachable:null,code:'FUNCTION_VIEW_MISSING',kind:'local-reading',source:unit.source,reason:'The complete callable source view needed for this path is not supplied in the current packet. Canonical storage or an earlier read cannot establish its current coverage.'};
   if (stack.includes(unit.id) || stack.length >= 12) return { reachable: null,code:'PATH_RECURSION_UNSUPPORTED',kind:'capability', reason: 'A recursive or over-budget helper path needs a separate checked effect.' };
   const body = functionParts(unit.code, unit.name.split('::').at(-1));
@@ -413,6 +449,7 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
   if(modifier&&modifier.reachable!==true)return modifier;
   if (offset >= body.start && offset < body.bodyStart) return { reachable: true, values: new Map(values), guards: [] };
   const result = execution.pathTo(unit, offset, modifier?.values||values, { ...options,
+    assignment(match,node,current){return options.assignment?.(match,node,current)||state.assignment(unit,match,node,current,units);},
     failureClass: (kind, args, absolute, custom) => unitFailure(unit, kind, args, absolute, custom), operation(node, current) {
     const provided = options.operation?.(node, current); if (provided) return provided;
     const sites = unitSites(unit).filter(site => site.span.start >= node.start && site.span.end <= node.end);
@@ -443,16 +480,20 @@ function sourcePath(unit, offset, values, units, options = {}, stack = []) {
     const helper = matches[0], parsed = functionParts(helper.code, helper.name.split('::').at(-1));
     if (!parsed || !/\b(internal|private)\b/.test(parsed.header) || /\bvirtual\b/.test(parsed.header))
       return { outcome: 'unknown',code:'HELPER_DISPATCH_UNSUPPORTED',kind:'capability', reason: `The preceding ${helper.name} needs a checked dispatch effect; it is not a non-virtual internal helper.` };
-    const bound = new Map(parameterNames(parsed.header).map(name => {
+    const bound = state.stored(current);for(const [name,value]of parameterNames(parsed.header).map(name => {
       const argument = boundArgument(site, name, parsed.header);
-      return [name, current.get(argument)?.range ? current.get(argument) : booleanValue(argument, current)];
-    }));
+      const scalar=parameterScalar(helper,name,argument,current);
+      return [name, current.get(argument)?.range ? current.get(argument) :scalar!==null?{scalar}: booleanValue(argument, current)];
+    }))bound.set(name,value);
     const result = sourcePath(helper, parsed.bodyStart + parsed.body.length, bound, units, { complete: true, localWritesOnly: true, noOverflow: options.noOverflow }, [...stack, unit.id]);
-    if (result.outcome === 'return' || result.reachable === true) return { outcome: 'continue' };
+    if (result.outcome === 'return' || result.reachable === true) {const resumed=state.frame(unit,state.transfer(current,result.values),units,node.end);current.clear();for(const [k,v]of resumed)current.set(k,v);return { outcome: 'continue' };}
     return { outcome: result.outcome || 'unknown', failure: result.failure,
       code:result.code,kind:result.kind,source:result.source,reason: `${helper.name}: ${result.reason || 'The helper effect remains unresolved.'}` };
   } });
-  if(modifier){result.modifier=modifier;result.commitment=modifier.postlude.reachable===false?'reverts':modifier.postlude.reachable===null?'unknown':'postlude-passes';
+  if(modifier){
+    if(options.complete&&(result.reachable===true||result.outcome==='return')){modifier.postlude=modifier.finish(result.values);if(modifier.postlude.reachable===true)result.values=state.frame(unit,state.transfer(result.values,modifier.postlude.values),units);}
+    delete modifier.finish;
+    result.modifier=modifier;result.commitment=modifier.postlude.reachable===false?'reverts':modifier.postlude.reachable===null?'unknown':'postlude-passes';
     if(options.complete&&(result.reachable===true||result.outcome==='return')&&modifier.postlude.reachable!==true)return {...modifier.postlude,code:modifier.code,kind:modifier.postlude.reachable===false?'structural':'material-evidence',source:modifier.source,bodyReached:true};}
   return result;
 }
@@ -557,7 +598,7 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   const site = exactSite(source, link.callSiteId), destinationParts = destination && functionParts(destination.code, destination.name.split('::').at(-1));
   if (!site || from.callSiteId !== link.callSiteId) { fail(`${from.title}: anchor this handoff and event to one exact current call-site ID. Name or line matches cannot identify an invocation.`); return; }
   const anchor = from.anchor || evidence.get(from.evidenceId);
-  const path = sourcePath(source, site.span.start, callerConstraints(from, source), units,
+  const path = sourcePath(source, site.span.start, callerConstraints(from, source,units,evidence), units,
     { noOverflow: (from.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
   if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`,path.kind||'capability',{code:path.code||'CALL_PATH_UNKNOWN',source:path.source||source.source});
   if(path.commitment==='reverts'&&events.some(e=>e.transaction===from.transaction&&e.effect==='committed'))fail(`${from.title}: the body is reached, but its modifier postlude reverts; this transaction cannot commit.`,'structural',{code:'MODIFIER_COMMITMENT',source:path.modifier.source});
@@ -572,8 +613,11 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   if (dispatch.receiver !== expectedReceiver) fail(`${from.title}: dispatch receiver does not match this exact call expression.`);
   const handling = scenarioFailure({ site, source, destination, to, events, evidence, link, fail, units });
   if (destinationParts) {
-    const actual = callTimeConstraints(from, source, evidence);
-    const entryValues = new Map(parameterNames(destinationParts.header).map(name => [name, booleanValue(boundArgument(site, name, destinationParts.header), actual)]));
+    const actual = require('./state-predicates').frame(source,require('./state-predicates').transfer(callTimeConstraints(from, source, evidence,units),path.values||new Map()),units,site.span.start);
+    const entryValues = ['internal','internal-library'].includes(dispatch.kind)?require('./state-predicates').stored(path.values||new Map()):new Map();
+    const proposed=require('./state-predicates').entry(to,destination,units,evidence);
+    for(const [k,v]of proposed.values){const combined=require('./state-predicates').combine(entryValues.get(k),v);if(!combined)fail(`${to.title}: the callee entry predicate contradicts the storage value after the caller's actual prefix/body.`,'structural',{code:'STATE_HANDOFF_CONFLICT'});else entryValues.set(k,combined);}
+    for(const name of parameterNames(destinationParts.header)){const argument=boundArgument(site,name,destinationParts.header),scalar=parameterScalar(destination,name,argument,actual);entryValues.set(name,scalar!==null?{scalar}:booleanValue(argument,actual));}
     const anchor = to.anchor||evidence.get(to.evidenceId), start = lineOffset(destination, anchor?.source.line);
     // A note may start with a comment. Reach the first actual source token in
     // the selected interval, not whitespace/comment text before the statement.
@@ -672,4 +716,4 @@ function scenarioBinding(unit,event,name,units,until){
   if(new Set(declarations).size!==1)return null;
   return{kind:'state',declaration:declarations[0],context:event.invocationId,body,scan,symbol};
 }
-module.exports = { parts, expression, parameterNames, parameterSpans, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise, sourcePath, scenarioBinding, bindingWrites };
+module.exports = { parts, expression, parameterNames, parameterSpans, parameterInputProblems, boundArgument, unitSites, exactSite, validateTransition, validateInvocations, checkBooleanPremise, sourcePath, callerConstraints, scenarioBinding, bindingWrites };

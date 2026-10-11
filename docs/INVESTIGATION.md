@@ -1,4 +1,4 @@
-# Source investigation runtime — 0.19.34
+# Source investigation runtime — 0.19.35
 
 ## Staged tutorial diagnostics (0.19.26)
 
@@ -20,6 +20,14 @@ blocks body reachability. A failing postlude does not make the body unreachable,
 but it prevents transaction commitment. Entry storage facts must be qualified;
 an unbound natural-language "non-nested" label is not a state-value proof.
 Body reachability, postlude completion and committed effects remain distinct.
+Helpers carrying their own modifier suffix are explicitly capability-blocked,
+not executed as bare bodies. Optional event `statePredicates` bind a reviewed
+scenario assumption to the exact `uint256` declaration/hash, owner, receiver,
+invocation/transaction and entry equality/inequality. Only `scenario-assumption`
+is executable in this subset; source-derived/runtime values need their own
+supported derivation/observation, and constructor initialization is not a later
+state fact. Declaration-bound prefix state propagates without overwriting lexical
+parameters. Fresh event and conditions reviews cover the predicate evidence.
 Aliases, assembly/transient storage, composition, ambiguous inheritance,
 unsupported writes and absent exact guard predicates remain distinct unknowns.
 Free-text unit labels are retained; differing wording is not proof of a currency
@@ -31,6 +39,13 @@ does not run on a corrected/unverified draft or transfer old approvals. Current
 blocker groups include material evidence and local reading as well as structural
 and capability failures. Inspection opens exact original source without exposing
 unchecked tutorial annotations; Return restores the source/camera position.
+
+Completed selected Recheck performs local acquisition before revalidation, with
+zero provider calls. A current accepted partial assessment supports explicit
+targeted private revision; its compatible accepted predecessor remains readable
+until a freshly reviewed successor replaces it. Exact owned replay receipts can
+identify the original received response without pretending the earlier failed
+ingestion was approval. See [current lifecycle and limits](GUIDED-READING.md).
 
 ## Checked content and corrections (0.19.18)
 

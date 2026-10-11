@@ -72,6 +72,16 @@ function execution(draft){const last=draft.runs?.at(-1);if(['generating','challe
   {state:last.outcome==='completed'?'completed':last.outcome==='cancelled'?'interrupted':'failed',
     transportCompleted:last.outcome==='completed',substantive:!!(last.resultAccepted&&last.phase==='challenge'),requestId:last.requestId};}
 function project(draft,publication){
+  const retained=require('./review-candidate').acceptedPredecessor(draft);
+  if(retained){
+    const projection=project(retained,require('./guide-policy').gate(retained));
+    projection.execution=execution(draft);
+    const stopped=draft.reviewCandidate.state==='terminal'||draft.phase==='blocked';
+    projection.tutorial={state:stopped?'blocked':'preparing',problems:[stopped?'The private revision needs correction; no successor explanation is approved.':'A private substantive revision is being prepared; no successor explanation is approved.']};
+    projection.technical.revisionStatus=stopped?'Accepted predecessor; private revision needs correction':'Accepted predecessor; private revision pending';
+    projection.artifact={...projection.artifact,retained:true};
+    return projection;
+  }
   const base={version:VERSION,projectionVersion:2,optional:publication.optionalDetails||[],execution:execution(draft),technical:{result:'not-assessed',coverage:'not-assessed',label:'Not assessed',why:'No current completed substantive assessment is available.',remaining:[]},
     tutorial:{state:publication.ready?'ready':draft.phase==='corrected'?'stale':['preparing','generating','challenging','candidate-awaiting-verification'].includes(draft.phase)?'preparing':'blocked',problems:publication.problems||[]}};
   if(draft.reviewCandidate||draft.rejectedProposal||draft.pendingResponse||content.mismatch(draft))return base;

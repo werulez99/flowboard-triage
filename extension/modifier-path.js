@@ -3,6 +3,7 @@
 // and exact non-virtual private helpers. Unknown entry state is not assumed.
 const {functionParts,lexicalCode,matching}=require('./solidity-text');
 const execution=require('./execution-slice');
+const state=require('./state-predicates');
 function inspect(unit,suffix,values,units){
   const unknown=(code,reason,kind='capability',source)=>({reachable:null,code,kind,reason,source});
   const match=/^([A-Za-z_$][\w$]*)(?:\s*\((.*)\))?$/.exec(suffix);
@@ -29,24 +30,35 @@ function inspect(unit,suffix,values,units){
       [...text.matchAll(/([\w$]+)\s*\(/g)].every(m=>m[1]==='address');
   };
   if(!args.every(pure))return unknown('MODIFIER_ARGUMENT_EFFECT_UNSUPPORTED','A modifier argument may invoke code, mutate or fail; its evaluation is outside this local subset.','capability',modifier.source);
-  const bound=new Map(values);for(let i=0;i<parameters.length;i++)bound.set(parameters[i],execution.boolean(args[i],values));
+  // A modifier and each private helper have their own lexical scope. Caller
+  // parameter names are not modifier/helper storage values.
+  const bound=new Map([...values].filter(([key])=>key.startsWith('@storage:')||key.startsWith('msg.sender')||/^[\w$]+\.[\w$]+$/.test(key)));
+  for(let i=0;i<parameters.length;i++){const scalar=execution.scalar(args[i],values);bound.set(parameters[i],scalar!==null?{scalar}:execution.boolean(args[i],values));}
   const local=[...units.values()].filter(s=>s.complete&&s.source.file===modifier.source.file&&s.source.sourceHash===modifier.source.sourceHash&&(s.contract||s.name.split('::')[0])===(modifier.contract||modifier.name.split('::')[0]));
-  const constants=new Map(),variables=new Set();
+  const constants=new Map(),variables=new Set(),declarations=new Map();
   for(const s of local.filter(s=>s.contextKind==='state')){
     if(!require('./source-coverage').read(s,s.source.line,s.source.endLine)||s.modelRanges&&!require('./source-coverage').covers(s.modelRanges,s.source.line,s.source.endLine))continue;
     const text=lexicalCode(s.code).trim(),constant=/^uint256\s+private\s+constant\s+(\w+)\s*=\s*(\d+)\s*;$/.exec(text),variable=/^uint256\s+private\s+(\w+)\s*;$/.exec(text);
-    if(constant)constants.set(constant[1],{scalar:constant[2]});if(variable)variables.add(variable[1]);
+    if(constant)constants.set(constant[1],{scalar:constant[2]});if(variable){variables.add(variable[1]);declarations.set(variable[1],s);}
   }
   for(const [key,value]of constants)bound.set(key,value);
   if(parameters.some(key=>constants.has(key)||variables.has(key)))return unknown('MODIFIER_SHADOWING_UNSUPPORTED','A modifier parameter shadows the supported state/constant declaration; its separate binding is required.','capability',modifier.source);
   const storageOwner=modifier.contract||modifier.name.split('::')[0];
-  for(const key of variables){bound.delete(key);const fact=values.get(`${storageOwner}.${key}`);if(fact?.scalar)bound.set(key,fact);}
+  for(const key of variables){
+    bound.delete(key);const d=declarations.get(key),matches=[...state.stored(values)].filter(([,v])=>v?.storage?.declaration===state.identity(d));
+    if(matches.length===1){bound.set(key,matches[0][1]);bound.set('@alias:'+key,matches[0][0]);}
+    else if(!matches.length){const fact=values.get(`${storageOwner}.${key}`);if(fact?.scalar||fact?.notEqual)bound.set(key,fact);}
+  }
+  let helperProblem=null;
   const helperFor=text=>{
     const call=/^(\w+)\s*\(\s*\)\s*;$/.exec(text);if(!call)return null;
     const matches=local.filter(s=>s.name.split('::').at(-1)===call[1]&&/^\s*function\b/.test(lexicalCode(s.code)));
     if(matches.length!==1)return null;
     const helper=matches[0],parts=functionParts(helper.code,call[1]);
-    return parts&&/\bprivate\b/.test(parts.header)&&!/(?:virtual|override|returns)\b/.test(parts.header)&&!parts.header.slice(parts.parametersStart-parts.start,parts.parametersEnd-parts.start).trim()?helper:null;
+    if(!parts||!/\bprivate\b/.test(parts.header)||/(?:virtual|override|returns)\b/.test(parts.header)||parts.header.slice(parts.parametersStart-parts.start,parts.parametersEnd-parts.start).trim())return null;
+    const suffix=parts.header.slice(parts.parametersEnd-parts.start+1).replace(/\b(?:private|view|pure|payable)\b/g,'').trim();
+    if(suffix){helperProblem=unknown('MODIFIER_HELPER_MODIFIERS_UNSUPPORTED',`The private helper ${helper.name} has its own modifier (${suffix}); its body alone cannot establish the helper effect. Nested modifier composition is not supported.`,'capability',helper.source);return null;}
+    return helper;
   };
   // Reject effects even after the placeholder: ignoring a postlude would
   // falsely equate reaching the body with committing the transaction.
@@ -62,16 +74,18 @@ function inspect(unit,suffix,values,units){
     return open>=0&&close>=0&&require('./failure-data').parts(raw.slice(open+1,close)).every(pure);
   };
   const safe=(n,frame=modifier,seen=[])=>frame===modifier&&n===node||n.kind==='block'&&n.children.every(child=>safe(child,frame,seen))||n.kind==='if'&&pure(n.condition)&&safe(n.yes,frame,seen)&&(!n.no||safe(n.no,frame,seen))||n.kind==='simple'&&simple(n,frame,seen);
-  if(!tree.nodes.every(n=>safe(n)))return unknown('MODIFIER_EFFECT_UNSUPPORTED','The supplied modifier contains an unresolved helper, alias or unsupported pre/post effect. Supported writes require an exact private uint256 declaration and constant/literal value.','capability',modifier.source);
+  if(!tree.nodes.every(n=>safe(n)))return helperProblem||unknown('MODIFIER_EFFECT_UNSUPPORTED','The supplied modifier contains an unresolved helper, alias or unsupported pre/post effect. Supported writes require an exact private uint256 declaration and constant/literal value.','capability',modifier.source);
   const effects=(frame,depth=0)=>({assignment(match,node,current){
     const value=execution.scalar(match[3],current);
     if(!variables.has(match[2])||value===null)return{outcome:'unknown',reason:'Modifier write value or declaration is unresolved.'};
-    current.set(match[2],{scalar:value});return{outcome:'continue'};
+    const k=current.get('@alias:'+match[2]),prior=k&&current.get(k),next={...(prior?.storage?{storage:prior.storage}:{}),scalar:value};
+    current.set(match[2],next);if(k)current.set(k,next);current.set(`${storageOwner}.${match[2]}`,next);return{outcome:'continue'};
   },operation(node,current){
     const helper=helperFor(lexicalCode(frame.code.slice(node.start,node.end)).trim());
     if(!helper||depth>=8)return{outcome:'unknown',reason:'Modifier helper resolution is unsupported.'};
     if(!require('./source-coverage').read(helper,helper.source.line,helper.source.endLine)||helper.modelRanges&&!require('./source-coverage').covers(helper.modelRanges,helper.source.line,helper.source.endLine))return{outcome:'unknown',code:'MODIFIER_HELPER_VIEW_MISSING',kind:'local-reading',source:helper.source,reason:'Supply the complete modifier helper body.'};
-    const result=execution.pathTo(helper,Infinity,current,{complete:true,...effects(helper,depth+1)});
+    const helperValues=new Map([...current].filter(([key])=>key.startsWith('@storage:')||key.startsWith('msg.sender')||key.startsWith('@alias:')||variables.has(key)||constants.has(key)||/^[\w$]+\.[\w$]+$/.test(key)));
+    const result=execution.pathTo(helper,Infinity,helperValues,{complete:true,...effects(helper,depth+1)});
     if(result.reachable===true){for(const [key,value]of result.values)current.set(key,value);return{outcome:'continue'};}
     return{outcome:result.outcome||'unknown',code:result.code,kind:result.kind,reason:result.reason,source:helper.source,failure:result.failure};
   }});
@@ -82,7 +96,14 @@ function inspect(unit,suffix,values,units){
   // Deferred until body completion: body writes can invalidate a guard. The
   // postlude is only proved when literal/constant facts suffice independently.
   const postlude=execution.pathTo(modifier,Infinity,new Map(constants),{after:node.end,complete:true,...effects(modifier)});
-  return {reachable:true,values,guardState:prefix.values,guards:prefix.guards,source:modifier.source,postlude,
+  const updated=state.transfer(values,prefix.values);
+  for(const name of variables)if(prefix.values.has(`${storageOwner}.${name}`))updated.set(`${storageOwner}.${name}`,prefix.values.get(`${storageOwner}.${name}`));
+  // Storage and caller lexical names are separate. Only a same-owner body may
+  // read this private declaration, and never through a shadowing parameter.
+  const callerParameters=bindings.parameterNames(functionParts(unit.code,unit.name.split('::').at(-1)).header);
+  if(owner===storageOwner)for(const name of variables)if(!callerParameters.includes(name)&&prefix.values.has(name))updated.set(name,prefix.values.get(name));
+  const finish=bodyValues=>execution.pathTo(modifier,Infinity,state.frame(modifier,state.transfer(prefix.values,bodyValues),units),{after:node.end,complete:true,...effects(modifier)});
+  return {reachable:true,values:state.frame(unit,updated,units),guardState:prefix.values,guards:prefix.guards,source:modifier.source,postlude,finish,
     code:postlude.reachable===false?'MODIFIER_POSTLUDE_REVERTS':postlude.reachable===null?'MODIFIER_POSTLUDE_UNKNOWN':'MODIFIER_SUPPORTED'};
 }
 module.exports={inspect};

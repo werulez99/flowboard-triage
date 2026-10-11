@@ -200,6 +200,88 @@ test('actual preparation renderer retains selected job reason and shows current 
   assert.doesNotMatch(refused, /Make room|Free the requested card slots|missing function card/,
     'A stale capacity hint must not cover the current unpublished analysis state.');
 });
+test('accepted-partial revision form sends exact host identity and preserves focused corrective work across progress',()=>{
+  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),vm=require('node:vm');
+  const definitions=source.slice(source.indexOf('  const preparationJob'),source.indexOf('  const readyDraft')),
+    rendering=source.slice(source.indexOf('  function preparationContent'),source.indexOf('  function guideReveal'));
+  const flat=n=>[n,...n.children.flatMap(flat)];let context;
+  const node=(tag,cls='',text='')=>({tag,cls,text,children:[],dataset:{},value:'',hidden:false,disabled:false,scrollTop:0,
+    classList:{toggle(){}},append(...nodes){this.children.push(...nodes);},prepend(...nodes){this.children.unshift(...nodes);},replaceChildren(){this.children=[];},
+    setAttribute(name,value){this[name]=value;},contains(value){return flat(this).includes(value);},
+    querySelectorAll(selector){return flat(this).slice(1).filter(n=>selector==='details'?n.tag==='details':selector.startsWith('.')?n.cls.split(' ').includes(selector.slice(1)):false);},
+    querySelector(selector){return this.querySelectorAll(selector)[0]||null;},focus(){context.document.activeElement=this;}});
+  const surface=node('div'),sent=[],action={available:true,kind:'accepted-partial',assessmentIdentity:'reviewed-A',reviewRequestId:'paid-V',candidateHash:'argument-A',contextHash:'context-A',sourceHash:'sources-A',
+    targets:[{path:'/property',label:'Collection entitlement'},{path:'/questions/q1',label:'Exact remaining recipient capability'}],reason:'Private revision needs authoring and fresh verification; accepted predecessor remains readable.'};
+  const job={id:'A',state:'blocked',publishable:false,revisionAction:action,continueAction:{available:false,reason:'Choose a concrete revision target.'},assessmentProjection:{technical:{identity:'reviewed-A',result:'insufficient-evidence',coverage:'partial',label:'Insufficient evidence for the complete allegation',why:'The collection entitlement remains unresolved.'}}};
+  context={active:'A',reportPreparation:{project:'P',reportHash:'R',mode:'incomplete',ready:0,total:1,requests:2,requestLimit:6,jobs:[job],active:[],stopped:[]},
+    element:node,button:(label,fn)=>({...node('button','',label),action:fn}),preparationLabel:s=>s,
+    report:'',guideAvailability:null,guideIntent:'waiting',preparing:null,preparationState:null,investigationDraft:null,sourceStale:false,preparationExpanded:false,blockerReturn:null,
+    preparationSurface:surface,document:{activeElement:null,body:{classList:{toggle(){}}}},FlowboardWalkthrough:{build:()=>null},issueIdentifier:()=> 'A',
+    crypto:{randomUUID:()=> 'revision-click'},send:(type,payload)=>sent.push({type,payload})};
+  vm.runInNewContext(definitions+'\n'+rendering+'\nrenderPreparation();',context);
+  const form=surface.querySelector('.guide-revision-form'),reason=flat(form).find(n=>n.tag==='textarea'),target=flat(form).find(n=>n.tag==='select'),submit=flat(form).find(n=>n.tag==='button');
+  assert.ok(form);assert.equal(submit.disabled,true);form.onsubmit({preventDefault(){}});assert.equal(sent.length,0);
+  reason.value='   ';reason.oninput();assert.equal(submit.disabled,true);reason.value='Review the bounded entitlement against the exact guard and preserve any material unknown.';reason.oninput();assert.equal(submit.disabled,false);
+  target.value='/property';reason.selectionStart=12;reason.selectionEnd=23;reason.focus();surface.scrollTop=72;
+  job.reason='Sibling progress changed, not this assessment.';context.reportPreparation.active=[{id:'B',stage:'challenge'}];vm.runInNewContext('renderPreparation()',context);
+  assert.equal(surface.querySelector('.guide-revision-form'),form);assert.equal(context.document.activeElement,reason);assert.equal(reason.selectionStart,12);assert.equal(reason.selectionEnd,23);assert.equal(surface.scrollTop,72);
+  form.onsubmit({preventDefault(){}});assert.equal(sent.length,1);assert.equal(sent[0].type,'triage:reviseAnalysis');
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0].payload.revision)),{id:'revision-click',kind:'accepted-partial',assessmentIdentity:'reviewed-A',reviewRequestId:'paid-V',candidateHash:'argument-A',contextHash:'context-A',sourceHash:'sources-A',targets:['/property'],reason:reason.value});
+  context.sourceStale=true;form.onsubmit({preventDefault(){}});assert.equal(sent.length,1,'Changed-source inspection cannot submit the old revision.');
+  context.sourceStale=false;job.revisionAction={...action,available:false,reason:'Shared remaining capacity cannot fund the authoring and fresh verification pair.'};vm.runInNewContext('renderPreparation()',context);
+  assert.equal(surface.querySelector('.guide-revision-form'),null);assert.match(flat(surface).map(n=>n.text).join('\n'),/Shared remaining capacity cannot fund/);assert.equal(sent.length,1);
+});
+test('ordinary finding rows and filters distinguish a useful assessment from a Ready tutorial or operational failure',()=>{
+  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),vm=require('node:vm');
+  const definitions=source.slice(source.indexOf('  const preparationJob'),source.indexOf('  function readAssessment'));
+  const jobs=[{id:'ready',publishable:true,state:'completed',assessmentAvailable:true,assessmentProjection:{technical:{identity:'r',result:'supported',label:'Defect established',why:'Checked consequence.'}}},
+    {id:'partial',publishable:false,state:'blocked',assessmentAvailable:true,assessmentProjection:{technical:{identity:'p',result:'insufficient-evidence',label:'Insufficient evidence',why:'A precise property fact is unavailable.',remaining:['Which collection entitlement applies?']}}},
+    {id:'timeout',publishable:false,state:'failed',failureKind:'provider',assessmentAvailable:false,reason:'The received response has no usable claim/evidence structure.',assessmentProjection:{technical:{result:'not-assessed',why:'No current checked assessment is available.'}}}];
+  const rows=jobs.map(job=>({dataset:{findingId:job.id},hidden:false,parts:{'.triage-preparation-badge':{dataset:{}},'.triage-ready-action':{},'.triage-job-reason':{}},querySelector(selector){return this.parts[selector];}})),counts={};
+  const context={active:'partial',sourceStale:false,queueMode:'all',investigationDraft:null,reportPreparation:{jobs},preparationLabel:s=>s,
+    drawer:{querySelectorAll:()=>rows,querySelector:()=>counts}};
+  vm.runInNewContext(definitions+'\nupdatePreparationRows();',context);
+  assert.equal(rows[0].parts['.triage-ready-action'].textContent,'Start walkthrough');assert.equal(rows[1].parts['.triage-ready-action'].textContent,'Read assessment');assert.equal(rows[1].parts['.triage-ready-action'].hidden,false);
+  assert.match(rows[1].parts['.triage-preparation-badge'].textContent,/Insufficient evidence.*Checked assessment/);assert.equal(rows[2].parts['.triage-ready-action'].hidden,true);
+  assert.match(rows[2].parts['.triage-job-reason'].textContent,/no usable claim\/evidence structure/,'A generic unavailable projection must not hide the actionable operational/contract failure.');
+  assert.match(counts.textContent,/2 assessments available · 1 not assessed · 1 tutorials ready/);
+  context.queueMode='assessment:available';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,false,true]);
+  context.queueMode='assessment:not-assessed';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[true,true,false]);
+  context.queueMode='preparation:ready';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,true,true]);
+  context.sourceStale=true;vm.runInNewContext('updatePreparationRows()',context);assert.equal(rows[1].parts['.triage-ready-action'].hidden,true);assert.match(rows[1].parts['.triage-preparation-badge'].textContent,/Needs recheck/);
+});
+test('material checked dispatch and failure are direct annotations; only proof references are disclosed',()=>{
+  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+  const start=source.indexOf("      if (step.handoff?.dispatch &&"),end=source.indexOf("      if (step.inputs?.length",start);
+  const node=(tag,cls='',text='')=>({tag,cls,text,children:[],append(...nodes){this.children.push(...nodes);},setAttribute(){}}),note=node('section'),context={
+    note,step:{handoff:{dispatch:{kind:'source-resolved',receiver:'account',implementation:'implementation',context:'delegatecall',failure:'caught',evidence:['proof']}}},
+    guide:{draft:{sources:[{id:'implementation',name:'Module::settle'}]}},element:node,evidenceActions:(parent,ids)=>parent.append(node('button','',ids.join(',')))};
+  require('node:vm').runInNewContext(source.slice(start,end),context);
+  const detail=note.children[0];assert.equal(detail.tag,'section');assert.equal(detail.cls,'guide-execution-context');
+  assert.ok(detail.children.some(n=>n.tag==='p'&&n.text.includes('caller’s address context')));assert.ok(detail.children.some(n=>n.tag==='p'&&n.text.includes('catches this failure')));
+  assert.ok(detail.children.some(n=>n.tag==='details'&&n.children[0].text==='Dispatch evidence'));
+});
+
+test('visible walkthrough result belongs to its displayed artifact, not a newer background revision',()=>{
+  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),vm=require('node:vm');
+  const declaration=source.slice(source.indexOf('    const opinionLabel ='),source.indexOf("    const extras =",source.indexOf('    const opinionLabel =')));
+  const rendering=source.split('\n').find(line=>line.includes("guideAside.append(element('p', 'guide-current-assessment'"));
+  const labels=[],context={guide:{draft:{assessmentProjection:{technical:{result:'supported',label:'Defect established in the displayed scope'}}}},
+    investigationDraft:{phase:'blocked',assessmentProjection:{technical:{result:'refuted',label:'Newer different conclusion'}}},sourceStale:false,
+    FlowboardWalkthrough:require('../extension/webview/walkthrough-model'),element:(_tag,_class,text)=>text,guideAside:{append:label=>labels.push(label)}};
+  vm.runInNewContext(declaration+rendering,context);assert.equal(labels[0],'Defect established in the displayed scope');
+  context.sourceStale=true;vm.runInNewContext(`{${declaration+rendering}}`,context);assert.match(labels[1],/changed|recheck/i);assert.doesNotMatch(labels[1],/Defect established/);
+});
+
+test('negative successor status does not deny the separately retained accepted assessment',()=>{
+  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+  const start=source.indexOf('      if(job?.verificationCompletion)preparationSurface.append'),end=source.indexOf('      if(technical?.revisionStatus)',start),messages=[];
+  const context={job:{verificationCompletion:{result:'repair'}},preparationSurface:{append:value=>messages.push(value)},element:(_t,_c,text)=>text};
+  require('node:vm').runInNewContext(source.slice(start,end),context);
+  assert.match(messages[0],/This review did not approve a new assessment/);assert.doesNotMatch(messages[0],/No technical assessment.*was accepted/);
+  context.job.verificationCompletion={result:'kept',checkingIncomplete:true};require('node:vm').runInNewContext(source.slice(start,end),context);
+  assert.match(messages[1],/This response does not admit a new assessment/);
+});
 
 test('unpublished causal content cannot issue a checked-guide card-capacity hint', () => {
   for (const phase of ['blocked', 'challenging', 'ready']) {

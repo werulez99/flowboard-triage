@@ -22,6 +22,20 @@ test('compact journal persistence preserves every value and the existing semanti
   assert.equal(identity,require('../extension/investigation-engine').hash(value));assert.ok(Buffer.byteLength(compact)<Buffer.byteLength(pretty));
   value.jobs.a.reason+=' Changed';assert.notEqual(identity,require('../extension/investigation-engine').hash(value));
 });
+test('atomic JSON enforces exact UTF-8 and newline capacity with one serialization and preserves the previous record', t => {
+  const root=fixture(t),value={text:'λ🙂\nExact quoted "text"'},relative='.flowboard/bounded.json';
+  const encoded=JSON.stringify(value),limit=Buffer.byteLength(encoded)+1,stringify=JSON.stringify;
+  let serializations=0;t.mock.method(JSON,'stringify',function(input,...args){if(input===value)serializations++;return stringify(input,...args);});
+  const identity=p.atomicJson(root,relative,value,{compact:true,maxBytes:limit});
+  assert.equal(serializations,1);assert.equal(identity,require('node:crypto').createHash('sha256').update(encoded).digest('hex'));
+  const file=path.join(root,relative),before=fs.readFileSync(file),directory=path.dirname(file),listing=fs.readdirSync(directory);
+  assert.equal(before.toString(),encoded+'\n');assert.equal(before.length,limit);assert.ok(limit>encoded.length+1,'Capacity is UTF-8 bytes, not UTF-16 characters.');
+  assert.throws(()=>p.atomicJson(root,relative,value,{compact:true,maxBytes:limit-1}),{code:'JSON_STORAGE_LIMIT'});
+  assert.equal(serializations,2,'Rejected persistence also serializes exactly once.');
+  assert.deepEqual(fs.readFileSync(file),before);assert.deepEqual(fs.readdirSync(directory),listing,'No temporary record survives or replaces the prior file.');
+  assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync(file,'utf8').slice(0,-1)).digest('hex'),identity);
+  assert.throws(()=>p.atomicJson(root,relative,value,{compact:true,maxBytes:0}),TypeError);assert.deepEqual(fs.readFileSync(file),before);
+});
 test('valid demo resolves source and produces stable source hashes', t => {
   const root = fixture(t);
   assert.equal(p.validate(structuredClone(example)).cards.length, 2);

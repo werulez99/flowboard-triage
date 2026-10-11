@@ -7,8 +7,8 @@ const VERSION='review-requirements-v2';
 function targets(argument) {
   const model=argument.causal||{};
   return [
-    ...(model.obligations||[]).map(o=>({target:capacity.target('obligation',o),evidence:unique(o.evidence),documentation:unique(o.documentation)})),
-    ...(model.events||[]).map(e=>({target:capacity.target('event',e),evidence:[e.evidenceId],documentation:[]})),
+    ...(model.obligations||[]).map(o=>({target:capacity.target('obligation',o),evidence:unique([...(o.evidence||[]),...(o.kind==='conditions'?(model.events||[]).filter(e=>e.claimId===o.claimId).flatMap(e=>(e.statePredicates||[]).flatMap(f=>f.evidence)):[])]),documentation:unique(o.documentation)})),
+    ...(model.events||[]).map(e=>({target:capacity.target('event',e),evidence:unique([e.evidenceId,...(e.statePredicates||[]).flatMap(f=>f.evidence)]),documentation:[]})),
     ...(model.relationships||[]).map(r=>({target:capacity.target('relationship',r),evidence:unique(r.evidence),documentation:[]}))
   ];
 }

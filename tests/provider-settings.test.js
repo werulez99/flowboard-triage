@@ -1,6 +1,19 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),path=require('node:path'),{spawn}=require('node:child_process');
 const settings=require('../extension/provider-settings'),provider=require('../extension/semantic-provider'),health=require('../extension/provider-health');
+test('outgoing schema subset is preflighted without dispatch and never silently rewrites a contract',()=>{
+ const input={phase:'generate',finding:{title:'Fictional schema control'},sources:[]};
+ const schema=provider.responseSchema(input),before=JSON.stringify(schema);
+ assert.equal(settings.validateSchema(schema),settings.schemaContract);
+ assert.equal(provider.requestMetrics(input).schemaContract,settings.schemaContract);
+ for(const key of ['uniqueItems','oneOf','const','not']){
+  const invalid=structuredClone(schema);invalid.properties.extra={type:'array',items:{type:'string'},[key]:true};invalid.required.push('extra');
+  assert.throws(()=>settings.validateSchema(invalid),error=>error.code==='PROVIDER_SCHEMA'&&error.keyword===key&&error.failureKind==='request-format');
+ }
+ const optional=structuredClone(schema);optional.required=[];
+ assert.throws(()=>settings.validateSchema(optional),{code:'PROVIDER_SCHEMA'});
+ assert.equal(JSON.stringify(schema),before);
+});
 test('model preferences validate tokens, retain default and cannot expand account slot pools',()=>{
  assert.deepEqual(settings.resolve(),{model:null,reasoningEffort:'medium'});
  for(const model of ['--model x','x; echo secret','a\nb','a'.repeat(101)])assert.throws(()=>settings.resolve({model}),{code:'PROVIDER_CONFIGURATION'});

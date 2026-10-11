@@ -988,7 +988,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     const lastAccepted = [...draft.runs].reverse().find(run => run.resultAccepted);
     const resumeObservations = !draft.reviewCandidate && require('./technical-assessment').pendingObservations(draft).length > 0;
     const resumeQuestions = !retainedVerification && !resumeObservations && draft.phase !== 'corrected' && !draft.claims.some(claim=>claim.needsReassessment) && draft.checkpoint?.stage === 'complete' && (draft.failureKind === 'material-evidence' || draft.failureKind === 'local-reading');
-    if(!draft.pendingResponse&&['revalidate','evidence'].includes(operation.kind)){
+    const retainedLocalPreparation=(preparationOnly||operation.kind==='acquire')&&draft.checkpoint?.stage==='complete'&&!draft.reviewCandidate&&!draft.pendingResponse;
+    if(!draft.pendingResponse&&!retainedLocalPreparation&&['revalidate','evidence'].includes(operation.kind)){
       validateCurrent(catalog,draft);draft.publication=guidePolicy.gate(draft);draft.phase=draft.publication.ready?'ready':'blocked';draft.error=operation.reason;
       await save();return draft;
     }
@@ -998,7 +999,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     // of restoring the reading cursor and challenging the saved question.
     const resumeChallenge = sameSnapshot(draft.snapshot, snapshot(catalog, request, issue)) && (draft.rejectedProposal || draft.claims.length &&
       (!draft.claims.some(claim => claim.needsReassessment)||draft.phase==='corrected'||draft.reviewCandidate) && (draft.phase==='corrected'||draft.checkpoint?.stage === 'challenge' ||
-        retainedVerification || resumeQuestions || resumeObservations ||
+        retainedVerification || retainedLocalPreparation || resumeQuestions || resumeObservations || draft.reviewCandidate ||
         draft.failureKind === 'provider' && draft.runs.at(-1)?.phase === 'challenge' && lastAccepted?.phase === 'generate'));
     if (resumeChallenge || draft.pendingResponse) {
       validateCurrent(catalog, draft);
@@ -1147,6 +1148,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       else if (phase === 'challenge') data.repairOnly = true;
       if (reviewPurpose) {
         data = candidates.packet(data, draft, reviewSchema, reviewPurpose);
+        if(data.checkOnly&&draft.reviewCandidate?.currentBaseHash)
+          previous={...draft,...accept(draft.reviewCandidate.referenceBase||draft.reviewCandidate.acceptedBase,draft,context.units,{candidateOnly:true})};
         if(draft.rejectedProposal){data.bindingFormat=data.earlierDraft.bindingFormat;delete data.assembledEarlier;}
         // Compiled selectors belong to the candidate, never the old base.
         if (draft.reviewCandidate && data.bindingFormat) {
@@ -1346,6 +1349,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
             if (problems.length) throw require('./authoring-contract').failure(problems);
           }
           const proposed = authoringMapping ? value : challengeFormat.candidate(value, data.earlierDraft, formatSchema);
+          if(data.revisionRequest?.kind==='accepted-partial'&&candidates.hash(candidates.unchecked(proposed))===data.candidateIdentity.candidateHash)
+            throw Object.assign(new Error('The requested substantive revision made no material argument change. The exact response remains retained; do not buy an unchanged verification for this work.'),{code:'REVISION_NO_CHANGE'});
           require('./report-coverage').assert(proposed,draft,{required:!!data.reportCoverageContract});
           const problems = [...require('./review-scope').referenceProblems(proposed), ...require('./authoring-contract').evidenceProblems(proposed.evidence,data,reviewUnits)];
           if (problems.length) throw require('./authoring-contract').failure(problems);
@@ -1523,6 +1528,20 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       draft.readingLimits = [...context.unread].slice(0, 40);
       draft.checkpoint.newContext ||= preparedNewCode;
     }
+    if(retainedLocalPreparation){
+      // Selected Recheck means local acquisition plus validation, not a paid
+      // semantic stage. Restore/archive and exact requirements/questions above
+      // must run before deciding that a capability-only recheck is sufficient.
+      draft.sources=context.units;validateCurrent(catalog,draft);
+      draft.publication=guidePolicy.gate(draft);draft.phase=draft.publication.ready?'ready':'blocked';
+      draft.checkpoint={...draft.checkpoint,stage:'complete'};
+      draft.localPreparation={...draft.localPreparation,revalidation:{at:now(),sourceHash:hash(draft.sources),newSource:preparedNewCode,
+        material:candidates.hash(require('./review-content').project(draft)),reviewRequestId:draft.technicalReview?.requestId,
+        semanticApproval:false,providerRequests:0}};
+      const next=require('./next-review-operation').decide(draft,draft.publication);
+      draft.error=preparedNewCode?'Local source was acquired. The retained semantic review has not interpreted new source; inspect the remaining checks or request a concrete private revision.':next.reason;
+      await save();return draft;
+    }
     if (resumeQuestions) {
       // A stopped material question can resume from its checked draft when
       // local retrieval yields new evidence. Retrying an unavailable external
@@ -1654,12 +1673,20 @@ function beginCandidateRevision({root,draft,catalog,request,issue,revision}) {
   if(!sameSnapshot(draft.snapshot,snapshot(catalog,request,issue)))throw new Error('Private revision no longer matches current source/report/premises.');
   validateCurrent(catalog,draft);
   if(draft.reviewCandidate?.successor?.id!==revision?.id){
-    const feedback=require('./review-feedback').current(draft.reviewCandidate),run=draft.runs.findLast(r=>r.requestId===feedback?.requestId);
-    if(!run?.retainedResponse||run.teardown?.confirmed!==true)throw new Error('The completed verifier response and confirmed cleanup are required before revision.');
-    const checkpoint=require('./provider-result'),archive=checkpoint.retainOriginal(root,draft.findingId,run.retainedResponse);
-    const record=checkpoint.read(root,draft.findingId,archive,{phase:'challenge',snapshot:draft.snapshot,corrections:draft.corrections,previous:hash(challengeFormat.earlier(draft,reviewSchema))});
-    if(!record||record.result.audit.requestId!==feedback.requestId||hash(record.result.value)!==feedback.responseHash)
-      throw new Error('The terminal feedback differs from the exact owned response checkpoint.');
+    const accepted=!draft.reviewCandidate&&candidates.acceptedRevision(draft,reviewSchema);
+    const feedback=require('./review-feedback').current(draft.reviewCandidate),requestId=accepted?.reviewRequestId||feedback?.requestId,
+      run=draft.runs.findLast(r=>r.requestId===requestId);
+    // Unpaid replay records its new host-admission outcome separately from
+    // the immutable transport receipt. It does not produce another response.
+    const received=run?.retainedResponse?run:run?.reusedResponse&&draft.runs.findLast(r=>r.requestId===requestId&&r.retainedResponse);
+    if(!received?.retainedResponse||run.phase!=='challenge'||received.phase!=='challenge'||
+      run.teardown?.confirmed!==true||received.teardown?.confirmed!==true)throw new Error('The completed verifier response and confirmed cleanup are required before revision.');
+    const checkpoint=require('./provider-result'),archive=checkpoint.retainOriginal(root,draft.findingId,received.retainedResponse);
+    const record=checkpoint.read(root,draft.findingId,archive,{phase:'challenge',snapshot:draft.snapshot,corrections:draft.corrections,previous:accepted?archive.previous:hash(challengeFormat.earlier(draft,reviewSchema))});
+    if(!record||record.result.audit.requestId!==requestId||
+      (run.inputHash&&run.inputHash!==hash(record.input))||(received.inputHash&&received.inputHash!==hash(record.input))||
+      (accepted?!run.resultAccepted||draft.technicalReview.inputHash!==hash(record.input):hash(record.result.value)!==feedback.responseHash))
+      throw new Error('The retained accepted review or terminal feedback differs from its exact owned response checkpoint.');
     revision={...revision,archive};
   }
   const state=candidates.revise(draft,reviewSchema,revision);

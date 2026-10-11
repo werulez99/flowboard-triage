@@ -16,6 +16,11 @@ function boolean(value, values, depth = 0) {
   const equality=/^(.*?)(==|!=)(.*)$/.exec(text);
   if(equality){const inverse=equality[1]+(equality[2]==='=='?'!=':'==')+equality[3];if(typeof values.get(inverse)==='boolean')return !values.get(inverse);}
   if(equality){const a=scalar(equality[1],values),b=scalar(equality[3],values);if(a!==null&&b!==null)return equality[2]==='=='?a===b:a!==b;}
+  if(equality){
+    for(const [symbol,literal]of [[equality[1],equality[3]],[equality[3],equality[1]]]){
+      const n=scalar(literal,values);if(n!==null&&values.get(symbol)?.notEqual?.includes(n))return equality[2]==='!=';
+    }
+  }
   for (const op of ['||', '&&']) {
     let depth = 0;
     for (let at = 0; at < text.length - 1; at++) {
@@ -166,7 +171,7 @@ function pathTo(unit, offset, initial, options = {}) {
         if(options.assignment){const result=options.assignment(assignment,node,values);if(result?.outcome==='unknown')return unknown(result.reason,result.code,result.kind);if(result?.outcome==='continue')continue;}
         if (assignment[1]) locals.add(assignment[2]);
         if (options.localWritesOnly && !assignment[1] && !locals.has(assignment[2]) && !initial.has(assignment[2])) return unknown('The helper may change shared state; its caller-side effect needs a checked derivation.');
-        const value = boolean(assignment[3], values); values.set(assignment[2], value == null ? null : String(value)); continue;
+        const number=scalar(assignment[3],values),value = boolean(assignment[3], values); values.set(assignment[2],number!==null?{scalar:number}:value == null ? null : String(value)); continue;
       }
       const deletion = /^delete\s+([A-Za-z_$][\w$]*)\s*;$/.exec(clean);
       if (deletion && locals.has(deletion[1])) { values.set(deletion[1], null); continue; }
@@ -174,7 +179,10 @@ function pathTo(unit, offset, initial, options = {}) {
       // arbitrary deployed values cannot overflow. No numeric result is
       // invented, and its unknown value cannot establish a later guard.
       const arithmetic = /^(\w+)\s*\+=\s*(\w+)\s*;$/.exec(clean);
-      if (arithmetic && options.noOverflow) { values.set(arithmetic[1], null); continue; }
+      if (arithmetic && options.noOverflow) {
+        if(values.has('@alias:'+arithmetic[1]))return unknown('A compound storage write invalidates its prior scalar entry predicate; the resulting value is outside the supported exact assignment subset.','STATE_WRITE_UNSUPPORTED');
+        values.set(arithmetic[1], null); continue;
+      }
       const guard = /^(?:require|assert)\s*\(/.exec(clean);
       if (guard) {
         const open = clean.indexOf('('), close = matching(clean, open), args = parts(text.slice(open + 1, close));

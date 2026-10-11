@@ -10,7 +10,7 @@ function decide(draft,gate){
   if(require('./technical-assessment').pendingObservations(draft).length)return{kind:'continue',phase:'challenge',phases:1,reason:'Interpret the new associated observation through the ordinary challenge; no generation is needed.'};
   const retained=draft.reviewOperation;
   if(retained?.kind==='verify'){
-    if(retained.context!==candidates.identity(draft)||retained.material!==candidates.hash(require('./review-content').project(draft)))return{kind:'reassess',phases:2,reason:'Retained verification input changed; previous operation identity cannot authorize reuse.'};
+    if(retained.context!==candidates.identity(draft)||retained.material!==candidates.hash(require('./review-content').project(draft))||retained.sourceHash&&retained.sourceHash!==candidates.hash(draft.sources))return{kind:'reassess',phases:2,reason:'Retained verification input changed; previous operation identity cannot authorize reuse.'};
     return retained;
   }
   if(draft.checkpoint?.stage!=='complete')return{kind:'continue',phases:1,reason:'Continue the existing checkpoint.'};
@@ -20,10 +20,15 @@ function decide(draft,gate){
   const missing=details.filter(d=>coverageCodes.has(d.code));
   const material=candidates.hash(require('./review-content').project(draft));
   const reviewId=draft.technicalReview?.requestId||draft.runs?.findLast(r=>r.phase==='challenge')?.requestId;
-  const identity=candidates.hash([candidates.identity(draft),material,reviewId]);
-  if(missing.length)return{kind:'verify',phases:1,identity,reviewId,material,deficiencies:missing,
+  const sourceHash=candidates.hash(draft.sources),identity=candidates.hash([candidates.identity(draft),material,reviewId,sourceHash]);
+  if(missing.length)return{kind:'verify',phases:1,identity,reviewId,material,sourceHash,deficiencies:missing,
     reason:'Review response received; required checking is incomplete. Revalidate the unchanged argument locally, then obtain complete fresh verification. No generation is needed.'};
-  if(details.some(d=>d.kind==='capability'||d.kind==='local-reading'))return{kind:'revalidate',phases:0,identity,reason:'Revalidate the retained argument locally after the named source/capability changes. Do not regenerate it.'};
+  const acquired=draft.localPreparation?.revalidation;
+  if(acquired?.newSource&&acquired.reviewRequestId===reviewId&&acquired.sourceHash===sourceHash&&acquired.material===material)
+    return{kind:'verify',phases:1,identity,reviewId,material,sourceHash,reason:'Required local source is now supplied, but the retained argument has not been reviewed against it. Complete fresh verification may keep the bounded uncertainty or require a private correction; acquisition is not approval.'};
+  if(details.some(d=>d.kind==='local-reading')||require('./source-coverage').necessary(draft).some(id=>!draft.sources.some(u=>u.id===id)))
+    return{kind:'acquire',phases:0,identity,reason:'Acquire the exact missing local definitions or material ranges, then revalidate locally. New source is not semantic approval.'};
+  if(details.some(d=>d.kind==='capability'))return{kind:'revalidate',phases:0,identity,reason:'Revalidate the retained argument locally after the named source/capability changes. Do not regenerate it.'};
   return{kind:'evidence',phases:0,identity,reason:gate?.ready?'The current tutorial is already available.':'The completed review needs the named material evidence or an explicit substantive revision; unchanged generation cannot resolve it.'};
 }
 module.exports={decide,coverageCodes};

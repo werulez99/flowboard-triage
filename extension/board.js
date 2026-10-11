@@ -92,7 +92,10 @@ class TriageBoard {
   async reportProgress(projection) {
     if (this.disposed) return;
     const report = this.callbacks.reportPreparation?.();
-    const status = projection || report?.status(undefined,this.activeId||null);
+    const selectedId=this.activeId||null;
+    // Reuse a captured progress observation unless selection changed while it
+    // was queued. A summary-only observation must not evict selected details.
+    const status = projection&&(!Object.hasOwn(projection,'selectedId')||projection.selectedId===selectedId)?projection:report?.status(undefined,selectedId);
     await this.post({ type: 'triage:reportPreparation', report: status });
     const model = this.models.get(this.activeId);
     // Token progress only updates status. No source scan, draft parse or digest
@@ -900,7 +903,7 @@ class TriageBoard {
   libraryObservation() {
     let index; try { index = store.readReportIndex(this.root); } catch { /* No imported report yet. */ }
     const reportContext = { project: crypto.createHash('sha256').update(fs.realpathSync(this.root)).digest('hex'), reportHash: index?.reportHash || null };
-    const status = this.callbacks?.reportPreparation?.()?.status() || null;
+    const status = this.callbacks?.reportPreparation?.()?.status(undefined,this.activeId||null) || null;
     const matches = status && status.project === reportContext.project && status.reportHash === reportContext.reportHash;
     return { library: store.library(this.root, index), reportContext, reportPreparation: matches ? status : null };
   }

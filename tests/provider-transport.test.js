@@ -7,6 +7,14 @@ const provider = require('../extension/semantic-provider'), slots = require('../
 const text = '// café source; \u0431\u044a\u043b\u0433\u0430\u0440\u0441\u043a\u0438; 🧪; 日本語';
 const input = { phase: 'generate', finding: { title: 'fictional-transport-check', reportParagraphs: [{ text }] }, sources: [{ code: text }], documentation: [], earlierDraft: { value: 'unchanged' } };
 const usage = { input_tokens: 11, output_tokens: 7 };
+test('request-format diagnostics preserve fixed error vocabulary without free-form secret context',async()=>{
+ const secret='sk-private-credential-or-report-text';
+ await assert.rejects(provider.runCodex(input,{spawn:fakeProcess({code:1,stderr:Buffer.from(`invalid_json_schema: uniqueItems is unsupported at ${secret}\n`)})}),error=>{
+  const detail=error.audit.diagnostics.stderr;
+  assert.equal(detail.category,'request-format');assert.equal(detail.code,'invalid_json_schema');
+  assert.deepEqual(detail.schemaKeywords,['uniqueItems']);assert.ok(!JSON.stringify(error.audit).includes(secret));return true;
+ });
+});
 test('deadline includes synchronous launch setup and distinguishes delayed host callback from cleanup',async()=>{
   const wait=()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,80);
   for(const boundary of ['setup','callback']){

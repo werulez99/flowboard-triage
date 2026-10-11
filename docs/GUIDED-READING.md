@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.34
+# Checked finding walkthroughs — 0.19.35
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -24,6 +24,10 @@ verification-only operation. Local capability revalidation runs first; it does
 not regenerate an argument or grant missing checks. The same host-derived next
 operation controls eligibility, allocation, dispatch and the visible action.
 Content changes still require private authoring followed by full verification.
+Selected **Recheck local preparation** first restores/acquires explicitly required
+local definitions and ranges, then revalidates. It never buys a request or calls
+new source reviewed. If unchanged reasoning needs checking against that new
+material, the next operation is an identity-bound fresh V, not regeneration.
 Selected allocation adds only missing ordinary capacity, preserving spent usage,
 shared owed checks and fixed evaluation phase restrictions.
 
@@ -43,6 +47,12 @@ request; compact writes are bounded to the 8 MiB reader policy before replacing
 the last usable journal. Oversize/corrupt records are errors, never fresh imports.
 Durable request, cancellation, invalidation and completion boundaries remain
 synchronous; background status does not duplicate all detailed reasoning.
+Ordinary library/progress/review-save messages are summary-only unless one finding
+is explicitly selected. Full diagnosis/export is explicit. A missing, tampered or
+wrong-owner auxiliary record is reported for that finding/field, without hiding
+unaffected rows. Missing required assessment data withholds its projection; a
+missing nonessential review-reasoning record does not revoke checked source.
+Core journal/accounting corruption still stops safely rather than being swallowed.
 
 An unfinished argument can yield a typed `source-edits-v2` construction
 response, saved privately with its original accepted or explicitly unaccepted reference, source/premise identity,
@@ -71,7 +81,7 @@ dispositions, unknown targets and claimed edits which did not happen. The normal
 fresh verifier still judges the entire argument and original-to-current revisions.
 
 **Revise analysis** explicitly creates a private successor of a terminal negative
-review when current source/premises, owned response/cleanup, phase plan and
+review or a current accepted partial assessment when current source/premises, owned response/cleanup, phase plan and
 remaining finding/report capacity permit both authoring and fresh verification.
 Its exact predecessor and paid response are archived unchanged. Consumed usage
 and repair counts remain monotonic; repeated clicks/reopen do not restart a cycle.
@@ -84,6 +94,15 @@ use host-derived phase eligibility; an interrupted successor allocation can be
 completed by explicit selected Continue without duplicating the successor. A new
 prompt or numerical slot never resets a terminal record. Unavailable actions
 explain the governing provider, recovery or allowance boundary.
+For an accepted partial base, select an unresolved property/question/scope target
+and give a concrete reason. The exact accepted predecessor remains readable while
+its successor is private. Its original report/reference is not replaced by a fake
+rejection or a newly accepted base. Repeating identical work is refused; unchanged
+substantive authoring is retained as `REVISION_NO_CHANGE` before an avoidable V.
+Assessment-available/not-assessed filters and counts are independent of tutorial
+readiness. **Read assessment** and **Start walkthrough** open the existing native
+surface. Batch request estimates follow admissible next operations; an external
+missing fact is not automatically two useful pending requests.
 
 A completed typed repair rejected atomically remains available for zero-call
 local replay. **Repair saved analysis** can explicitly request correction of that
@@ -292,6 +311,27 @@ Exact named definitions precede optional lexical neighbors. Missing mandatory de
 
 ## Atomic readiness within each finding
 
+The bounded modifier path supports one resolved modifier with one unconditional
+placeholder and supported prelude/body/postlude effects, including exact zero-arg
+private helpers. A helper with its own modifier is explicitly unsupported; its
+header is never ignored. Unsupported aliases, compound storage mutation,
+delegatecall storage and ambiguous inheritance remain capability limits.
+
+Optional `state-predicates-v1` event inputs select an exact `uint256` declaration,
+file hash, owner, receiver, invocation/transaction and entry `==`/`!=` decimal
+predicate with claim evidence. Supported execution uses an explicitly attributed
+scenario assumption, never an inferred deployed value. Constructor initialization
+does not establish arbitrary later entry. Source-derived and runtime-observation
+origins require capabilities not provided by this bounded input and remain
+unresolved. The separate reviewed property invariant mechanism remains available.
+Fresh event/conditions checks cover predicate references. Prefix writes propagate
+by storage declaration without replacing a shadowed parameter; unsupported effects
+cannot preserve stale facts. Body reachability is not commitment: cleanup, late
+revert and transaction rollback remain distinct.
+
+Material receiver/implementation/failure context is visible beside the checked
+operation; evidence IDs remain in the named **Dispatch evidence** disclosure.
+
 `guide-policy.js` maintains the `checked-explanation-v9` gate. Each material statement needs evidence-linked applicability, entry, conditions, behavior, settlement, expected-rule, impact and counterevidence obligations. An obligation must be established, refuted, or justified as nonapplicable; an open obligation blocks the guide. A supported violation requires an independently justified rule and consequence. A refutation requires decisive counterevidence for the reviewed scope. A function invocation cannot silently switch to another function's source card or another transaction. Modifier steps can stay within the enclosing invocation. Shared schema, acceptance, storage and UI limits admit 8 claims, 64 obligations, 18 events, 30 relationships and the resulting 112 distinct checks. Typed check IDs prevent an event and obligation sharing an ID from accidentally covering each other.
 
 Call transitions bind the event and handoff to one `callSiteId`, derived from the current file identity and exact occurrence span. Receiver, argument positions, named arguments and value/gas/salt options belong to that same occurrence. Two calls on one line or two calls to the same helper cannot supply each other's evidence. The host checks material caller expressions against actual callee parameters and keeps the invocation and return location distinct. Typed dispatch evidence records implementation, receiver, execution context and failure handling. An internal helper preserves the EVM caller and execution address; a return does not change them into the return recipient. Valid locations remain necessary but do not prove the explanation.
@@ -300,7 +340,7 @@ Static declaration candidates and checked dispatch are separate. Supported local
 
 An unchanged argument can use compact challenge checks. Necessary amendments use the existing private-candidate lifecycle and `source-edits-v2` typed operations, followed by exact candidate verification; authoring cannot manufacture fresh checker attestations. The edit contract constrains targets and final collection capacities, and explicit source selections derive literal quotes without approving their meaning. Unchanged fields stay exact. Every original/current note, material causal target, premise and applicable revision still needs fresh evidence-linked checks. The host validates the assembled full model and references before the same publication gate. Typed failures distinguish structural repair, unread local code and missing material evidence. Repeating an identical structural failure without changed inputs stops instead of regenerating indefinitely. Legacy `review-patch-v1` and `review-delta-v1` responses remain readable. This reduces repeated output, not required reasoning. Complex requests can still time out.
 
-The summary, generated notes, assessment and walkthrough become available together for each accepted finding. The host strips these fields on every ordinary reading surface of an unfinished finding. `.flowboard/report-preparation.json` retains per-finding acceptance, compatible content identities and aggregate report progress. A queued, blocked, failed or paused sibling does not hide a ready guide. Pausing remaining work also leaves compatible ready guides readable. A digest seals each artifact; changed explanation text invalidates it even if its quotation matches. Source/report changes revoke affected work, not unrelated accepted findings. This is an evidence-handling gate, not a formal verifier or a truth oracle.
+The full summary, generated notes and walkthrough become available together for each fully checked finding. Independently admissible scoped assessments and their approved exact-source actions remain available while a full tutorial is blocked; unreviewed tutorial narrative stays private. `.flowboard/report-preparation.json` retains per-finding acceptance, compatible content identities and aggregate report progress. A queued, blocked, failed or paused sibling does not hide a ready guide. Pausing remaining work also leaves compatible ready guides readable. A digest seals each artifact; changed explanation text invalidates it even if its quotation matches. Source/report changes revoke affected work, not unrelated accepted findings. This is an evidence-handling gate, not a formal verifier or a truth oracle.
 
 Restart and re-import locally revalidate accepted artifacts before exposing them. An old private artifact does not need a provider request just because the earlier report-wide gate was closed. Migration is deliberately narrow: a sealed, complete v4/v5 artifact with unchanged relevant inputs, no unchecked researcher premise, and no call/callback/return handoff may pass the full current gate locally. Version 6 artifacts are not stamped with version 7: affected explanations need the new reachability and call-time value checks. Incomplete artifacts are never promoted by changing a version string. Human decisions and notes are not overwritten.
 

@@ -19,6 +19,7 @@ async function fixture(t,kind='route',index=0,extra=0,extraFile='Required.sol') 
 const fixed=input=>require('../scripts/fixtures/route-ready-output').response(input);
 for(const variant of ['frame','parameter'])test(`ordinary candidate recovery detects ${variant} defects before V reservation without changing retained content`,{skip:!native},async t=>{
   const f=await fixture(t);await generation(f);let authoring,reservations=0;
+  const retained=require('../extension/review-content').project(f.draft);
   await engine.advance({...f,invoke:async input=>{
     authoring=input;const edits=proposal(input),events=structuredClone(input.earlierDraft.causal.events);
     if(variant==='frame'){const different=events.find(e=>e.invocationId!==events[0].invocationId);different.invocationId=events[0].invocationId;}
@@ -33,12 +34,26 @@ for(const variant of ['frame','parameter'])test(`ordinary candidate recovery det
     return{value:edits,audit:{phase:'challenge',outcome:'completed',requestId:'bad-C'}};
   }});
   assert.ok(authoring.tutorialDiagnostics);assert.match(provider.measureRequest(authoring).system,/deterministic host observations/);
-  assert.equal(f.draft.phase,'blocked');assert.ok(f.draft.tutorialDiagnostics.details.some(d=>d.code===(variant==='frame'?'INVOCATION_FRAME':'PARAMETER_TYPE')),JSON.stringify({error:f.draft.error,details:f.draft.tutorialDiagnostics.details}));
-  for(const detail of f.draft.tutorialDiagnostics.details)assert.ok(detail.target,'Each actionable representation defect keeps its exact event/relationship target');
+  // The exact source type now rejects the parameter edit at compilation,
+  // before an invalid private candidate can be frozen. Frame collisions still
+  // reach candidate diagnostics; both boundaries preserve the prior argument.
+  const details=variant==='parameter'?f.draft.currentRejection.validationProblems:f.draft.tutorialDiagnostics.details;
+  assert.equal(f.draft.phase,'blocked');assert.ok(details.some(d=>d.code===(variant==='frame'?'INVOCATION_FRAME':'PARAMETER_DECLARATION_TYPE')),JSON.stringify({error:f.draft.error,details}));
+  for(const detail of details)assert.ok(detail.target,'Each actionable representation defect keeps its exact event/relationship target');
+  if(variant==='parameter'){
+    assert.equal(f.draft.reviewCandidate,undefined);assert.ok(f.draft.pendingResponse,'The exact rejected author response remains recoverable');
+    assert.deepEqual(require('../extension/review-content').project(f.draft),retained,'No rejected edit changes the retained argument');
+  }
   const frozen=structuredClone(f.draft.reviewCandidate),calls=f.draft.runs.length;f.draft=engine.read(f.root,f.findingId);
   await engine.advance({...f,beforeRequest:()=>{reservations++;},invoke:()=>assert.fail('Invalid representation must not dispatch V')});
-  assert.equal(reservations,0);assert.equal(f.draft.failureCode,'TUTORIAL_REPRESENTATION');assert.deepEqual(f.draft.reviewCandidate,frozen);assert.equal(f.draft.runs.length,calls);
-  assert.equal(policy.gate(f.draft).ready,false);assert.equal(f.draft.reviewCandidate.verification,null);
+  assert.equal(reservations,0);assert.equal(f.draft.failureCode,variant==='frame'?'TUTORIAL_REPRESENTATION':'BINDING_PARAMETER');assert.deepEqual(f.draft.reviewCandidate,frozen);
+  assert.equal(f.draft.runs.filter(run=>!run.reusedResponse).length,calls,'Reopen cannot add a newly dispatched request');
+  if(variant==='parameter')assert.equal(f.draft.runs.at(-1).reusedResponse,true,'Rejection is revalidated from the exact retained response locally');
+  assert.equal(policy.gate(f.draft).ready,false);assert.equal(f.draft.reviewCandidate?.verification??null,null);
+  if(variant==='parameter'){
+    assert.deepEqual(require('../extension/review-content').project(f.draft),retained,'Reopen/replay still cannot admit the invalid edit');
+    assert.ok(f.draft.currentRejection.validationProblems.some(d=>d.code==='PARAMETER_DECLARATION_TYPE'&&d.target.startsWith('event:')));
+  }
 });
 async function generation(f) {
   f.draft=engine.create(f);

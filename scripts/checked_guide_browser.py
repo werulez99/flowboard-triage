@@ -29,6 +29,7 @@ parser.add_argument('--report-preparation', action='store_true')
 parser.add_argument('--production-selection', action='store_true', help='Use actual extension cached selection; saved-workspace provider must be none. Owned local publication metadata may be revalidated; human/source files stay read-only.')
 parser.add_argument('--outline-check', action='store_true', help='Additional functional-only initial-list and per-function outline/detour checks; keep separate from compared timing batches.')
 parser.add_argument('--focused-viewports', action='store_true', help='Desktop and constrained-pane acceptance only (1440x900, 801x600).')
+parser.add_argument('--full-playback-viewports', action='store_true', help='Every checked Next/Previous step, original function tail, outline/detour/Return and saved reopen at desktop and compact widths; fixed fixture or saved provider-none only.')
 parser.add_argument('--local-recheck', action='store_true', help='Exercise the selected local preparation action with provider none; never a model request.')
 parser.add_argument('--blocker-check', action='store_true', help='Inspect all current blocker groups, source focus/return and reopen with provider none.')
 parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
@@ -36,6 +37,8 @@ parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
 parser.add_argument('--output', required=True)
 args = parser.parse_args()
+if args.full_playback_viewports and not (args.teaching_case or args.workspace and args.provider == 'none'):
+    parser.error('--full-playback-viewports requires a fixed teaching fixture or saved provider-none workspace')
 if args.assessment_check:
     args.teaching_case='time'
     args.finding='I-1'
@@ -72,6 +75,15 @@ try:
     def request(route, body=None):
         call = urllib.request.Request(host['origin'] + route, data=None if body is None else json.dumps(body).encode(), headers={'X-Workflow-Token': host['secret'], 'Content-Type': 'application/json'})
         with urllib.request.urlopen(call, timeout=55) as response: return json.loads(response.read())
+    def selected_report(state):
+        # /state deliberately reports a summary-only library observation.
+        # Inspect the identity-bound selected detail actually sent to the UI,
+        # not an all-report diagnostic read that ordinary views no longer do.
+        selected=page.evaluate('''value=>window.hostMessages.map(m=>m.type==='triage:reportPreparation'?m.report:m.reportPreparation).filter(r=>r&&r.reportHash===value.reportHash&&r.selectedId===value.id).at(-1)''',
+            {'id':args.finding,'reportHash':(state.get('reportPreparation') or {}).get('reportHash')})
+        return selected or state.get('reportPreparation') or {}
+    def selected_details(state):
+        return next((j for j in selected_report(state).get('jobs',[]) if j['id']==args.finding),None)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, executable_path=os.environ.get('FLOWBOARD_CHROMIUM_PATH'))
         page = browser.new_page(viewport={'width': 1440, 'height': 900}, reduced_motion='reduce')
@@ -109,6 +121,8 @@ try:
         finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
         page.wait_for_selector(finding_row, timeout=30000)
         if args.outline_check:
+            if args.teaching_case:
+                page.wait_for_function('selector=>document.querySelector(selector+" .triage-preparation-badge")?.dataset.state==="ready"',arg=finding_row,timeout=60000)
             assert page.locator(finding_row+' .triage-preparation-badge').get_attribute('data-state') == 'ready'
             assert page.locator(finding_row+' .triage-preparation-badge').inner_text().endswith('Ready')
             assert page.locator(finding_row+' .triage-ready-action').is_visible()
@@ -364,6 +378,10 @@ try:
                         'panes':page.evaluate('''()=>({aside:document.querySelector('.guide-aside')?.scrollTop,explanation:window.readableIntersection(document.querySelector('.guide-explanation')),code:window.readableIntersection(document.querySelector('.guide-active-card .triage-claim-line'))})''')}
                     raise
             verify_readable(steps[0])
+            expected_label=(state.get('exposedInvestigation') or draft).get('assessmentProjection',{}).get('technical',{}).get('label')
+            if expected_label:
+                assert page.locator('.guide-current-assessment').inner_text()==expected_label
+                assert page.locator('.guide-current-assessment').evaluate('n=>window.readableIntersection(n).height>0'),'The checked result must be visible at tutorial entry.'
             clipping = page.evaluate('''id => {
               const aside=document.querySelector('.guide-aside'), line=document.querySelector('.guide-active-card .triage-claim-line');
               const explanation=document.querySelector('.guide-explanation');
@@ -547,6 +565,65 @@ try:
                 }''', steps)
                 result['playbackMs']=[value['ms'] for value in result['playbackTransitions']]
                 assert len(request('/state')['providerCalls']) == before_calls
+            if args.full_playback_viewports:
+                result['fullViewportPlayback']=[]
+                for width,height in [(1440,900),(801,600)]:
+                    page.set_viewport_size({'width':width,'height':height});page.wait_for_timeout(150)
+                    first=next(e for e in draft['causal']['events'] if e['id']==steps[0])
+                    controls.get_by_role('button',name='Step outline',exact=True).click()
+                    page.locator('.guide-outline').get_by_role('button',name=first['title'],exact=True).click()
+                    verify_readable(steps[0])
+                    if expected_label:
+                        assert page.locator('.guide-current-assessment').inner_text()==expected_label
+                        assert page.locator('.guide-current-assessment').evaluate('n=>window.readableIntersection(n).height>0'),'Each viewport exposes the displayed guide\'s own checked result.'
+                    played=[];tails=[]
+                    for direction in [1,-1]:
+                        order=steps if direction==1 else list(reversed(steps))
+                        for i,identity in enumerate(order):
+                            verify_readable(identity)
+                            event=next(e for e in draft['causal']['events'] if e['id']==identity)
+                            unit=original_unit(event);rows=page.locator('.guide-active-card [data-source-line]').evaluate_all('(ns)=>ns.map(n=>Number(n.dataset.sourceLine))')
+                            assert rows==list(range(unit['source']['line'],unit['source']['line']+len(unit['code'].replace('\r\n','\n').split('\n'))))
+                            tail=page.locator('.guide-active-card .card-code').evaluate('''code=>{
+                              let pane=code;while(pane&&!/(auto|scroll)/.test(getComputedStyle(pane).overflowY))pane=pane.parentElement;
+                              if(!pane)throw new Error('No native original-function scroll viewport');
+                              const old=pane.scrollTop;pane.scrollTop=pane.scrollHeight;
+                              const last=[...code.querySelectorAll('[data-source-line]')].at(-1),r=last.getBoundingClientRect(),p=pane.getBoundingClientRect(),b=document.querySelector('#flowboard').getBoundingClientRect();
+                              const result={line:Number(last.dataset.sourceLine),visible:r.top>=Math.max(p.top,b.top)-1&&r.bottom<=Math.min(p.bottom,b.bottom)+1,scroll:pane.scrollTop};pane.scrollTop=old;return result;
+                            }''')
+                            assert tail['visible'],(identity,width,tail)
+                            tails.append({'event':identity,**tail})
+                            played.append({'event':identity,'direction':'next' if direction==1 else 'previous','rows':rows,'text':page.locator('.guide-annotation').inner_text()})
+                            if direction==1:page.screenshot(path=str(out/f'all-steps-{width}-{steps.index(identity)+1}.png'))
+                            if i+1<len(order):
+                                controls.get_by_role('button',name='Next step' if direction==1 else 'Previous step',exact=True).click()
+                    distinct={}
+                    for identity in steps:
+                        e=expected[identity];distinct.setdefault((e['file'],e['start']),identity)
+                    for identity in distinct.values():
+                        event=next(e for e in draft['causal']['events'] if e['id']==identity)
+                        controls.get_by_role('button',name='Step outline',exact=True).click()
+                        page.locator('.guide-outline').get_by_role('button',name=event['title'],exact=True).click();verify_readable(identity)
+                        page.locator('.guide-file-link').scroll_into_view_if_needed()
+                        position_js='()=>({scale,panX,panY,step:document.querySelector(".guide-annotation").dataset.stepId,aside:document.querySelector(".guide-aside").scrollTop,code:document.querySelector(".guide-active-card .card-code").scrollTop})'
+                        saved=page.evaluate(position_js);page.locator('.guide-file-link').click()
+                        controls.get_by_role('button',name='Return to step',exact=True).click();assert page.evaluate(position_js)==saved
+                        page.evaluate('document.querySelector(".guide-aside").scrollTop=0');verify_readable(identity)
+                    controls.get_by_role('button',name='Step outline',exact=True).click()
+                    page.locator('.guide-outline').get_by_role('button',name=first['title'],exact=True).click();verify_readable(steps[0])
+                    if len(steps)>1:
+                        page.keyboard.press('Alt+Shift+ArrowRight');verify_readable(steps[1])
+                        page.keyboard.press('Alt+Shift+ArrowLeft');verify_readable(steps[0])
+                    page.evaluate('persistNow()');page.wait_for_timeout(300)
+                    saved=page.evaluate('()=>({scale,panX,panY})')
+                    page.evaluate('window.closing=true;clearInterval(window.timer)');request('/action',{'name':'reopen'});page.reload()
+                    page.wait_for_selector(finding_row);page.locator(finding_row).click();verify_readable(steps[0])
+                    assert page.evaluate('()=>({scale,panX,panY})')==saved
+                    assert len(request('/state')['providerCalls'])==before_calls
+                    result['fullViewportPlayback'].append({'viewport':[width,height],'played':played,'tails':tails,'outlineFunctions':len(distinct),'savedReopen':True,'extraProviderCallbacks':0})
+                    page.screenshot(path=str(out/f'all-steps-{width}-reopened.png'))
+                page.set_viewport_size({'width':1440,'height':900});page.wait_for_timeout(150);verify_readable(steps[0])
+                result['checks'].append('Every Next and Previous step, exact full original rows and reachable tail, each-function outline/source detour/Return, keyboard steps and saved reopen pass at both 1440×900 and 801×600; zero extra fixture callbacks.')
             # Recreate the controller and renderer, not merely hide/show a panel.
             # Persisting is a normal automatic product action, not JSON setup.
             page.evaluate('persistNow()'); page.wait_for_timeout(300)
@@ -713,7 +790,7 @@ try:
             assert page.locator('.guide-annotation:visible').count() == 0
             status_text = page.locator('.guide-preparation').inner_text()
             assert 'Make room for the walkthrough' not in status_text, 'Unpublished analysis is not a card-capacity failure.'
-            selected_job = next((j for j in (state.get('reportPreparation') or {}).get('jobs', []) if j['id'] == args.finding), None)
+            selected_job = selected_details(state)
             if args.local_recheck:
                 assert args.provider == 'none' and selected_job.get('localRecheckAvailable')
                 before_requests = state['reportPreparation']['requests']
@@ -738,7 +815,7 @@ try:
                 page.wait_for_timeout(300)
                 page.screenshot(path=str(out / 'local-rechecked.png'))
                 result['checks'].append('Actual selected local recheck click reached a finite result, with zero provider calls/reservations and no private candidate annotations.')
-                selected_job = next(j for j in state['reportPreparation']['jobs'] if j['id'] == args.finding)
+                selected_job = selected_details(state)
                 status_text = page.locator('.guide-preparation').inner_text()
             preparation = state.get('reportPreparation') or {}
             if isinstance(preparation.get('requests'), (int, float)) and isinstance(preparation.get('requestLimit'), (int, float)) and preparation['requests'] >= preparation['requestLimit']:
@@ -867,7 +944,7 @@ try:
                 assert not page.locator('.guide-annotation:visible').count()
                 # An unrelated coordinator notification cannot remove the
                 # current explicitly unaccepted feedback beside its code.
-                page.evaluate('report=>{const n=Math.max(0,...window.hostMessages.map(m=>m.reportObservation||0));window.dispatchEvent(new MessageEvent("message",{data:{type:"triage:reportPreparation",reportObservation:n+1,report}}));}',request('/state')['reportPreparation'])
+                page.evaluate('report=>{const n=Math.max(0,...window.hostMessages.map(m=>m.reportObservation||0));window.dispatchEvent(new MessageEvent("message",{data:{type:"triage:reportPreparation",reportObservation:n+1,report}}));}',selected_report(request('/state')))
                 assert page.locator('.guide-blocker-return').is_visible(), 'Unchanged report progress must retain current source-inspection feedback.'
                 focused=page.evaluate('id=>window.hostMessages.filter(m=>m.type==="triage:blockerFocus"&&m.diagnosticId===id).at(-1)',source_problem['id'])
                 active_card=page.locator('[data-id='+json.dumps(focused['id'])+']')
@@ -920,6 +997,9 @@ try:
                 page.get_by_role('button',name='Walkthrough',exact=True).click()
                 page.wait_for_function('()=>document.querySelector(".guide-blocker-groups")',timeout=120000)
                 assert len(request('/state')['providerCalls']) == len(state['providerCalls'])
+                if selected_job.get('verificationCompletion',{}).get('result')=='repair':
+                    assert 'This review did not approve a new assessment or tutorial.' in page.locator('.guide-preparation').inner_text()
+                page.screenshot(path=str(out/'blocked-saved-reopened.png'))
                 result['blockedReopenMs']=(time.monotonic()-reopen_started)*1000
                 result['localInteractions']={'scope':'group navigation, native blocked saved result, simulated editor IO','samplesMs':samples,'count':len(samples)}
                 result['checks'].append('Every current blocker group is visible/focusable; source inspection and Return preserve blocked status; 801x600 and saved reopen make zero provider calls.')

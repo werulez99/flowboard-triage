@@ -166,34 +166,53 @@ class ReportPreparation {
         const latest = journal.read(this.root,FILE);
         if (hash(latest) !== this.savedJournalHash) { this.localAdmissionFailure('Another host updated this report. Reopen it before applying a control; its journal was preserved.'); return; }
       }
-      this.aggregate(); this.state.updatedAt = now(); this.savedJournalHash = p.atomicJson(this.root, FILE, journal.pack(this.root,this.state), { compact: true });
+      this.aggregate(); this.state.updatedAt = now();
+      // Atomic persistence checks the exact serialized bytes once. Other pack
+      // callers retain its default size guard; no durable save is deferred.
+      try { this.savedJournalHash = p.atomicJson(this.root, FILE, journal.pack(this.root,this.state,{checkSize:false}), { compact: true, maxBytes:journal.MAX_BYTES }); }
+      catch(error){if(error.code==='JSON_STORAGE_LIMIT'){error.code='REPORT_STORAGE_LIMIT';error.message='Compact report journal exceeds 8 MiB; the last usable journal and exact detail records were preserved. No usage was reset.';}throw error;}
     }
     finally { if (temporary) this.unlock(); }
     this.notifyStatus(); }
   progress() { if (!this.progressTimer) this.progressTimer = setTimeout(() => { if (!this.disposed) this.save(); }, 250); }
-  status(mapping,selectedId) {
+  status(mapping,selectedId,{fullDetails=false}={}) {
     if (!this.state) return this.admissionStatus ? { ...this.admissionStatus, project: this.admissionStatus.admission.project,
       reportHash: this.admissionStatus.admission.reportHash, total: 0, ready: 0, counts: {}, jobs: [], active: [], stopped: [], requests: 0, requestLimit: 0 } : null;
     const jobs = Object.values(this.state.jobs), counts = {};
     const profiles=require('./assessment-profile');mapping??=profiles.resolve(this.root,this.options.configuration?.().engagementProfile);
     const mapped=assessment=>!assessment?undefined:profiles.remap(assessment,mapping);
     for (const job of jobs) counts[job.state] = (counts[job.state] || 0) + 1;
+    // A report observation is compact by default. Only an explicit selected
+    // finding (or diagnostic/export caller) reads immutable detail records.
+    const projected=jobs.map(job=>{
+      const {id,state,stage,reason,outcome,publishedAt,failureKind,currentAttempt,verificationCompletion,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,localRecheckAvailable,revisionAction,nextOperation}=job;
+      const selected=fullDetails||selectedId===id,details={};
+      if(selected)for(const key of journal.fields)details[key]=journal.detail(job,key).value;
+      const detailProblems=journal.problems(job),assessmentProjection=mapped(selected?details.assessmentProjection:journal.assessmentSummary(job));
+      const assessmentAvailable=!!assessmentProjection?.technical?.identity&&['supported','refuted','insufficient-evidence'].includes(assessmentProjection.technical.result);
+      const digest=this.artifact(id),assessmentState=assessmentAvailable?'available':detailProblems.some(p=>p.requiredForAssessment)?'unavailable':'not-assessed';
+      return{id,state,stage,reason,outcome,publishedAt,failureKind,currentAttempt,verificationCompletion,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,
+        localRecheckAvailable:localRecheckAvailable||!!detailProblems.length,revisionAction,
+        nextOperation:selected?nextOperation:nextOperation&&{kind:nextOperation.kind,phase:nextOperation.phase,phases:nextOperation.phases,reason:nextOperation.reason},continueAction:this.continuationEligibility(job),
+        ...details,assessmentProjection,assessmentAvailable,assessmentState,detailProblems,publishable:!!digest,digest};
+    });
+    const assessmentCounts={};for(const job of projected)if(job.assessmentAvailable){const result=job.assessmentProjection.technical.result;assessmentCounts[result]=(assessmentCounts[result]||0)+1;}
+    const available=projected.filter(job=>job.assessmentAvailable).length;
+    const projectedById=new Map(projected.map(job=>[job.id,job])),config=this.options.configuration?.()||{};
+    const plan=batch.plan(jobs,this.state.resources,config.workers,config.providerCapacity,job=>{
+      const observed=projectedById.get(job.id);return job.nextOperation?.kind==='revision'?observed.revisionAction:observed.continueAction;
+    });
     return { version: VERSION, reportName: this.state.reportName, reportHash: this.state.reportHash, project: this.state.project,
       total: jobs.length, ready: jobs.filter(job => this.artifact(job.id)).length, counts, ambiguities: this.state.ambiguities.length,
+      assessmentAvailable:available,notAssessed:jobs.length-available,assessmentCounts,selectedId:selectedId||null,detailMode:fullDetails?'full':'selected',
       published: !!this.state.publication, mode: this.admissionStatus?.mode || this.state.mode, reason: this.admissionStatus?.reason || this.state.reason || '', startedAt: this.state.startedAt,
       admission: this.admissionStatus?.admission || null,
       requests: this.state.resources.requests, requestLimit: this.state.resources.limit, costUSD: this.state.resources.costUSD,
       batch: this.state.batch ? { ...this.state.batch, elapsedMs: Date.now() - Date.parse(this.state.batch.startedAt) } : null,
-      plan: this.state.plan && { ...this.state.plan, remainingAllowance: this.state.resources.limit - this.state.resources.requests },
+      plan,
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
-      jobs: jobs.map(job=>{
-        const {id,state,stage,reason,outcome,publishedAt,failureKind,currentAttempt,verificationCompletion,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,localRecheckAvailable,revisionAction}=job;
-        const detail=selectedId===undefined||selectedId===id;
-        return {id,state,stage,reason,outcome,publishedAt,failureKind,currentAttempt,verificationCompletion,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,localRecheckAvailable,revisionAction,
-          continueAction:this.continuationEligibility(job),assessmentProjection:mapped(detail?job.assessmentProjection:job.assessmentSummary),
-          ...(detail?Object.fromEntries(journal.fields.filter(k=>k!=='assessmentProjection').map(k=>[k,job[k]])):{}),
-          publishable:!!this.artifact(id),digest:this.artifact(id)};}),
+      jobs: projected,
       active: jobs.filter(job => ['running', 'waiting-for-provider-capacity'].includes(job.state)).map(({ id, state, stage, startedAt, progress, lastUsefulActivity }) => ({ id, state, stage, startedAt, progress, lastUsefulActivity })),
       stopped: jobs.filter(job => ['failed', 'blocked', 'cancelled', 'paused'].includes(job.state))
         .sort((a, b) => ['failed', 'blocked', 'cancelled', 'paused'].indexOf(a.state) - ['failed', 'blocked', 'cancelled', 'paused'].indexOf(b.state))
@@ -482,7 +501,7 @@ class ReportPreparation {
           const eligibility=this.operationEligibility(job,next);
           if(!eligibility.available){job.reason=eligibility.reason;this.save();continue;}
           this.allocateOperation(job,next.identity,eligibility);
-        }else if(['revalidate','evidence'].includes(next.kind)&&!intent.repairSavedAnalysis&&!intent.reviseAnalysis){
+        }else if(['acquire','revalidate','evidence'].includes(next.kind)&&!intent.repairSavedAnalysis&&!intent.reviseAnalysis){
           job.reason=next.reason;this.save();continue;
         }
         if(intent.repairSavedAnalysis){
@@ -803,7 +822,7 @@ class ReportPreparation {
     if(job.publishable||job.correctionHold||job.failureKind==='storage'||job.retainedRejection||['running','waiting-for-provider-capacity'].includes(job.state))return blocked('This finding is already available, active, or needs its specific recovery action.');
     if(job.privateCandidateState==='revision-pending')return this.revisionEligibility(job,engine.read(this.root,job.id),true);
     if(job.nextOperation?.kind==='verify')return this.operationEligibility(job,job.nextOperation);
-    if(['evidence','revalidate'].includes(job.nextOperation?.kind))return blocked(job.nextOperation.reason);
+    if(['evidence','acquire','revalidate'].includes(job.nextOperation?.kind))return blocked(job.nextOperation.reason);
     if(this.state.resources.requests>=this.state.resources.limit)return blocked('Shared report allowance is exhausted.');
     if(!['codex','claude'].includes(this.options.configuration().provider))return blocked('Enable the configured source-only provider.');
     return{available:true,reason:'Continue only this finding within the applicable phases and shared allowance.'};
@@ -833,9 +852,15 @@ class ReportPreparation {
     return{available:true,additionalAllocation,reason:`${operation.reason||'Repair the retained response, then obtain complete fresh verification.'} Required requests: ${count}; selected additional allocation: ${additionalAllocation}; shared remaining: ${remaining}; owed sibling checks: ${owed}.`};
   }
   revisionEligibility(job,draft,pending=false) {
-    const blocked=reason=>({available:false,reason});
-    if(!draft||draft.reviewCandidate?.state!==(pending?'revision-pending':'terminal')||pending&&!draft.reviewCandidate.successor)return blocked('Only a completed terminal candidate review can start a distinct private revision.');
-    try{require('./review-candidate').assertCurrent(draft,require('./semantic-provider').schema);if(!require('./review-feedback').current(draft.reviewCandidate))return blocked('A completed negative verifier response is required for this revision action.');}catch(error){return blocked(error.message);}
+    let accepted;
+    const blocked=reason=>({available:false,...(accepted||{}),reason});
+    const candidates=require('./review-candidate'),schema=require('./semantic-provider').schema;
+    try{accepted=!pending&&candidates.acceptedRevision(draft,schema);}catch(error){return blocked(error.message);}
+    if(!accepted&&(!draft||draft.reviewCandidate?.state!==(pending?'revision-pending':'terminal')||pending&&!draft.reviewCandidate.successor))return blocked('A current accepted partial assessment or completed terminal candidate review is required for private revision.');
+    let feedback;
+    try{if(!accepted){candidates.assertCurrent(draft,schema);feedback=require('./review-feedback').current(draft.reviewCandidate);
+      if(!feedback&&draft.reviewCandidate.successor?.kind!=='accepted-partial')return blocked('The terminal review needs its exact negative verifier response.');}}
+    catch(error){return blocked(error.message);}
     if(draft.pendingResponse||draft.recoveryRequired||job.correctionHold)return blocked('Recover the owned response or settle the saved correction first.');
     if(draft.runs.at(-1)?.teardown?.confirmed!==true)return blocked('Owned provider cleanup is unconfirmed.');
     if(!this.revisionPhases(job.id))return blocked('The applicable phase plan does not permit both repair authoring and fresh verification.');
@@ -844,8 +869,8 @@ class ReportPreparation {
     if(report-owed<2)return blocked(`A private revision requires authoring and fresh verification; shared requests remaining: ${report}, owed sibling verifications: ${owed}. No requests were reserved or allowances reset.`);
     if(!['codex','claude'].includes(this.options.configuration().provider))return blocked('Enable the configured source-only provider to author and freshly verify a private revision.');
     const additionalAllocation=Math.max(0,2-finding);
-    return {available:true,additionalAllocation,candidateHash:draft.reviewCandidate.candidateHash,feedbackHash:require('./review-feedback').current(draft.reviewCandidate).responseHash,feedbackRequestId:draft.reviewCandidate.verification.requestId,
-      reason:`Reconcile the recorded verifier feedback, then obtain full fresh verification (2 requests). ${additionalAllocation?`This action adds ${additionalAllocation} to this finding’s allowed ceiling; ${job.requests} spent requests remain spent. `:''}Shared capacity remaining: ${report}; owed sibling verifications: ${owed}.`};
+    return {available:true,additionalAllocation,...(accepted||{candidateHash:draft.reviewCandidate.candidateHash,...(feedback?{feedbackHash:feedback.responseHash,feedbackRequestId:feedback.requestId}:{kind:'accepted-partial'})}),
+      reason:`${accepted?'Revise a concrete unresolved question, property or scope; the accepted predecessor stays readable.':'Reconcile the recorded revision work.'} Then obtain full fresh verification (2 requests). ${additionalAllocation?`This action adds ${additionalAllocation} to this finding’s allowed ceiling; ${job.requests} spent requests remain spent. `:''}Shared capacity remaining: ${report}; owed sibling verifications: ${owed}.`};
   }
   recoveryStatus(job, draft, evaluated=null) {
     evaluated ||= draft.property?policy.evaluate(draft):null;
@@ -861,7 +886,7 @@ class ReportPreparation {
     const candidate=draft.reviewCandidate, feedback=candidate?.verification;
     const rejectedCheck=feedback?.result==='repair'&&feedback.candidateHash===candidate.candidateHash&&feedback.revisionHash===hash(candidate.revisions)&&
       (!draft.currentRejection||draft.currentRejection.requestId===feedback.requestId)?feedback:null;
-    job.localRecheckAvailable=(draft.failureKind==='local-reading'||['verify','revalidate'].includes(job.nextOperation.kind))&&!draft.pendingResponse&&!job.correctionHold&&(draft.rejectedProposal?.state!=='repair-dispatched'||draft.rejectedProposal.followup?.state==='pending');
+    job.localRecheckAvailable=(draft.failureKind==='local-reading'||['verify','acquire','revalidate'].includes(job.nextOperation.kind))&&!draft.pendingResponse&&!job.correctionHold&&(draft.rejectedProposal?.state!=='repair-dispatched'||draft.rejectedProposal.followup?.state==='pending');
     job.retainedRejection=!job.hasPrivateCandidate&&(!admitted&&!!draft.lastRejected&&draft.failureCode==='REVIEW_REFERENCE_SCOPE'||!!draft.rejectedProposal);
     const candidateRetry=engine.candidateRepairRetry(draft)&&this.operationEligibility(job,{kind:'revision',phases:2}).available;
     const repairPending=candidateRetry||require('./rejected-proposal').eligible(draft)||require('./rejected-proposal').followupEligible(draft)||
