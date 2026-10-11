@@ -62,6 +62,15 @@ for (const mode of ['inherited', 'ignore-term', 'launcher-exits']) test(`deadlin
   assert.ok(run.descendant()?.pid); assert.equal(running(run.descendant().pid), false); assert.equal(running(run.child().pid), false);
   await pause(50); assert.equal(run.terminal(), 1);
 });
+test('a completed response never frees an escaped inherited-pipe owner or bypasses quarantine', {skip:!linux,timeout:5000},async t=>{
+  const run=descendantTransport(t,'completed-escaped-pipes');
+  await assert.rejects(run.promise,e=>{
+    assert.equal(e.code,'PROVIDER_TEARDOWN_UNCONFIRMED');assert.equal(e.audit.finalReceived,true);
+    assert.equal(e.audit.deadline.responseCompletedBeforeDeadline,true);assert.equal(e.audit.primaryFailureKind,'completion-cleanup');
+    assert.equal(e.audit.teardown.confirmed,false);assert.equal(e.audit.hostAcceptedAt,null);return true;
+  });
+  assert.equal(run.terminal(),1);
+});
 test('the reported 500ms request deadline terminates an ignoring descendant with the unchanged production cleanup grace', { skip: !linux, timeout: 6000 }, async t => {
   const run = descendantTransport(t, 'ignore-term', { timeoutMs: 500, terminationGraceMs: undefined, terminationSettleMs: undefined });
   await assert.rejects(run.promise, error => {

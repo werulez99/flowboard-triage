@@ -1,4 +1,33 @@
-# Source investigation runtime — 0.19.35
+# Source investigation runtime — 0.19.36
+
+Exact call validation checks nested receiver/option/argument evaluation before
+entering an external call or accepting its return/catch continuation. A proven
+caller-side input failure cannot be borrowed as a caught callee failure. The
+bounded addition resolves one direct argumentless, nonvirtual internal/private
+pure helper: a source-established rejection blocks the path, and a simple literal
+return establishes input completion (not an invented runtime value). Multiple,
+conditional or effectful nested evaluations remain explicit capability limits.
+Local diagnostics v5 re-evaluates saved paths without changing their argument or
+buying another review. This is a deterministic source check, not Solidity execution.
+
+Prospective requests acquire exact adjacent NatSpec for selected definitions as
+separate, bounded source-context views. Original callable coordinates and full
+functions are unchanged. Sparse comment ranges retain original line numbers and
+file hashes; comments require interpretation, not automatic rule approval.
+Original citation/symbol roots also survive prioritization even when generated
+claims omit them. Legacy omissions are reacquired locally; the actual challenge
+packet must contain their required ranges. Unrelated discovery can still be
+deferred. Source-count and byte limits are unchanged, and exact paid-response
+replay never retrofits newly acquired material into an old request.
+
+The Codex adapter distinguishes a completed structured turn from launcher exit.
+If matching final JSON and turn completion with usage arrived before the existing
+deadline, exit lag triggers the same finite owned-process cleanup. The result is
+retained only after confirmed closure, with an explicit completion/cleanup receipt
+and ordinary host validation still required. Cancellation, unsafe actions, malformed
+or late output, unmatched turns and unconfirmed cleanup remain blocking. Historical
+timeout receipts and uncheckpointed observer captures are not rewritten as successful
+reviews; this correction does not create a retrospective response-import authority.
 
 ## Staged tutorial diagnostics (0.19.26)
 

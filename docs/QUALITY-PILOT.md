@@ -1,5 +1,217 @@
 # Bounded fresh quality pilot
 
+## Ordinary fresh journeys and retained correction (0.19.36)
+
+Executed baseline: `84a690ae77240bbaa530313e7bce749199249e1c`, 0.19.35,
+not the older 0.19.34 planning baseline. The retained L-113 correction and exactly
+two prospectively selected fresh findings, L-142 and L-184, used separate owned
+workspaces and existing ordinary coordinator accounting. No case was replaced,
+cloned or seeded with an accepted answer. Exact original report sections and the
+versioned source were pinned before production; provisional AI-only reference
+reasoning stayed outside all author/verifier packets. The bounded selection did
+**not** establish an independently adjudicated supported/refuted pair: both fresh
+references distinguish established code behavior from uncertain intended rules.
+These are failure-finding development cases, not an accuracy sample.
+
+### Retained recovery outcome
+
+L-113's targeted private revision and complete fresh verification both completed.
+The current assessment is **insufficient evidence / partial coverage**, with 28
+notes and two claim groups. It is admissible and inspectable; **there is no full
+tutorial**. A failed positive-value delivery rolls back that invocation's writes;
+that alone establishes neither usable collection nor permanent loss. An already
+stored accepting destination, matching weight and a newer global destination
+epoch can permit permissionless relay without a new transaction by the affected
+L1 actor. An absent/rejecting destination or incompatible epoch does not establish
+the opposite universal conclusion. Acceptance of delivery also does not establish
+the claimed independent collection entitlement. Those distinctions now remain in
+the reviewed argument instead of a categorical no-recovery assertion.
+
+The fresh V returned kept with 28 note reviews, 61 causal/revision checks, one
+premise review and 15 report dispositions. A separate AI source read-through found
+the bounded result coherent; model agreement and complete inventories are not
+independent ground truth. The accepted predecessor, terminal predecessor, original
+report, human work and all ten earlier receipts remain preserved. The old latest
+checkpoint is retained in its exact same-request recovery archive, not overwritten
+as a new approval. No paid response was edited.
+
+| Retained stage | Complete packet | Sources | Monotonic service | Returned input / output tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Targeted R | 246,820 bytes | 19 | 146.283s | 74,211 / 6,618 |
+| Full V | 208,881 bytes | 19 | 182.344s | 65,085 / 7,565 |
+
+Increment: two dispatched/completed/admitted stages, one new admissible assessment,
+zero tutorials. Total continuation elapsed 353.380s, including 9.362s indexing;
+328.627s aggregate adapter service. L-113 is now **12 / 11 / 8 / 2 / 0**
+(dispatches / adapter-completed responses / admitted stages / assessment events /
+tutorials), at its unchanged 12-request ceiling. The two assessment events are
+revisions of one finding, not two independently assessed cases. No further L-113
+request or allowance increase was made.
+
+### Two fresh cases: neither completed a checked tutorial
+
+| Case / prospectively frozen scope | Actual ordinary outcome | Decisive remaining boundary |
+| --- | --- | --- |
+| L-142: raw-key route removal, native/wrapped-token alternative and absent-key event behavior | Five dispatches, three adapter-completed responses, two admitted authoring stages. Full V requested correction; no admissible assessment or tutorial. | Four report dispositions group distinct allegations, initial states, consequences or proposed changes. They need separate reviewed dispositions. Route creation/oracle context and the claimed removal/event rule also remain unsettled. One finding request remains, but repair plus full V requires two; the unchanged six-request ceiling was not enlarged. |
+| L-184: small incentive inputs across differently scaled configuration APIs and claimed keeper/liveness consequence | Three dispatches, one completed/admitted generation; both completion attempts timed out. No full V, admissible assessment or tutorial. | The second completion received the missing unit comments, original counterpart API/configuration and payment context, but returned no substantive answer. No cause is inferred from a disabled-tool-host notice. A repeated identical request was not purchased. Minimum reward/keeper behavior remains unreviewed, not refuted. |
+
+L-142's source does establish raw-key deletion/event behavior, but an idempotent
+removal interpretation is credible and one provider's normalization does not
+establish a rule for all providers. Its complete V retained both alternatives;
+the four disposition corrections concern assertion-level original scope, not a
+request to invent more defects. Conditional source configuration must remain
+distinct from an authenticated deployment. L-184's units and tiny computed reward
+are source facts to assess; the reported input error alone does not establish an
+applicable minimum incentive or universal keeper refusal. The frozen provisional
+references exposed these uncertainties before producer output, not afterward to
+reclassify failures as successful negatives.
+
+| Fresh request | Complete packet / sources | Monotonic adapter service | Outcome |
+| --- | ---: | ---: | --- |
+| L-142 initial G | 72,855 bytes / 7 | 240.010s | Failed timeout; final content and completed-turn event existed before exit, but no normal retained checkpoint |
+| L-184 initial G | 88,766 bytes / 14 | 214.508s | Authoring admitted |
+| L-184 first completion | 185,485 bytes / 40 | 240.037s | Timeout, no final |
+| L-142 configured G retry | 72,855 bytes / 7 | 240.092s | Timeout, no final |
+| L-142 corrected-context G | 75,999 bytes / 11 | 235.764s | Authoring admitted |
+| L-184 corrected-context completion | 202,833 bytes / 47 | 241.395s | Timeout including finite cleanup, no final |
+| L-142 completion | 196,543 bytes / 51 | 222.936s | Private candidate admitted |
+| L-142 full V | 226,247 bytes / 51 | 176.460s | Repair requested, no assessment admitted |
+
+Packet figures are the complete conservative bound, including instructions,
+schema and adapter framing, not source bytes or token estimates. Actual recorded
+stdin plus schema for the four continuation requests was respectively 75,921,
+202,755, 196,465 and 226,169 bytes (78 bytes below each conservative bound).
+
+The first and continuation execution segments elapsed **506.021s** and **668.908s**,
+including **11.026s** and **11.169s** indexing. They are two segments, not one cold
+import latency; local preparation/development and the intervening retained-case
+run are separate. The fresh reviews used newly imported original findings and no
+accepted analysis cache, with an already indexed source workspace. Returned usage
+was **196,596 input / 35,101 output tokens**; missing timeout usage is unknown, not
+zero. Complete response text received, adapter return, host admission and checked
+assessment are separate boundaries. Five final contents were observed, but only
+four normal adapter responses completed; the historical uncheckpointed L-142
+content was not silently counted as a recovered response.
+Initial queue waits were 7/10/10/9ms; continuation waits were 8/11/10/9ms.
+Continuation aggregate adapter service was 876.554s (876.634s including wrapper
+overhead); concurrent service sums are not cohort elapsed time. The timed-out
+completion's timer callback was 1.384s late; that observation does not identify
+the cause of its missing answer. First usable assessment/tutorial time for both
+fresh cases remains **not reached**.
+
+Fresh totals: **8 dispatched / 4 adapter-completed / 3 admitted / 0 assessed / 0
+tutorials**. Including the retained pair, this increment is **10 / 6 / 5 / 1 / 0**;
+the prior **27 / 23 / 16 / 2 / 0** history becomes **37 / 29 / 21 / 3 / 0**.
+There remain two distinct assessed findings in that historical cohort; three
+assessment events include a new L-113 revision. Fresh shared accounting is **8/12**,
+L-142 **5/6**, L-184 **3/6**. Fixed historical windows and ceilings were not reset,
+borrowed or enlarged. Remaining numerical capacity does not justify an unchanged
+timeout or fund a two-stage repair from one finding slot.
+
+After the negative V, one selected zero-provider preparation acquired the exact
+route setter/declaration, oracle body and source-resolved local dependencies. Its
+first manually prepared requirement envelope incorrectly attached sparse ranges
+to ordinary complete functions and was rejected locally. The corrected existing
+context/callable shape succeeded: **254,822 bytes / 38 source units**, schema and
+material-range preflight pass, candidate-repair purpose. Original/current evidence,
+candidate, complete V, runs, report, sibling and accounting stayed unchanged;
+new code is unreviewed. The corrected pass took 18.914s, including 11.748s indexing,
+zero reservations/calls. Ambiguous external hook identity remains explicit rather
+than selected by name. No prepared packet was dispatched: the next operation is
+still private correction **and** complete V, not regeneration or V-only replay.
+
+All 47 actual L-184 source hashes / 625 numbered rows and 51 final L-142 source
+hashes / 491 rows were compared with the pinned files; current and changed-original
+evidence ranges were supplied. L-184's original counterpart constant, full setter
+and configuration function remain in the dispatched packet, not merely in the
+host catalog. The L-142 V lost no source IDs after completion. This proves byte
+coverage, not relevance, semantic correctness or model comprehension. Completed
+continuation responses exited normally; the new exit-lag fallback was **not**
+exercised by these live completions.
+
+### Reproduced boundaries and limits
+
+| Concern | Evidence and correction |
+| --- | --- |
+| Caller-side input failure represented as external catch | Reproduced through SourceCatalog, authored events, semantic acceptance and saved replay. Supported direct pure internal argument evaluation now precedes the external invocation and catch/return edge. Deterministic rejection is structural; unavailable bodies and unsupported effects remain distinct local/capability limits. Saved old diagnostic approval is locally revalidated, not inherited. |
+| Older assessment evidence opening a newer revision | Not reproduced: current host artifact identity, admitted membership and across-await source checks already reject stale/mismatched actions. Existing ordinary-path positive and negative controls passed; no redundant identity mechanism was added. |
+| Feedback wire schema rejected before dispatch | The actual retained repair preparation exposed unsupported `minLength`. A supported non-whitespace pattern preserves the host's nonblank reason requirement; the corrected complete packet grew by two bytes. No paid answer or checker approval was synthesized. |
+| Supplied function omitted its explanatory source comments / original report roots | Adjacent exact NatSpec is now supplied as attributed sparse context, without changing canonical function coordinates. Original report source roots remain required even when generation omits them. Actual outgoing hashes/ranges were checked; proposed-fix text and unrelated discovery neighbors do not become permanent dependencies. |
+| Complete provider turn lost while its launcher lingered | One real initial response contained complete structured text and `turn.completed` before the deadline, but the old adapter timed out awaiting exit. Future matching complete turns can be retained only after confirmed owned cleanup, within the original deadline. Cancellation, unsafe/late/partial/mismatched output and quarantine still reject. The historical failure and observer-only text were not retroactively converted into a checkpoint. |
+| Important missing fact clipped below long checked reasoning | Reproduced in the actual retained assessment's native viewport. The exact material requirement and available-action reason now precede the complete checked reasoning, which remains accessible in a named disclosure. No narrative was truncated, approved or relabeled Ready. |
+
+The bounded call-input subset does not interpret arbitrary nested effects,
+multiple complex inputs or unsupported modifier composition. It conservatively
+withholds those paths. Rejection of a bound path is not automatically a refutation
+of the whole report. Source comments are evidence to interpret, not automatic
+security invariants. Newly acquired code never inherits a prior review.
+
+### Native observations and measurement boundary
+
+The actual current L-113 assessment passed six native interaction groups in the
+original installed Flowboard 1.2.0 renderer, with simulated editor I/O and provider
+`none`. Desktop 1440×900 and compact 801×600 captures show the checked uncertainty,
+full original source rows, readable adjacent inspection, reachable function tail
+and Return. The original clipping failure remains recorded. Unchecked tutorial
+annotations stayed hidden. This was **assessment/source inspection, not complete
+tutorial playback or observed Cursor-window activation**.
+
+New click-to-two-render-frame samples, n=1 each: evidence open **277.0ms**, Return
+**28.8ms**, saved selected reopen **1,879.0ms**, all zero provider callbacks. The
+host open span included source checks/projections; library observation was 3.121ms
+and report status sub-millisecond. No journal bottleneck was established. These
+measurements use independent host/browser monotonic clocks; nested spans overlap.
+The simulated editor transport polls every 75ms. Screenshots, full diagnostic
+reads and assertions are outside these samples. Earlier inclusive harness timings
+and fictional fixture scenes are not matched baselines or demonstrated speedups;
+one sample is not p95 or a human comprehension study.
+
+Actual fresh saved states were also inspected: L-142 passed six blocked/recovery
+groups, separating five corrections from 88 attributed review-reasoning records;
+exact full-function rows, keyboard-focusable groups, source inspection/Return,
+compact tail access and reopen remained usable without a provider call. Its
+click-to-frame samples were 113.6ms open, 34.6ms Return and 912.1ms reopen (n=1
+each); these are a different artifact from L-113, not a comparative speedup.
+L-184 passed three operational-status groups, with readable 14px text inside both
+viewports and no unchecked annotation. It has no trustworthy correction source
+anchor, so no source-inspection or Return success was manufactured for it. The
+earlier harness run that incorrectly assumed such an anchor remains recorded as
+failed; the final status-only run does not weaken source-inspection assertions.
+All captures/read-throughs were AI-only, not human usability results. Neither
+fresh case supplied a Ready guide on which real Next/Previous tutorial playback
+could be claimed.
+
+Configuration remained CLI 0.162.1, CLI-default model, medium effort, two shared
+slots and 240s request deadline. Observed model identity, monetary cost and remote
+quota remain unknown. No protocol execution, generated PoC, provider tool use,
+model downgrade or concurrency increase was used. Immutable executed build/input
+manifests distinguish each run from later transport/UI fixes.
+
+The initial required canonical run was **678/680**, not green. It caught two
+source-preparation regressions: a replacement-generation documentation hook could
+overwrite the earlier accepted source union, and anonymous discovery cards were
+being treated as mandatory report anchors. The shared correction preserves the
+union until replacement admission and pins only explicit title/citation/symbol
+roots. Existing assertions/caps remain; focused three-file controls passed **42/42**.
+The original L-184 counterpart/deployment anchors retain typed citation/symbol
+provenance. The same initial run's 204-job control passed in 91.285s under its
+unchanged 120s bound, using 408 fictional millisecond callbacks and 16 fixture
+slots, not the real two-slot provider configuration.
+
+The first native smoke gate also failed: its simulated evidence reply omitted
+the current navigation identity and was correctly rejected. The fixture now
+checks missing/stale rejection before echoing the actual pending identity; the
+original exact-preview/source-focus assertions remain. Its corrected run passed,
+using fictional manual-review data and simulated editor I/O, not a real tutorial.
+These failures and later corrections are preserved separately from paid execution.
+The final canonical rerun passed **680/680, zero skipped**, in 117.698s. Its unchanged
+204-job control completed in 53.100s; the different full-suite samples are not an
+isolated speedup measurement. Public source/package allowlist inspection covers
+258 files, excluding all private reports, source snapshots, responses and captures.
+The bounded model outcomes do not establish a fresh tutorial success, independent
+accuracy or the 200-findings/20–30-minute target. Whole development effort was not
+instrumented as a single latency measurement and is not inferred from service sums.
+
 ## Accepted-partial revision and bounded state predicates (0.19.35)
 
 Baseline: `c2a946c26f3054d84a3c2666e0d253b80fe4ebe2`, 0.19.34. The declared

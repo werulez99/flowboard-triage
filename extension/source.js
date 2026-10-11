@@ -198,6 +198,33 @@ class SourceCatalog {
     }
     return this.declarationCache.get(doc.uri.fsPath).filter(item => !contract || item.contract === contract);
   }
+  adjacentDocumentation(fn) {
+    // Source comments are attributed context, not a specification approval.
+    // Keep their coordinates separate from the callable/declaration identity.
+    if (!fn || fn.kind === 'context' && !fn.symbol && fn.contextKind !== 'declaration') return null;
+    const doc = this.document(this.relative(fn.file));
+    this.documentationLines ||= new Map();
+    if (!this.documentationLines.has(doc.uri.fsPath)) this.documentationLines.set(doc.uri.fsPath, lexicalCode(doc.text).split(/\r?\n/));
+    const clean = this.documentationLines.get(doc.uri.fsPath), header = clean[fn.startLine - 1] || '';
+    // A shared line or a contract header cannot bind a preceding comment to
+    // one particular callable/state declaration.
+    if (fn.kind === 'context' && fn.symbol) {
+      if (this.stateDeclarations(this.relative(fn.file), fn.contract).filter(item => item.startLine === fn.startLine).length !== 1 || /[{}]/.test(header)) return null;
+    } else if (!/^\s*(?:function|modifier|constructor|receive|fallback)\b/.test(header) ||
+      this.functions.filter(item => item.file === fn.file && item.startLine === fn.startLine).length > 1) return null;
+    let end = fn.startLine - 2;
+    while (end >= 0 && /^\s*$/.test(doc.lines[end])) end--;
+    if (end < 0) return null;
+    let start = end;
+    if (/^\s*\/\/\//.test(doc.lines[end])) {
+      while (start > 0 && /^\s*\/\/\//.test(doc.lines[start - 1])) start--;
+    } else if (/\*\/\s*$/.test(doc.lines[end])) {
+      while (start > 0 && !doc.lines[start].includes('/*')) start--;
+      if (!/^\s*\/\*\*/.test(doc.lines[start]) || doc.lines.slice(start, end + 1).join('\n').indexOf('*/') !== doc.lines.slice(start, end + 1).join('\n').lastIndexOf('*/')) return null;
+    } else return null;
+    if (clean.slice(start, end + 1).some(line => /\S/.test(line))) return null;
+    return { file: doc.uri.fsPath, line: start + 1, endLine: end + 1, declarationLine: fn.startLine, name: fn.name };
+  }
   functionDeclarations(contract, name, fromFile) {
     // The native index omits bodyless interface/abstract declarations. Read
     // their exact signatures as context, never as executable implementations.

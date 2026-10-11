@@ -331,6 +331,51 @@ test('known empty-calldata receive and caught failures keep execution context an
   assert.match(policy.gate(caught.draft).problems.join('\n'), /failure handling is caught/);
 });
 
+test('ordinary checked try-call inputs must complete in the caller before external failure can reach catch', { skip: !native }, async t => {
+  // Fictional source-only indexing and scripted semantic records, not a
+  // Solidity execution or a claim about a real finding/model response.
+  const variants = [
+    ['literal external failure', {}, true],
+    ['completed pure input', { argument: 'argument()', callerHelper: 'function argument() internal pure returns(bool) { return false; }' }, true],
+    ['rejecting caller input', { argument: 'argument()', callerHelper: 'function argument() internal pure returns(bool) { require(false, "caller input"); return false; }' }, false, 'CALL_INPUT_REVERTS'],
+    ['unsupported input effects', { argument: 'argument()', callerHelper: 'function argument() internal returns(bool) { completed = true; return false; }' }, false, 'CALL_INPUT_EFFECT_UNKNOWN'],
+    ['compound input selection', { argument: 'true ? argument() : false', callerHelper: 'function argument() internal pure returns(bool) { require(false, "caller input"); return false; }' }, false, 'CALL_INPUT_EFFECT_UNKNOWN']
+  ];
+  for (const [name, options, ready, code] of variants) await t.test(name, async t => {
+    const { draft, call, catalog } = await semanticFixture(t, { catches: 'catch Error(string memory) {}', guard: 'require(false, "external failure");', ...options });
+    const result = checkedPipeline(draft, true);
+    assert.equal(result.gate.ready, ready, JSON.stringify(result.gate.details));
+    assert.equal(!!result.exposed.causal, ready);
+    assert.equal(policy.gate(JSON.parse(JSON.stringify(result.accepted))).ready, ready, 'Saved replay cannot inherit the invalid catch route');
+    assert.equal(call.failure, 'try-catch');
+    if (code) assert.ok(result.gate.details.some(problem => problem.code === code), JSON.stringify(result.gate.details));
+    if (options.callerHelper) {
+      const nested = draft.sources.find(unit => unit.id === 'caller').relatedCalls.find(site => site.name === 'argument');
+      assert.equal(nested.failure, 'propagates');assert.equal(nested.tryContext, undefined);
+      assert.ok(draft.sources.find(unit => unit.id === 'argument-helper').complete, 'The material helper body is actually supplied');
+    }
+    if (code === 'CALL_INPUT_REVERTS') {
+      const problems = result.gate.details.filter(problem => problem.code === code);
+      assert.ok(problems.some(problem => /before.*begins/.test(problem.reason)));
+      assert.ok(problems.some(problem => /return\/catch continuation/.test(problem.reason)), 'The later committed caller event cannot borrow an impossible return');
+      assert.ok(problems.every(problem => problem.kind === 'structural'));
+      const engine = require('../extension/investigation-engine'), saved = structuredClone(result.accepted);
+      const request = { finding: { title: 'Fictional nested input failure', summary: 'Inspect the caller-side argument before external dispatch.' } }, issue = { reportText: request.finding.summary };
+      saved.snapshot = engine.snapshot(catalog, request, issue); saved.semanticInput = require('../extension/semantic-input').input(request, issue);
+      saved.checkedContentHash = require('../extension/review-content').hash(require('../extension/review-content').project(saved));
+      saved.runs = [{ phase: 'challenge', outcome: 'completed', resultAccepted: true, requestId: 'scripted-old-check' }];
+      saved.publication = { ...saved.publication, ready: true, details: [], problems: [], diagnosticsVersion: 'tutorial-diagnostics-v4', diagnosticsIdentity: 'scripted-old-input-boundary' };
+      saved.publication.digest = policy.digest(saved);
+      const causal = structuredClone(saved.causal), runs = structuredClone(saved.runs);
+      engine.revalidate(saved, catalog, request, issue);
+      assert.equal(saved.phase, 'blocked'); assert.equal(saved.publication.ready, false);
+      assert.deepEqual(saved.causal, causal); assert.deepEqual(saved.runs, runs);
+      assert.equal(saved.localDiagnosticHistory.at(-1).providerRequests, 0);
+      assert.equal(policy.expose(saved).causal, undefined, 'Old received semantic records cannot authorize the newly contradicted route');
+    }
+  });
+});
+
 test('a callback still needs exact receiver dispatch, caller identity and the same transaction', { skip: !native }, async t => {
   const { draft } = await dispatchFixture(t), link = draft.causal.relationships[0];
   link.kind = 'callback';
@@ -552,6 +597,7 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   guard = IGuard(address(new Guard()));
  }
  ${options.inherited ? '}\ncontract Caller is Base {\n bool completed;' : ''}
+ ${options.callerHelper || ''}
  function enter(${options.entryParameter || (options.unknown ? 'bool unknown' : '')}) external ${options.returns ? 'returns (bool)' : ''}{
   ${options.entrySetup ? options.entrySetup + '\n  ' : ''}${local ? 'IGuard guard = IGuard(address(new Guard()));\n  ' + options.local + '\n  ' : ''}${options.catches !== undefined ? `try guard.finish(${options.argument || (options.unknown ? 'unknown' : 'false')}) {} ` + options.catches : `guard.finish(${options.drift ? 'true' : 'false'});`}
   ${options.drift ? 'guard.finish(false);' : ''}
@@ -569,6 +615,7 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   const draft = callDraft('    finish(false);');
   draft.sources = [caller, callee, constructor, declaration];
   if (options.helper) draft.sources.push(unit(catalog, catalog.named('reject')[0], 'helper'));
+  if (options.callerHelper) draft.sources.push(unit(catalog, catalog.named('argument')[0], 'argument-helper'));
   const lineOf = (unit, text) => unit.source.line + unit.code.split('\n').findIndex(line => line.includes(text));
   draft.evidence = [note(caller, 'call', call.line), note(callee, 'guard', lineOf(callee, options.failureNeedle || options.guard || 'require('), 'contradicts'),
     note(constructor, 'construction', lineOf(constructor, 'guard =')), note(declaration, 'immutable', declaration.source.line),
@@ -577,6 +624,7 @@ contract ${options.inherited ? 'Base' : 'Caller'}${options.unavailableBase ? ' i
   if (options.reassign) draft.evidence.push(note(callee, 'assignment', lineOf(callee, typeof options.reassign === 'string' ? options.reassign : 'accepted = false')));
   if (options.entrySetup) draft.evidence.push(note(caller, 'entry-assignment', lineOf(caller, options.entrySetup)));
   if (options.helper) draft.evidence.push(note(draft.sources.at(-1), 'helper-effect', draft.sources.at(-1).source.line));
+  if (options.callerHelper) { const helper = draft.sources.find(unit => unit.id === 'argument-helper'); draft.evidence.push(note(helper, 'input-helper-effect', helper.source.line)); }
   const ids = draft.evidence.map(item => item.id), [entry, finish] = draft.causal.events;
   entry.callSiteId = call.id; entry.receiver = 'Caller';
   finish.receiver = 'guard'; finish.caller = 'Caller';

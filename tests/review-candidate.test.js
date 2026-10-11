@@ -398,8 +398,18 @@ test('completed check disagreement alone unlocks repair; absent coverage and tim
   f.draft=ready;
   await engine.advance({...f,invoke:async input=>({value:{...verification(input),result:'repair',problems:['Clarify approval-guard explanation against its supplied require.']},audit:{phase:'challenge',outcome:'completed',requestId:'V'}})});
   assert.equal(f.draft.reviewCandidate.state,'repair-requested');
-  await engine.advance({...f,invoke:async input=>{assert.equal(input.reviewPurpose,'candidate-repair');return{value:{mode:format.CANDIDATE,updates:[]},audit:{phase:'challenge',outcome:'completed',requestId:'R'}};}});
+  await engine.advance({...f,invoke:async input=>{
+    assert.equal(input.reviewPurpose,'candidate-repair');
+    assert.equal(input.hostReview.version,require('../extension/review-feedback').VERSION);
+    assert.equal(input.hostReview.candidateHash,input.candidateIdentity.candidateHash);
+    const metrics=provider.requestMetrics(input);
+    assert.equal(metrics.schemaContract,require('../extension/provider-settings').schemaContract,'The actual outgoing repair packet must pass wire preflight, not only local response validation');
+    assert.ok(metrics.requestBytes>0);
+    return{value:{mode:format.CANDIDATE,updates:[]},audit:{phase:'challenge',outcome:'completed',requestId:'R'}};
+  }});
   assert.equal(f.draft.reviewCandidate.repairCount,1);
+  assert.equal(f.draft.reviewCandidate.verification,null,'Repair authoring still requires its fresh complete V');
+  assert.equal(policy.gate(f.draft).ready,false);
   await engine.advance({...f,invoke:async input=>{assert.equal(input.reviewPurpose,'candidate-reverification');return{value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V2'}};}});
   assert.equal(f.draft.phase,'ready',f.draft.error);
 });

@@ -230,7 +230,8 @@ function runTransport(input, options, spec) {
       stderrEvents: [], stderrEventCount: 0, droppedStderrEvents: 0, timeoutContext: null, timeoutDiagnostic: null } };
   return new Promise((resolve, reject) => {
     let child, lifecycle, stdout = '', buffer = '', final = null, usage = null, stopped = null, done = false,
-      closed = false, force, teardownDeadline, monitor, timer, providerError = '', stopStartedAt = null;
+      closed = false, force, teardownDeadline, monitor, timer, providerError = '', stopStartedAt = null,
+      turn = 0, finalTurn = null, completedTurn = null;
     const detached = process.platform !== 'win32';
     const graceMs = Math.max(10, Math.min(2000, options.terminationGraceMs ?? 2000));
     const settleMs = Math.max(20, Math.min(1000, options.terminationSettleMs ?? 1000));
@@ -303,6 +304,18 @@ function runTransport(input, options, spec) {
       // the extension host alive after the finite cleanup deadline.
       child?.stdin?.destroy(); child?.stdout?.destroy(); child?.stderr?.destroy(); child?.unref?.();
     };
+    // A finished structured turn and process exit are separate boundaries.
+    // Only a complete turn received within the original deadline can survive
+    // exit lag; ordinary semantic/schema admission still happens in the host.
+    const matchingCompletedTurn = () => completedTurn && completedTurn.turn === turn && finalTurn === turn &&
+      completedTurn.final === final && audit.monotonic.finalContentMs <= completedTurn.at &&
+      usage && typeof usage === 'object' && !Array.isArray(usage);
+    const completedValue = () => {
+      if (spec.provider !== 'codex' || spec.textContract || !matchingCompletedTurn() || completedTurn.at > timeoutMs ||
+          providerError || audit.toolEvents || options.signal?.aborted ||
+          !audit.inputWrite.completedAt || buffer.trim()) return null;
+      try { return { value: JSON.parse(final) }; } catch { return null; }
+    };
     const confirmStop = () => {
       if (done || !stopped) return true;
       const state = lifecycle?.status(closed, true) || { confirmed: !child?.pid, reason: 'No provider process was started.' };
@@ -311,10 +324,22 @@ function runTransport(input, options, spec) {
       if (!state.confirmed || child?.pid && !closed) return false;
       audit.teardown = { ...lifecycle?.record, ...state, requestedAt: stopStartedAt, confirmedAt: new Date().toISOString(),
         triggerKind: stopped.failureKind, forced: !!audit.teardown?.forced, streamsClosed: closed };
+      if (stopped.failureKind === 'completion-cleanup') {
+        const received = completedValue();
+        if (received && (child?.exitCode == null || child.exitCode === 0)) {
+          audit.usage = usage;
+          audit.responseCompletion = { state: 'received-before-deadline', turnCompletedAt: completedTurn.receivedAt,
+            processExit: 'deadline-cleanup-confirmed', semanticApproval: 'not-implied' };
+          discardPipes(); complete(null, child?.exitCode ?? null, received.value); return true;
+        }
+        stopped = failure('Completed response could not be retained safely after provider exit cleanup. No analysis was accepted.', 'transport');
+      }
       discardPipes(); complete(stopped, child?.exitCode ?? null); return true;
     };
     const stop = error => {
-      stopped ||= error;
+      // Cancellation or any later stream/safety failure wins over a completed
+      // turn while its owned process is still being cleaned up.
+      if (!stopped || stopped.failureKind === 'completion-cleanup') stopped = error;
       if (done || stopStartedAt) return;
       stopStartedAt = new Date().toISOString();
       audit.monotonic.stopRequestedMs=elapsed();
@@ -340,7 +365,7 @@ function runTransport(input, options, spec) {
     };
     const cancel = () => { audit.cancellationReason = 'investigation-context-changed'; stop(failure('Source review cancelled because the investigation context changed.', 'cancelled', 'INVESTIGATION_SUPERSEDED')); };
     const parseEvent = line => {
-      if (!line.trim() || stopped) return;
+      if (!line.trim() || stopped && stopped.failureKind !== 'completion-cleanup') return;
       let event;
       try { event = JSON.parse(line); }
       catch { stop(failure('Codex returned an invalid event stream.', 'transport')); return; }
@@ -371,14 +396,18 @@ function runTransport(input, options, spec) {
       progress(eventType, !!content);
       // Nonterminal error events can announce a reconnect. A later completed
       // turn supersedes that transient transport notice, not its audit history.
-      if (event.type === 'turn.completed') { usage = event.usage; providerError = ''; }
+      if (event.type === 'turn.started') { turn++; completedTurn = null; }
+      if (event.type === 'turn.completed') {
+        usage = event.usage; audit.usage = usage || null; providerError = '';
+        completedTurn = finalTurn === turn && final !== null ? { turn, final, at: elapsed(), receivedAt: diagnostic.at } : null;
+      }
       if (reportsError) providerError = `Codex reported ${diagnosticReason(audit.diagnostics.lastReportedError)}. Details are in the provider diagnostics.`;
       if (event.type === 'turn.failed') stop(failure(providerError, 'provider-exit'));
       if (event.item && !['agent_message', 'reasoning', 'error'].includes(event.item.type)) {
         audit.toolEvents++; stop(failure('Codex attempted a non-text action. Source-only review rejected; no model-generated action was accepted.', 'unsafe-action'));
       }
       if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
-        final = event.item.text; audit.finalReceived = true;
+        final = event.item.text; finalTurn = turn; completedTurn = null; audit.finalReceived = true;
         audit.monotonic.finalContentMs=elapsed();
         spec.captureResponse?.(final);
         try { JSON.parse(final); audit.finalStructuredContentAt ||= new Date().toISOString(); } catch { /* A malformed final value is classified after exit. */ }
@@ -404,6 +433,11 @@ function runTransport(input, options, spec) {
       audit.deadline.callbackElapsedMs=elapsed();
       audit.deadline.callbackLatenessMs=Math.max(0,audit.deadline.callbackElapsedMs-timeoutMs);
       emitStderr(false);
+      if (completedValue()) {
+        audit.deadline.responseCompletedBeforeDeadline = true;
+        stop(failure('The structured provider turn completed before the deadline; confirming owned process cleanup before retaining its response.', 'completion-cleanup'));
+        return;
+      }
       const reported = observedDiagnostic();
       audit.diagnostics.timeoutDiagnostic = reported || null;
       audit.diagnostics.timeoutContext = reported ? reported.stream === 'stderr' ? 'stderr-diagnostic' : 'provider-reported-error' : audit.firstSubstantiveContentAt ? 'incomplete-result' : 'silent-deadline';
@@ -412,7 +446,7 @@ function runTransport(input, options, spec) {
     }, audit.deadline.timerDelayMs);
     options.signal?.addEventListener('abort', cancel, { once: true }); if (options.signal?.aborted) cancel();
     const receive = (chunk, stderrStream) => {
-      if (done || stopped) return;
+      if (done || stopped && stopped.failureKind !== 'completion-cleanup') return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk), key = stderrStream ? 'stderrBytes' : 'stdoutBytes';
       audit[key] += bytes.length; audit.outputBytes = audit.stdoutBytes + audit.stderrBytes;
       if (stderrStream) stderrHash.update(bytes);
@@ -451,7 +485,13 @@ function runTransport(input, options, spec) {
     child.on('close', code => {
       if (done) return;
       closed = true; audit.processExitedAt ||= new Date().toISOString();
-      if (stopped) { confirmStop(); return; }
+      if (stopped) {
+        if (stopped.failureKind === 'completion-cleanup') {
+          try { append(outDecoder.decode()); finishStderr(); const tail=buffer;buffer='';parseEvent(tail); }
+          catch { stop(failure('The provider ended with incomplete UTF-8 bytes; the response was not accepted.', 'transport')); }
+        }
+        confirmStop(); return;
+      }
       const settle = (error, value) => {
         const state = lifecycle.status(true, false);
         if (!state.confirmed) { stop(error || failure('The provider returned text, but an owned descendant is still running after its launcher exited.', 'transport')); return; }
@@ -466,7 +506,7 @@ function runTransport(input, options, spec) {
           parseEvent(buffer);
           if (stopped) throw stopped;
           if (code !== 0 || providerError) throw failure(providerError || `Codex exited ${code}${audit.stderrBytes ? ` after reporting ${diagnosticReason(observedDiagnostic())}` : ''}. Details are in the provider diagnostics.`, 'provider-exit');
-          if (!final || !usage) throw failure('Codex exited without a completed structured result and usage record.', 'transport');
+          if (!final || !matchingCompletedTurn()) throw failure('Codex exited without a final result and usage from the same completed turn.', 'transport');
           audit.usage = usage;
           if (spec.textContract) { settle(null, final); return; }
           let value; try { value = JSON.parse(final); } catch { throw failure('Codex returned malformed structured JSON. The earlier draft is preserved.', 'parse'); }

@@ -539,6 +539,46 @@ function catchContinuation(source, clause) {
   if (clean.split(';').filter(value => value.trim()).every(value => /^\s*[A-Za-z_$][\w$]*\s*=\s*(?:true|false|0|0x0)\s*$/.test(value))) return 'continues';
   return 'unknown';
 }
+function callInputPath(source, site, values, units) {
+  const inputs = [site.receiverSpan, ...(site.options || []).map(item => item.span), ...(site.argumentSpans || []).map(item => item.span)].filter(Boolean);
+  const nested = unitSites(source).filter(call => call.id !== site.id && inputs.some(range => range.start <= call.span.start && range.end >= call.span.end));
+  // address/payable wrappers are not invocations; their nested argument calls
+  // still appear independently. Do not treat other unresolved syntax as safe.
+  const calls = nested.filter(call => exactSite(source, call.id) || call.receiverExpression || !['address', 'payable'].includes(call.name));
+  if (!calls.length) return { reachable: true };
+  const unknown = reason => ({ reachable: null, kind: 'capability', code: 'CALL_INPUT_EFFECT_UNKNOWN', reason });
+  if (calls.length !== 1) return unknown('The exact call inputs contain multiple nested evaluations; their completion and effects are not established before dispatch.');
+  const call = calls[0], exact = exactSite(source, call.id), range = inputs.find(range => range.start === call.span.start && range.end === call.span.end);
+  if (!range) return unknown('The nested input call is part of a larger expression. Its branch, ordering and remaining expression effects are not established before dispatch.');
+  if (!exact || exact.receiverExpression || exact.isNew || exact.relationship !== 'call' || exact.targets?.length !== 1 || exact.argumentSpans.length || exact.options.length)
+    return unknown('The nested input evaluation is not an exact argumentless internal helper with a unique implementation. It cannot be treated as a caught failure of the outer call.');
+  const target = exact.targets[0], matches = [...units.values()].filter(unit => unit.complete && !unit.contextKind && unit.source.file === target.file &&
+    unit.source.line === target.line && owner(unit) === target.contract && require('./report-content').functionSignature(unit.code, unit.name.split('::').at(-1)) === target.signature);
+  if (matches.length !== 1) return { reachable: null, kind: 'local-reading', code: 'CALL_INPUT_SOURCE_MISSING',
+    reason: `Read the complete nested input helper ${target.contract}::${target.signature} at ${target.file}:${target.line}; the outer call has not been shown to begin.` };
+  const helper = matches[0], body = functionParts(helper.code, helper.name.split('::').at(-1));
+  if (!body || !/\b(?:internal|private)\b/.test(body.header) || !/\bpure\b/.test(body.header) || /\bvirtual\b/.test(body.header) || parameterNames(body.header).length)
+    return unknown('The nested input helper is outside the bounded argumentless, non-virtual pure subset. Its caller-side effects must be established before the outer invocation.');
+  // Pure input helpers do not inherit caller lexical variables or storage
+  // assumptions. The ordinary path interpreter still checks their full header
+  // (including modifiers) and the actual body before recognizing a failure.
+  const result = sourcePath(helper, Infinity, new Map(), units, { complete: true, localWritesOnly: true });
+  if (result.outcome === 'failure') return { ...result, reachable: false, kind: 'structural', code: 'CALL_INPUT_REVERTS', source: helper.source,
+    reason: `${helper.name} reverts while evaluating the caller's input, before ${site.name} begins.${site.tryContext ? ' The outer try/catch cannot catch this caller-frame failure.' : ''}` };
+  if (result.reachable === null) return { ...result, reason: `The nested input ${helper.name} has not been shown to complete before dispatch. ${result.reason || ''}` };
+  // Do not infer completion from a return whose expression could itself fail,
+  // or invent its value. Broader expression effects remain unsupported.
+  const literal = /^\s*return\s+(true|false|(?:0|[1-9]\d*))\s*;\s*$/.exec(lexicalCode(body.body));
+  if (result.outcome === 'return' && literal && (['true', 'false'].includes(literal[1]) || execution.scalar(literal[1], new Map()) !== null)) return { reachable: true };
+  return unknown(`The return/effects of nested input ${helper.name} exceed the supported literal-return completion check; no outer-call or catch execution is established.`);
+}
+function callPath(source, site, event, units, evidence) {
+  const path = sourcePath(source, site.span.start, callerConstraints(event, source, units, evidence), units,
+    { noOverflow: (event.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
+  if (path.reachable !== true) return path;
+  const input = callInputPath(source, site, path.values, units);
+  return input.reachable === true ? path : { ...path, ...input, inputEvaluation: true };
+}
 function scenarioFailure({ site, source, destination, to, events, evidence, link, fail, units }) {
   if (!site.tryContext) return site.failure;
   const context = site.tryContext;
@@ -568,6 +608,11 @@ function validateTransition({ draft, link, from, to, source, destination, units,
     const site = exactSite(destination, link.callSiteId);
     if (!site || !link.evidence.some(id => covers(evidence.get(id), destination, site.span))) fail(`${from.title}: the return location is not linked to its exact original call.`);
     if (JSON.stringify(link.dispatch) !== JSON.stringify(incoming[0].dispatch)) fail(`${from.title}: return dispatch differs from the invocation that entered this function.`);
+    const originalCaller = events.find(event => event.id === incoming[0].from);
+    if (site) {
+      const path = callPath(destination, site, originalCaller, units, evidence);
+      if (path.reachable !== true) { fail(`${from.title}: no return/catch continuation is established because the outer invocation was not reached. ${path.reason}`, path.kind || 'capability', { code: path.code || 'CALL_PATH_UNKNOWN', source: path.source || destination.source }); return; }
+    }
     const entering = events.find(event => event.id === incoming[0].to);
     const handling = site && scenarioFailure({ site, source: destination, destination: source, to: entering, events, evidence, link: incoming[0], fail, units });
     if (from.effect === 'rolled-back' && handling === 'propagates') fail(`${from.title}: an uncaught failed call propagates reversion; it cannot return normally to the caller.`);
@@ -598,9 +643,11 @@ function validateTransition({ draft, link, from, to, source, destination, units,
   const site = exactSite(source, link.callSiteId), destinationParts = destination && functionParts(destination.code, destination.name.split('::').at(-1));
   if (!site || from.callSiteId !== link.callSiteId) { fail(`${from.title}: anchor this handoff and event to one exact current call-site ID. Name or line matches cannot identify an invocation.`); return; }
   const anchor = from.anchor || evidence.get(from.evidenceId);
-  const path = sourcePath(source, site.span.start, callerConstraints(from, source,units,evidence), units,
-    { noOverflow: (from.conditions || []).some(condition => /\bdo not overflow\.?$/.test(condition)) });
-  if (path.reachable !== true) fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`,path.kind||'capability',{code:path.code||'CALL_PATH_UNKNOWN',source:path.source||source.source});
+  const path = callPath(source, site, from, units, evidence);
+  if (path.reachable !== true) {
+    fail(`${from.title}: cannot establish the path to this exact call. ${path.reason}`,path.kind||'capability',{code:path.code||'CALL_PATH_UNKNOWN',source:path.source||source.source});
+    if (path.inputEvaluation) return; // No callee/catch may borrow a failed input evaluation.
+  }
   if(path.commitment==='reverts'&&events.some(e=>e.transaction===from.transaction&&e.effect==='committed'))fail(`${from.title}: the body is reached, but its modifier postlude reverts; this transaction cannot commit.`,'structural',{code:'MODIFIER_COMMITMENT',source:path.modifier.source});
   if (!covers(anchor, source, site.span) || anchor.source.line !== site.span.line || anchor.source.endLine !== site.span.endLine) fail(`${from.title}: its checked code must cover exactly this call's lines, not another call or a whole function.`);
   if (from.invocationId === to.invocationId) fail(`${from.title}: entering another function needs a distinct invocation, even when internal msg.sender is unchanged.`);

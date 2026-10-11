@@ -65,6 +65,42 @@ test('production coordinator waits for shared capacity without reserving, then g
   assert.ok(f.runner.published(engine.read(f.root, 'I-1')));
   await f.runner.ensure(); assert.equal(f.calls.length, 2, 'Opening a ready artifact does not acquire or dispatch another provider request.');
 });
+test('ordinary coordinator persists a completed turn after actual process exit lag and reopens without regeneration',{skip:!native},async t=>{
+  const provider=require('../extension/semantic-provider'),{spawn}=require('node:child_process');
+  const f=await fixture(t,1,async(input,options)=>{
+    const rows=[{type:'turn.started'},{type:'item.completed',item:{type:'agent_message',text:JSON.stringify(response(input))}},
+      {type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}].map(JSON.stringify).join('\n')+'\n';
+    const linger=input.phase==='generate';
+    return provider.runProvider(input,{...options,timeoutMs:600,terminationGraceMs:50,terminationSettleMs:100,
+      spawn:(_exe,_args,settings)=>spawn(process.execPath,['-e',`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(${JSON.stringify(rows)});${linger?'setInterval(()=>{},1000);':''}});`],settings)});
+  });
+  await f.runner.ensure();
+  assert.deepEqual(f.calls.map(x=>x.phase),['generate','challenge']);assert.equal(f.runner.state.resources.requests,2);
+  const draft=engine.read(f.root,'I-1'),first=draft.runs.find(r=>r.phase==='generate');
+  assert.equal(first.outcome,'completed');assert.equal(first.teardown.confirmed,true);assert.equal(first.teardown.triggerKind,'completion-cleanup');
+  assert.equal(first.deadline.milliseconds,600);assert.ok(first.retainedResponse);assert.ok(f.runner.published(draft));
+  const receipts=Object.values(f.runner.state.resources.receipts);assert.equal(receipts.length,2);assert.ok(receipts.every(x=>x.hostAcceptedAt));
+  const reopened=new ReportPreparation(f.root,f.options);t.after(()=>reopened.dispose());await reopened.ensure();
+  assert.ok(reopened.published(engine.read(f.root,'I-1')));assert.equal(f.calls.length,2);assert.equal(reopened.state.resources.requests,2);
+});
+test('ordinary coordinator does not admit malformed or schema-invalid exit-lag content and preserves spent accounting',{skip:!native},async t=>{
+  const provider=require('../extension/semantic-provider'),{spawn}=require('node:child_process');
+  for(const raw of ['{invalid','{}'])await t.test(raw==='{}'?'unadmitted structured answer':'malformed final',async t=>{
+    const f=await fixture(t,1,async(input,options)=>{
+      const rows=[{type:'item.completed',item:{type:'agent_message',text:raw}},{type:'turn.completed',usage:{output_tokens:1}}].map(JSON.stringify).join('\n')+'\n';
+      return provider.runProvider(input,{...options,timeoutMs:400,terminationGraceMs:30,terminationSettleMs:50,
+        spawn:(_exe,_args,settings)=>spawn(process.execPath,['-e',`process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(${JSON.stringify(rows)});setInterval(()=>{},1000);});`],settings)});
+    });
+    f.options.configuration=()=>({provider:'codex',requestLimit:2,findingRequestLimit:2,workers:1});
+    await f.runner.ensure();
+    assert.equal(f.calls.length,1);assert.equal(f.runner.state.resources.requests,1);
+    const receipt=Object.values(f.runner.state.resources.receipts)[0];assert.equal(!!receipt.hostAcceptedAt,false);
+    assert.equal(receipt.audit.outcome,raw==='{}'?'completed':'failed');assert.equal(receipt.audit.teardown.confirmed,true);
+    assert.equal(!!receipt.audit.retainedResponse,raw==='{}','Only a complete structured response reaches ordinary durable retention, never approval.');
+    const draft=engine.read(f.root,'I-1');assert.equal(f.runner.published(draft),false);
+    await f.runner.ensure();assert.equal(f.calls.length,1);assert.equal(f.runner.state.resources.requests,1);
+  });
+});
 test('explicit deadline rearms an early callback without introducing a default deadline', t=>{
   let clock=4000,callbacks=[],writes=0;
   t.mock.method(Date,'now',()=>clock);t.mock.method(global,'setTimeout',(fn,delay)=>{callbacks.push({fn,delay});return callbacks.length;});t.mock.method(global,'clearTimeout',()=>{});

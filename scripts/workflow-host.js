@@ -33,7 +33,7 @@ const { analyze } = require(path.join(productionExtension, 'runner-adapter'));
 const { SourceCatalog } = require(path.join(productionExtension, 'source'));
 const { importReport } = require(path.join(productionExtension, 'report'));
 
-function boardClass(storage, invoke, trace) {
+function boardClass(storage, invoke, trace, measure) {
   // A read-only external workspace gets an isolated, in-memory canvas store.
   // Never replace process-wide fs/store modules or follow its request watcher.
   const filename = path.join(productionExtension, 'board.js');
@@ -52,11 +52,20 @@ function boardClass(storage, invoke, trace) {
     }
     if (name === './investigation-engine') return { ...value,
       ...(invoke ? { advance: options => value.advance({ ...options, invoke }) } : {}),
+      ...(measure ? Object.fromEntries(['read','compatible'].map(key=>[key,(...args)=>measure(`saved-investigation.${key}`,()=>value[key](...args))])) : {}),
       ...(trace ? { validateCurrent: (...args) => { const start = performance.now(); trace('saved-guide-validation-start');
         try { return value.validateCurrent(...args); } finally { trace('saved-guide-validation-end', { durationMs: performance.now() - start }); } } } : {}) };
+    if(measure&&(name==='./guide-policy'||name==='./review-feedback')){
+      const keys=name==='./guide-policy'?['gate','evaluate','expose']:['diagnostics'];
+      return {...value,...Object.fromEntries(keys.map(key=>[key,(...args)=>measure(`${name.slice(2)}.${key}`,()=>value[key](...args))]))};
+    }
     return value;
   };
   loaded._compile(fs.readFileSync(filename, 'utf8'), filename);
+  if(measure)for(const key of ['open','assertCurrent','inspectBlocker','inspectAssessmentEvidence','focusInvestigation','exposed','libraryObservation']){
+    const original=loaded.exports.TriageBoard.prototype[key];
+    loaded.exports.TriageBoard.prototype[key]=function(...args){return measure(`board.${key}`,()=>original.apply(this,args));};
+  }
   return loaded.exports.TriageBoard;
 }
 
@@ -110,7 +119,13 @@ async function start(options = {}) {
   const pending = [], received = [], opened = [], logs = [], errors = [], assets = new Map(), checkpoints = new Map();
   let html = '', board, panel, origin, selection = Promise.resolve(), serial = 0, productionEditor, materializeBoard;
   const productionTrace = [];
-  const trace = (event, fields = {}) => productionTrace.push({ event, at: Date.now(), ...fields });
+  const trace = (event, fields = {}) => productionTrace.push({ event, at: Date.now(), monotonicMs:performance.now(), ...fields });
+  // Disposable-harness measurement only. Durations can nest; they must not be
+  // summed as disjoint CPU time or confused with model service time.
+  const measure=options.interactionTiming?(event,action)=>{
+    const startedMs=performance.now();const done=()=>trace('interaction-stage',{stage:event,startedMs,durationMs:performance.now()-startedMs});
+    try{const value=action();if(value&&typeof value.then==='function')return value.finally(done);done();return value;}catch(error){done();throw error;}
+  }:null;
   protocolTrace = trace;
   const uri = file => ({ fsPath: file, toString: () => file });
   const disposable = () => ({ dispose() {} });
@@ -210,7 +225,7 @@ async function start(options = {}) {
   // boundary. Controlled and recorded responses are deliberately unmarked.
   if (invoke && !options.invoke && !replay && !mixedInvoke) invoke.isProviderTransport = true;
   if(options.invoke)invoke=require('./fixtures/authoring-output').invoke(invoke);
-  const TriageBoard = boardClass(storage, invoke, options.productionSelection ? trace : null);
+  const TriageBoard = boardClass(storage, invoke, options.productionSelection ? trace : null,measure);
   let reportPreparation, coordinatorOptions;
   if (options.reportPreparation && !options.productionSelection) {
     if (readOnly) throw new Error('Persistent report preparation requires a fresh fictional harness project. Use prepare-report.js for an explicitly requested real report run.');
@@ -250,7 +265,9 @@ async function start(options = {}) {
     workspace: { isTrusted: true, workspaceFolders: [{ uri: uri(root) }], getConfiguration: () => ({ get: (key, fallback) => configuration[key] ?? fallback,
       update: async (key, value) => { configuration[key] = value; } }),
       openTextDocument: async value => {
+        const startedMs=performance.now();
         const text = fs.readFileSync(value.fsPath, 'utf8'), lines = text.split(/\r?\n/);
+        if(measure)trace('interaction-stage',{stage:'simulated-editor.openTextDocument',startedMs,durationMs:performance.now()-startedMs});
         return { uri: value, isDirty: false, lineCount: lines.length, getText: () => text,
           lineAt: line => ({ text: lines[line] || '', firstNonWhitespaceCharacterIndex: Math.max(0, (lines[line] || '').search(/\S/)) }) };
       } },
@@ -281,6 +298,7 @@ async function start(options = {}) {
               const start = performance.now(), bytes = Buffer.byteLength(JSON.stringify(message));
               pending.push(structuredClone(message));
               if (message.type === 'triage:load') trace('load-payload', { durationMs: performance.now() - start, bytes, findingId: message.issueId, token: message.token });
+              if(measure&&['triage:load','triage:blockerFocus','triage:assessmentFocus','triage:investigationFocus'].includes(message.type))trace('editor-message-queued',{type:message.type,navigationId:message.navigationId||null,bytes,durationMs:performance.now()-start});
               return true;
             }
           } };
@@ -294,7 +312,7 @@ async function start(options = {}) {
       const available = new Promise(resolve => { materializeBoard = resolve; });
       productionEditor ||= require('./production-editor-io').activateProduct({ extension: productionExtension, upstream, root, api,
         Board: TriageBoard, invoke, storage, readOnly, onBoard: value => { board = value; materializeBoard?.(); }, onCoordinator: value => { reportPreparation = value; },
-        onSelection: value => { selection = value.catch(record); }, trace });
+        onSelection: value => { selection = value.catch(record); }, trace,measure });
       // Serve the actual panel once created; the product command still awaits
       // its real webview ready event. Waiting for that before serving HTML
       // deadlocks simulated IO, unlike a real editor which serves it immediately.
@@ -314,8 +332,12 @@ async function start(options = {}) {
     }
   }
   const server = http.createServer(async (request, response) => {
+    const requestStartedMs=performance.now();
     const address = new URL(request.url, origin || 'http://127.0.0.1');
-    const json = (value, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
+    const json = (value, status = 200) => { const serializationStartedMs=performance.now(),encoded=JSON.stringify(value),serializationMs=performance.now()-serializationStartedMs;
+      response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(encoded);
+      if(measure&&address.pathname!=='/timings')trace('harness-response',{route:address.pathname,status,startedMs:requestStartedMs,durationMs:performance.now()-requestStartedMs,serializationMs,bytes:Buffer.byteLength(encoded)});
+    };
     if (request.method === 'GET' && address.pathname === '/') {
       response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }); response.end(html); return;
     }
@@ -329,6 +351,11 @@ async function start(options = {}) {
       return json({ cursor: pending.length, messages: pending.slice(after) });
     }
     if (request.method === 'GET' && address.pathname === '/clock') return json({ monotonicMs: performance.now() });
+    if(request.method==='GET'&&address.pathname==='/timings'){
+      if(!measure)return json({error:'Interaction timing was not enabled.'},404);
+      const after=Math.max(0,Number(address.searchParams.get('after'))||0);
+      return json({clock:'host performance.now; browser uses its separate monotonic clock',monotonicMs:performance.now(),cursor:productionTrace.length,providerCalls:providerCalls.length,trace:productionTrace.slice(after)});
+    }
     if (request.method === 'GET' && address.pathname === '/state') {
       const snapshots = {};
       for (const issue of storage.library(root)) { const saved = storage.readBoard(root, issue.id); if (saved) snapshots[issue.id] = saved; }
@@ -349,6 +376,7 @@ async function start(options = {}) {
         if (message.type === 'triage:investigationTest' && !options.allowExistingRegression) throw new Error('Existing-test execution requires an explicit integration-run option.');
         if (readOnly && ['triage:save', 'triage:refresh', 'triage:reportControl', 'triage:investigationRetry', 'triage:investigationEnable'].includes(message.type)) throw new Error('Read-only workspace: review writes, refresh and provider admission controls are disabled.');
         received.push({ type: message.type, issueId: message.issueId, token: message.token });
+        if(measure)trace('editor-message-received',{type:message.type,navigationId:message.navigationId||null});
         // Mirror VS Code's event delivery: do not await a selection that waits
         // for a later webview render acknowledgement.
         for (const callback of panel.callbacks) Promise.resolve(callback(message)).catch(record);
@@ -446,6 +474,7 @@ if (require.main === module) {
     teachingFixture: process.argv.includes('--teaching-fixture') ? process.argv[process.argv.indexOf('--teaching-fixture') + 1] : null,
     assessmentFixture:process.argv.includes('--assessment-fixture')?process.argv[process.argv.indexOf('--assessment-fixture')+1]:null,
     productionSelection: process.argv.includes('--production-selection'),
+    interactionTiming: process.argv.includes('--interaction-timing'),
     report: process.argv.includes('--report') ? process.argv[process.argv.indexOf('--report') + 1] : null,
     reportFinding: process.argv.includes('--report-finding') ? process.argv[process.argv.indexOf('--report-finding') + 1] : null,
     qualityCase: qualityIndex < 0 ? null : process.argv[qualityIndex + 1],

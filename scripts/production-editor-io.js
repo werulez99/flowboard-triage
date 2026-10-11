@@ -2,7 +2,7 @@
 // Minimal editor IO for the ACTUAL extension activation/selection/cache route.
 // No replacement cache, selection implementation, snapshot or Ready response.
 const fs = require('node:fs'), path = require('node:path'), Module = require('node:module');
-function activateProduct({ extension, upstream, root, api, Board, invoke, storage, readOnly, onBoard, onCoordinator, onSelection, trace }) {
+function activateProduct({ extension, upstream, root, api, Board, invoke, storage, readOnly, onBoard, onCoordinator, onSelection, trace,measure }) {
   const commands = new Map(), subscriptions = [], disposable = () => ({ dispose() {} });
   let initialPreparation;
   let selectedIO = null;
@@ -15,7 +15,7 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
     finally {
       if (selectedIO) {
         const name=String(file).replaceAll('\\','/');
-        const kind=name.endsWith('.sol')?'source':name.includes('/.flowboard/findings/')?'findingDraft':name.includes('/.flowboard/investigations/')?'investigation':name.endsWith('/.flowboard/report.json')?'report':'other';
+        const kind=name.endsWith('.sol')?'source':name.includes('/.flowboard/findings/')?'findingDraft':name.includes('/.flowboard/investigations/')?'investigation':name.includes('/.flowboard/report-details/')?'reportDetail':name.endsWith('/.flowboard/report.json')?'report':'other';
         const row=selectedIO[kind] ||= {reads:0,bytes:0,ms:0}; row.reads++;
         row.bytes+=typeof result==='string'?Buffer.byteLength(result):result?.byteLength||0;row.ms+=performance.now()-start;
       }
@@ -56,6 +56,7 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
       constructor(project, options) { super(project, { ...options, invoke, ...(readOnly ? {
         authorizeRequest: () => { throw new Error('Saved-workspace measurement authorizes zero provider reservations.'); }
       } : {}) }); initialPreparation = this; onCoordinator(this); }
+      status(...args){return measure?measure('report.status',()=>super.status(...args)):super.status(...args);}
     } };
     if (name === './runner-adapter') return { ...value, analyze: async (...args) => { const start = performance.now(); trace('index-start');
       try { return await value.analyze(...args); } finally { trace('index-end', { durationMs: performance.now() - start }); } } };

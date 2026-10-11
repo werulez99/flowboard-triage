@@ -251,20 +251,23 @@ function modelSources(units, packetLimit = 110000, completeReview = false) {
   const packet = []; let remaining = packetLimit;
   for (const unit of [...units].sort((a, b) => Number(b.readThrough < b.source.endLine) - Number(a.readThrough < a.source.endLine))) {
     const lines = unit.code.split('\n');
+    const selected=unit.contextKind==='excerpt'&&unit.modelRanges;
     const offset = !completeReview && unit.readThrough && unit.readThrough < unit.source.endLine ? unit.readThrough - unit.source.line + 1 : 0;
     const excerpt = []; let used = 0;
-    for (let at = offset; at < lines.length; at++) {
+    for (let at = selected ? 0 : offset; at < lines.length; at++) {
+      if (selected && !selected.some(range => range.line <= unit.source.line + at && unit.source.line + at <= range.endLine)) continue;
       if (used + lines[at].length + 1 > remaining) break;
       excerpt.push(lines[at]); used += lines[at].length + 1;
     }
+    if (selected && excerpt.length !== selected.reduce((count, range) => count + range.endLine - range.line + 1, 0))
+      throw Object.assign(new Error(`Selected source context does not fit this packet: ${unit.source.file}:${selected.map(range=>`${range.line}-${range.endLine}`).join(',')}. Its exact ranges must not be silently omitted.`), {code:'LOCAL_READING_LIMIT'});
     if (!excerpt.length) continue;
     remaining -= used;
-    const firstLine = unit.source.line + offset, lastLine = firstLine + excerpt.length - 1;
-    const selected=completeReview&&unit.contextKind==='excerpt'&&unit.modelRanges;
+    const firstLine = selected ? unit.source.line : unit.source.line + offset, lastLine = selected ? unit.source.endLine : firstLine + excerpt.length - 1;
     packet.push({ id: unit.id, name: unit.name, signature: unit.signature, kind: unit.kind, parameterSpans: unit.parameterSpans || [],
     contextKind: unit.contextKind || null, initialization: unit.initialization || null,
     file: unit.source.file, sourceHash: unit.source.sourceHash, line: firstLine, endLine: lastLine, complete: !selected && offset === 0 && lastLine === unit.source.endLine, reason: unit.reason,
-    ...(selected?{providedRanges:selected,selection:'Complete selected definitions/declarations in a context region. Unrelated intervening definitions are omitted; this is NOT a full-file execution frame. Canonical source is unchanged.'}:{}),
+    ...(selected?{providedRanges:selected,selection:'Complete selected definitions, declarations or source-comment blocks in a context region. Unrelated intervening definitions are omitted; this is NOT a full-file execution frame. Canonical source is unchanged.'}:{}),
     ...(offset || lastLine !== unit.source.endLine ? { localReading: { functionLine: unit.source.line, functionEndLine: unit.source.endLine,
       previouslyReadThrough: unit.readThrough || unit.source.line - 1, reason: 'Complete function is stored locally. This request contains a contiguous segment, not a missing implementation.' } } : {}),
     // Code already supplies the full expression. Repeating its text, receiver
@@ -291,10 +294,10 @@ function modelSources(units, packetLimit = 110000, completeReview = false) {
 }
 // Negative lookup receipts are valid only for this resolver contract. This is
 // not semantic policy and never invalidates an accepted explanation/review.
-const ACQUISITION_VERSION = 'local-context-v6-question-target';
+const ACQUISITION_VERSION = 'local-context-v7-adjacent-documentation';
 function makeContext(catalog, request, issue) {
   const compiler = workspaceSnapshot.compiler(catalog), engine = search(catalog);
-  const units = [], functions = new Map(); let budget = 110000, sourceLimit = 28;
+  const units = [], functions = new Map(), reportRoots = new Map(); let budget = 110000, sourceLimit = 28;
   const unread = new Set(), completionFunctions = new Map();
   const add = (fn, reason) => {
     if (!fn) return null;
@@ -337,8 +340,20 @@ function makeContext(catalog, request, issue) {
   };
   const targets = require('./report-targets').inspect(catalog, request.finding.title, issue?.reportText || request.finding.summary);
   if (targets.blockers.length) throw Object.assign(new Error(targets.blockers.join('\n')), { code: 'REPORT_APPLICABILITY' });
-  for (const fn of targets.selected) add(fn, 'Explicit report definition. Examine its code and complete relevant dependencies.');
-  for (const card of request.cards) if (!targets.selected.length || card.mapping?.method === 'citation' || card.mapping?.method === 'symbol') add(catalog.resolveCard(card), 'Original report/map location. Verify relevance and revision; location is not evidence of the allegation.');
+  const addReportRoot=(fn,reason)=>{
+    if(!fn)return null; // preserve unresolved-mapping handling from add()
+    const doc=catalog.document(catalog.relative(fn.file));
+    reportRoots.set(catalog.key(fn),{fn,reason,source:{file:catalog.relative(fn.file),sourceHash:hash(doc.text),line:fn.startLine,endLine:fn.endLine},code:catalog.code(fn)});
+    return add(fn,reason);
+  };
+  for (const fn of targets.selected) addReportRoot(fn, 'Explicit report definition. Examine its code and complete relevant dependencies.');
+  for (const card of request.cards) if (!targets.selected.length || card.mapping?.method === 'citation' || card.mapping?.method === 'symbol') {
+    const fn=catalog.resolveCard(card),reason='Original report/map location. Verify relevance and revision; location is not evidence of the allegation.';
+    // A legacy/unattributed map card may be a discovery candidate. Only the
+    // original report's explicit mapping provenance makes it a mandatory
+    // root; accepted claims/evidence independently pin their actual sources.
+    if(['citation','symbol'].includes(card.mapping?.method))addReportRoot(fn,reason);else add(fn,reason);
+  }
   const semantic = semanticInput.input(request, issue);
   const queryText = [content(semantic.reportText || semantic.saved.summary).current, semantic.saved.summary,
     semantic.saved.expectedBehavior, ...semantic.saved.preconditions].join('\n');
@@ -664,11 +679,21 @@ function makeContext(catalog, request, issue) {
     }
     sourceLimit = 40; // optional discovery does not inherit analytical capacity
   };
+  const acquireReportRoots=()=>{
+    const coverage=require('./source-coverage'),ids=[],priorLimit=sourceLimit;sourceLimit=limits.sources;
+    try{for(const root of reportRoots.values()){
+      let unit=units.find(unit=>coverage.contains(root,unit)&&(!unit.modelRanges||coverage.covers(unit.modelRanges,root.source.line,root.source.endLine)));
+      if(!unit){const id=add(root.fn,root.reason);unit=units.find(unit=>unit.id===id);}
+      if(!unit)throw Object.assign(new Error(`Original report source does not fit the ${limits.sources}-source capacity: ${root.source.file}:${root.source.line}-${root.source.endLine}. The original allegation cannot be dropped because its generated claims omitted this anchor.`),{code:'LOCAL_READING_LIMIT'});
+      ids.push(unit.id);
+    }}finally{sourceLimit=priorLimit;}
+    return [...new Set(ids)];
+  };
   const prioritize = (draft, protectedIds = [], supersededIds = [], replaceDiscovery = false) => {
     // Only unbound discovery candidates can leave the working packet. Never
     // evict a cited function, an inspected premise or an explicit report root
     // to manufacture room. Deferred code stays available in the local index.
-    const pinned = new Set([...require('./source-coverage').necessary(draft),
+    const pinned = new Set([...acquireReportRoots(),...require('./source-coverage').necessary(draft),
       ...(draft.explanationReviews || []).flatMap(item => item.checkedSourceIds || []), ...(draft.questions || []).map(item => item.target),
       ...(!replaceDiscovery?(draft.localPreparation?.coverage||[]).map(item=>item.sourceId):[]), ...protectedIds]);
     // A completed dependency traversal is not an unbound discovery candidate.
@@ -747,7 +772,40 @@ function makeContext(catalog, request, issue) {
     for(const receipt of receipts)for(const unit of units)if(require('./source-coverage').contains(unit,units.find(u=>u.id===receipt.sourceId)))unread.delete(`${unit.name} at ${unit.source.file}:${unit.source.line}`);
     return receipts;
   };
-  return { compiler, units, add, act, complete, prime, restore, prioritize, requireSources, gaps, unread,
+  const acquireDocumentation = () => {
+    const coverage=require('./source-coverage'), grouped=new Map(), changed=new Set();
+    // Only current selected definitions, not arbitrary neighboring text or
+    // archived discoveries. A supplied full context already covers its docs.
+    const selectedDefinitions=new Map([...functions.values(),...completionFunctions.values()].map(fn=>[catalog.key(fn),fn]));
+    for(const unit of units.filter(unit=>unit.contextKind==='excerpt'&&unit.modelRanges)) {
+      const file=catalog.document(unit.source.file).uri.fsPath;
+      for(const fn of catalog.functions.filter(fn=>fn.file===file&&coverage.covers(unit.modelRanges,fn.startLine,fn.endLine)))selectedDefinitions.set(catalog.key(fn),fn);
+    }
+    for(const fn of selectedDefinitions.values()) {
+      const item=catalog.adjacentDocumentation(fn);if(!item)continue;
+      const file=catalog.relative(item.file),doc=catalog.document(file),sourceHash=hash(doc.text);
+      const available=units.filter(unit=>unit.source.file===file&&unit.source.sourceHash===sourceHash)
+        .flatMap(unit=>unit.modelRanges||[unit.source]);
+      if(coverage.covers(available,item.line,item.endLine))continue;
+      if(!grouped.has(file))grouped.set(file,{doc,sourceHash,items:[]});
+      grouped.get(file).items.push(item);
+    }
+    const priorLimit=sourceLimit;sourceLimit=limits.sources;
+    try { for(const [file,{doc,sourceHash,items}] of grouped) {
+      const ranges=coverage.union(items),startLine=ranges[0].line,endLine=ranges.at(-1).endLine;
+      // Group exact comment ranges by file. Unrelated intervening code remains
+      // available canonically, but is not silently added to the isolated model.
+      const covering=units.find(unit=>unit.contextKind==='excerpt'&&unit.source.file===file&&unit.source.sourceHash===sourceHash&&unit.source.line<=startLine&&unit.source.endLine>=endLine);
+      if(covering){covering.modelRanges=coverage.union([...(covering.modelRanges||[covering.source]),...ranges]);changed.add(covering.id);continue;}
+      const id=add({name:'Adjacent source documentation',kind:'context',contextKind:'excerpt',file:doc.uri.fsPath,startLine,endLine,contract:null,calls:[],memberCalls:[],modifiers:[]},
+        `Exact adjacent NatSpec for selected declarations at ${file}:${[...new Set(items.map(item=>item.declarationLine))].sort((a,b)=>a-b).join(', ')}. Comments are attributed source context; assess applicability, consistency and contrary evidence before using them as an expected rule.`);
+      if(!id)throw Object.assign(new Error(`Adjacent source documentation does not fit the ${limits.sources}-source capacity: ${file}:${ranges.map(range=>`${range.line}-${range.endLine}`).join(',')}. Acquire this exact context before further analysis.`),{code:'LOCAL_READING_LIMIT'});
+      units.find(unit=>unit.id===id).modelRanges=ranges;changed.add(id);
+    }} finally {sourceLimit=priorLimit;}
+    return {id:`documentation-${crypto.randomUUID()}`,kind:'source-preparation',outcome:changed.size?'source-returned':'context-already-available',performedAt:now(),sourceIds:[...changed],
+      result:'Acquired exact adjacent source documentation separately from unchanged callable/declaration coordinates. It is attributed, unreviewed context, not an established rule or inherited approval.'};
+  };
+  return { compiler, units, add, act, complete, prime, restore, prioritize, requireSources, acquireReportRoots, acquireDocumentation, gaps, unread,
     documentation: workspaceSnapshot.docs(catalog, [semantic.title, queryText].join('\n')) };
 }
 function canonicalEvidence(items, units) {
@@ -1130,9 +1188,18 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
     };
     const obtain = async (phase, previous = null, feedback = null) => {
       if(phase==='challenge'&&draft.rejectedProposal)previous=require('./rejected-proposal').material(draft,context.units,reviewSchema);
+      if(!draft.pendingResponse&&!localOnly){
+        context.acquireReportRoots();const acquired=context.acquireDocumentation();if(acquired.sourceIds.length)draft.actions.push(acquired);
+        // Replacement generation has not superseded the accepted argument.
+        // Keep its source identities reopenable across dispatch/rejection;
+        // only an admitted replacement may replace that coherent source set.
+        const retained=new Map((phase==='generate'?draft.sources:[]).map(unit=>[unit.id,unit]));
+        for(const unit of context.units)retained.set(unit.id,unit);
+        capacity.assertLength([...retained.values()],limits.sources,'Retained analytical sources');draft.sources=[...retained.values()];
+      }
       let data = input(phase);
       if(!draft.pendingResponse&&phase==='challenge'){
-        data.requiredSourceIds=require('./source-coverage').necessary(draft);
+        data.requiredSourceIds=[...new Set([...require('./source-coverage').necessary(draft),...context.acquireReportRoots()])];
         data.sourceCoverageContract='review-extent-v1';
       }
       if(!draft.pendingResponse)data.assessmentContract=require('./technical-assessment').VERSION;
@@ -1230,7 +1297,7 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
         // Recompute at the final boundary (including a lawful prepared-input
         // transform), before capacity, reservation or process creation.
         const expanded=require('./packet-context').expand(input);
-        require('./source-coverage').packet({...expanded,requiredSourceIds:phase==='challenge'?require('./source-coverage').necessary(draft):[]},context.units,phase==='challenge'?[previous,expanded.earlierDraft]:[]);
+        require('./source-coverage').packet({...expanded,requiredSourceIds:phase==='challenge'?[...new Set([...require('./source-coverage').necessary(draft),...context.acquireReportRoots()])]:[]},context.units,phase==='challenge'?[previous,expanded.earlierDraft]:[]);
         if(expanded.checkOnly&&expanded.earlierDraft)require('./tutorial-diagnostics').assertVerification(require('./tutorial-diagnostics').packetSubject(expanded,context.units,draft));
         // Include metadata, instructions and schema in the bounded transport
         // preflight. Oversized local input must not spend a reservation.
@@ -1524,7 +1591,8 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
       if (deferred.length) draft.actions.push({id:`priority-${crypto.randomUUID()}`,kind:'context-priority',outcome:'candidates-deferred',performedAt:now(),sourceIds:[],
         result:`After current question resolution, deferred only unreferenced candidates outside its required source set: ${deferred.join('; ')}. All accepted semantic references and newly requested code remain.`});
       ensure(); const completion = context.complete(preparationSubject, { finishQuestions: true }); draft.actions.push(completion);
-      preparedNewCode = acquired || completion.sourceIds.length > 0 || context.units.some(unit => unit.readThrough < unit.source.endLine);
+      const sourceDocumentation=context.acquireDocumentation();if(sourceDocumentation.sourceIds.length)draft.actions.push(sourceDocumentation);
+      preparedNewCode = acquired || completion.sourceIds.length > 0 || sourceDocumentation.sourceIds.length > 0 || context.units.some(unit => unit.readThrough < unit.source.endLine);
       draft.readingLimits = [...context.unread].slice(0, 40);
       draft.checkpoint.newContext ||= preparedNewCode;
     }

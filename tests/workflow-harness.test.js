@@ -43,6 +43,23 @@ async function client(host) {
   } };
 }
 
+test('optional native interaction timing separates host stages and compact observations from full diagnostic snapshots', {skip:!process.env.FLOWBOARD_EXTENSION_PATH},async t=>{
+ const host=await start({interactionTiming:true,provider:'none'});t.after(()=>host.close());
+ const {request,open}=await client(host),loaded=await open('I-01');
+ const state=(await request('/state')).value,timing=(await request('/timings')).value;
+ assert.equal(timing.providerCalls,0);assert.ok(Number.isFinite(timing.monotonicMs));assert.ok(timing.cursor>=timing.trace.length);
+ assert.ok(timing.trace.every(item=>Number.isFinite(item.monotonicMs)));
+ assert.ok(timing.trace.some(item=>item.event==='interaction-stage'&&item.stage==='board.open'&&item.durationMs>=0));
+ assert.ok(timing.trace.some(item=>item.event==='interaction-stage'&&item.stage==='saved-investigation.read'));
+ assert.ok(timing.trace.some(item=>item.event==='editor-message-queued'&&item.type==='triage:load'&&item.bytes>0));
+ const diagnostic=timing.trace.findLast(item=>item.event==='harness-response'&&item.route==='/state');
+ assert.ok(diagnostic.bytes>0);assert.ok(diagnostic.durationMs>=diagnostic.serializationMs);
+ for(const key of ['investigation','privatePreparationDraft','snapshots','lastLoad','library'])assert.equal(Object.hasOwn(timing,key),false,'Timing retrieval must not deserialize the report or return a copied source/argument packet.');
+ assert.equal((await request('/timings?after='+timing.cursor)).value.trace.some(item=>item.event==='harness-response'&&item.route==='/timings'),false);
+ assert.equal((await fetch(host.origin+'/timings')).status,403);
+ assert.equal(state.activeId,'I-01');assert.equal(loaded.finding.status,'unreviewed');assert.deepEqual(state.providerCalls,[]);
+});
+
 test('normal importer and native controller roundtrip preserve finding-scoped snapshots', { skip: !process.env.FLOWBOARD_EXTENSION_PATH }, async t => {
   const host = await start();
   t.after(() => host.close());

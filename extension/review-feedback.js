@@ -52,7 +52,9 @@ function responseSchema(feedback) {
   const ids=entries(feedback).map(e=>e.id);
   return {type:'array',maxItems:ids.length,items:{type:'object',additionalProperties:false,
     properties:{feedbackIds:{type:'array',minItems:1,maxItems:ids.length,items:{type:'string',enum:ids}},
-      disposition:{enum:['changed','retained','unresolved']},reason:{type:'string',minLength:1,maxLength:2400},
+      // Use the pinned wire subset, keeping the same nonblank host rule below.
+      // Feedback dispositions remain authoring accountability, never checks.
+      disposition:{enum:['changed','retained','unresolved']},reason:{type:'string',pattern:'\\S',maxLength:2400},
       targets:{type:'array',maxItems:80,items:{type:'string'}}},required:['feedbackIds','disposition','reason','targets']}};
 }
 function validate(value,input,edits,full) {

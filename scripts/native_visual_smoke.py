@@ -163,9 +163,16 @@ try:
         page.locator('.triage-evidence-reference').click()
         inspect = page.evaluate('window.sent.findLast(x=>x.type==="triage:inspectEvidence")')
         assert inspect['evidence']['source']['sourceHash'] == bound['source']['sourceHash']
+        assert inspect['navigationId'], 'The native inspection request owns one exact navigation.'
+        inspected = {'type': 'triage:evidenceInspected', 'issueId': inspect['issueId'], 'token': inspect['token'],
+                     'evidence': inspect['evidence'], 'excerpt': '12  function _add(uint256 amount) internal {\n13    counter += amount;\n14  }'}
+        # Simulate the real board's identity echo. An omitted or obsolete
+        # navigation must remain rejected before the matching source reply.
+        for stale in [inspected, {**inspected, 'navigationId': 'obsolete-inspection'}]:
+            page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))', stale)
+            assert page.locator('.triage-evidence-preview').count() == 0
         page.evaluate('message=>window.dispatchEvent(new MessageEvent("message",{data:message}))',
-                      {'type': 'triage:evidenceInspected', 'issueId': inspect['issueId'], 'token': inspect['token'], 'evidence': bound,
-                       'excerpt': '12  function _add(uint256 amount) internal {\n13    counter += amount;\n14  }'})
+                      {**inspected, 'navigationId': inspect['navigationId']})
         assert '13    counter += amount' in page.locator('.triage-evidence-preview pre').inner_text()
         assert page.locator('.card.triage-evidence-focus').count() == 1
         page.get_by_role('button', name='Copy review brief', exact=True).click()

@@ -347,6 +347,7 @@
     preparationSurface.hidden = !waiting; document.body.classList.toggle('guide-preparing', waiting);
     const scroll = preparationSurface.scrollTop;
     const openDetails = [...preparationSurface.querySelectorAll('details')].map(node => node.open);
+    const checkedReasonOpen=!!preparationSurface.querySelector?.('.guide-checked-reason')?.open;
     const previousForm=preparationSurface.querySelector?.('.guide-revision-form');
     const focusedRevision=previousForm?.contains(document.activeElement)?document.activeElement:null;
     preparationSurface.replaceChildren(); preparationSurface.classList.toggle('expanded', preparationExpanded);
@@ -364,7 +365,17 @@
       if(!preparing&&job?.localRecheckAvailable)row.append(button('Recheck local preparation',()=>send('triage:recheckLocalPreparation')));
       row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
       const technical=selectedProjection(job)?.technical;
-      if(technical&&technical.result!=='not-assessed')preparationSurface.append(element('h2','guide-technical-result',technical.label),element('p','guide-technical-reason',technical.why));
+      const materialRequirement=!sourceStale&&job?.verificationCompletion&&!job.verificationCompletion.checkingIncomplete&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.[0];
+      if(technical&&technical.result!=='not-assessed')preparationSurface.append(element('h2','guide-technical-result',technical.label));
+      if(materialRequirement){
+        preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${materialRequirement.text}`));
+        if(job.revisionAction?.kind==='accepted-partial')preparationSurface.append(element('p','guide-status-reason',job.revisionAction.reason));
+      }
+      if(technical&&technical.result!=='not-assessed'){
+        const reason=element('p','guide-technical-reason',technical.why);
+        if(materialRequirement){const details=element('details','guide-checked-reason');details.open=checkedReasonOpen;details.append(element('summary','','Checked assessment reasoning'),reason);preparationSurface.append(details);}
+        else preparationSurface.append(reason);
+      }
       else if(sourceStale||technical?.why)preparationSurface.append(element('p','guide-technical-reason',sourceStale?'Needs recheck · code or report changed. Previous AI conclusions, severity and evidence actions are withdrawn.':technical.why));
       if(!sourceStale&&technical?.evidence?.length){const actions=element('nav','guide-assessment-actions');
         const decisive=['supports','contradicts'].map(stance=>technical.evidence.find(e=>e.stance===stance)).filter(Boolean);
@@ -394,7 +405,7 @@
       }
       if(job?.privateCandidateState==='terminal')preparationSurface.append(element('p','guide-status-reason guide-current-requirement','The bounded candidate repair cycle is finished. Inspect the verifier’s corrections and source; continuing unchanged cannot start another request.'));
       if(job?.revisionAction&&(job.privateCandidateState==='terminal'||job.revisionAction.kind==='accepted-partial')){
-        preparationSurface.append(element('p','guide-status-reason',job.revisionAction.reason));
+        if(!materialRequirement||job.revisionAction.kind!=='accepted-partial')preparationSurface.append(element('p','guide-status-reason',job.revisionAction.reason));
         if(job.revisionAction.available&&!sourceStale){
           const action=job.revisionAction;
           if(action.kind==='accepted-partial'){
@@ -419,8 +430,6 @@
         }
       }
       if(blockerReturn)preparationSurface.append(button('Return to blockers',returnFromBlocker));
-      if(job?.verificationCompletion&&!job.verificationCompletion.checkingIncomplete&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.length)
-        preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
       if(job?.validationProblems?.length){
         const groups=element('nav','guide-blocker-groups');groups.setAttribute('aria-label','Current blocker groups');
         for(const group of [...new Set(job.validationProblems.map(p=>p.group||'Explanation correction'))])groups.append(button(`${group} · ${job.validationProblems.filter(p=>(p.group||'Explanation correction')===group).length}`,()=>{

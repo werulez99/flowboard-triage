@@ -3,7 +3,7 @@
 // attestations, mutates a candidate, acquires code, or advances a lifecycle.
 const crypto=require('node:crypto'),bindings=require('./call-bindings'),capacity=require('./review-capacity');
 const {lexicalCode}=require('./solidity-text');
-const VERSION='tutorial-diagnostics-v4';
+const VERSION='tutorial-diagnostics-v5';
 const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const actions={structural:'Correct these exact explanation fields and their dependent checks in a private revision; do not retry an unchanged verification.',
   capability:'Inspect the linked supplied code. This operation is outside the supported local analysis; more copies of that code will not resolve it.',

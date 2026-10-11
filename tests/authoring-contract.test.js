@@ -20,9 +20,16 @@ test('exact full verifier feedback reaches measured repair authoring and require
   input.hostReview=feedback.current(state);const f=feedback.entries(input.hostReview);assert.equal(f.length,4);
   const value={...response(input,[]),feedbackResponses:[{feedbackIds:f.map(e=>e.id),disposition:'unresolved',reason:'The precise unknown and caller condition are retained for full review.',targets:[]}]};
   assert.equal(format.valid(value,provider.responseSchema(input)),true);const mapped=contract.compile(value,input,provider.schema,units);assert.deepEqual(mapped.mapping.feedback.responses,value.feedbackResponses);
+  assert.equal(provider.requestMetrics(input).schemaContract,require('../extension/provider-settings').schemaContract,'The complete measured repair schema fits the pinned provider subset');
   const measured=provider.measureRequest(input);assert.ok(measured.requestBytes>0);assert.match(measured.system,/authoring accountability ONLY/);assert.deepEqual(input.hostReview.response,review);
   for(const bad of [{...value,feedbackResponses:[]},{...value,feedbackResponses:[{...value.feedbackResponses[0],disposition:'changed',targets:['/questions']}]},
     {...value,feedbackResponses:[value.feedbackResponses[0],value.feedbackResponses[0]]}])assert.throws(()=>contract.compile(bad,input,provider.schema,units),e=>e.validationProblems.some(p=>p.code==='REPAIR_FEEDBACK_COVERAGE'));
+  for(const reason of ['', ' \n\t ']){
+    const bad={...value,feedbackResponses:[{...value.feedbackResponses[0],reason}]};
+    assert.equal(format.valid(bad,provider.responseSchema(input)),false);
+    assert.throws(()=>contract.compile(bad,input,provider.schema,units),e=>e.validationProblems.some(p=>p.code==='REPAIR_FEEDBACK_COVERAGE'));
+  }
+  assert.deepEqual(mapped.output.explanationReviews,[],'An author disposition never creates a checker attestation');
   state.verification.candidateHash='wrong';assert.throws(()=>feedback.current(state),/exact candidate/);
   assert.deepEqual(input.earlierDraft.evidence,fixture().input.earlierDraft.evidence,'Feedback is not a partial candidate edit or an approval.');
 });

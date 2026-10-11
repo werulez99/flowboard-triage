@@ -230,6 +230,19 @@ test('accepted-partial revision form sends exact host identity and preserves foc
   context.sourceStale=true;form.onsubmit({preventDefault(){}});assert.equal(sent.length,1,'Changed-source inspection cannot submit the old revision.');
   context.sourceStale=false;job.revisionAction={...action,available:false,reason:'Shared remaining capacity cannot fund the authoring and fresh verification pair.'};vm.runInNewContext('renderPreparation()',context);
   assert.equal(surface.querySelector('.guide-revision-form'),null);assert.match(flat(surface).map(n=>n.text).join('\n'),/Shared remaining capacity cannot fund/);assert.equal(sent.length,1);
+  job.verificationCompletion={result:'kept',published:false,checkingIncomplete:false};
+  job.missingInputs=[{text:'Which source-grounded collection entitlement applies to the stated recipient condition?'}];
+  job.assessmentProjection.technical.why='The complete checked explanation remains available without replacing its meaning. '.repeat(20);
+  vm.runInNewContext('renderPreparation()',context);
+  const requirement=surface.querySelector('.guide-current-requirement'),checked=surface.querySelector('.guide-checked-reason');
+  assert.equal(requirement.text,'Still required: '+job.missingInputs[0].text);
+  assert.ok(surface.children.indexOf(requirement)<surface.children.indexOf(checked),'The missing material fact precedes verbose reasoning in the collapsed native dock.');
+  assert.ok(surface.children.findIndex(n=>n.text===job.revisionAction.reason)<surface.children.indexOf(checked),'The host-bound next-action constraint is visible before optional detailed reasoning.');
+  assert.equal(flat(checked).find(n=>n.cls==='guide-technical-reason').text,job.assessmentProjection.technical.why,'The exact checked explanation remains intact in its named disclosure.');
+  assert.equal(checked.open,false,'Long reasoning is initially collapsed, not clipped or truncated.');
+  assert.equal(flat(surface).filter(n=>n.text===job.revisionAction.reason).length,1,'The next-action reason is not repeated.');
+  checked.open=true;vm.runInNewContext('renderPreparation()',context);
+  assert.equal(surface.querySelector('.guide-checked-reason').open,true,'Background progress preserves the reader’s open reasoning disclosure.');
 });
 test('ordinary finding rows and filters distinguish a useful assessment from a Ready tutorial or operational failure',()=>{
   const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),vm=require('node:vm');

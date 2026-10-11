@@ -32,6 +32,7 @@ parser.add_argument('--focused-viewports', action='store_true', help='Desktop an
 parser.add_argument('--full-playback-viewports', action='store_true', help='Every checked Next/Previous step, original function tail, outline/detour/Return and saved reopen at desktop and compact widths; fixed fixture or saved provider-none only.')
 parser.add_argument('--local-recheck', action='store_true', help='Exercise the selected local preparation action with provider none; never a model request.')
 parser.add_argument('--blocker-check', action='store_true', help='Inspect all current blocker groups, source focus/return and reopen with provider none.')
+parser.add_argument('--interaction-timing', action='store_true', help='Separate real click-to-render-ready observations from inclusive harness diagnostics; saved provider-none or fictional fixtures only.')
 parser.add_argument('--reopens', type=int, default=1, choices=range(1, 21))
 parser.add_argument('--batch', action='store_true')
 parser.add_argument('--freshness', choices=['source', 'report'], default='report')
@@ -42,12 +43,16 @@ if args.full_playback_viewports and not (args.teaching_case or args.workspace an
 if args.assessment_check:
     args.teaching_case='time'
     args.finding='I-1'
+if args.interaction_timing and not (args.teaching_case or args.recorded or args.workspace and args.provider == 'none'):
+    parser.error('--interaction-timing requires a saved provider-none workspace or explicitly fictional responses')
 if args.blocker_check and (args.provider != 'none' or not (args.workspace or args.assessment_check == 'repair')):
     parser.error('--blocker-check requires a saved workspace and provider none')
 repo = Path(__file__).resolve().parent.parent
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
 command = ['node', str(repo / 'scripts/workflow-host.js'), '--provider', args.provider]
 command += ['--request-limit', str(args.request_limit)]
+if args.interaction_timing:
+    command += ['--interaction-timing']
 if args.production_selection:
     command += ['--production-selection']
 if args.report_preparation:
@@ -71,6 +76,10 @@ result = {'boundary': 'Production code and renderer; real provider; simulated ed
 if args.recorded: result['boundary'] = 'Production preparation and renderer with recorded fictional provider responses; exact matching source IDs translated for a new temporary project. Simulated editor transport; no fresh AI reasoning.'
 if args.teaching_case: result['boundary'] = 'Ordinary import/preparation/acceptance/native renderer; fixed local teaching responses only, zero external requests. Simulated editor IO.'
 if args.workspace and args.provider == 'none': result['boundary'] = 'Saved workspace artifact, current source checks, board controller and native renderer; provider disabled. Simulated editor transport, not actual Cursor activation/playback.'
+if args.interaction_timing:
+    result['interactionTimingMethod']={'hostClock':'performance.now()','browserClock':'independent performance.now(); no cross-clock subtraction','editorPollIntervalMs':75,
+        'endpoint':'Exact visible target followed by two animation-frame observations, not optical paint or human comprehension.',
+        'hostStages':'Inclusive and possibly nested; do not sum as disjoint CPU time. Diagnostic retrieval and screenshots stay outside browser endpoint.'}
 try:
     def request(route, body=None):
         call = urllib.request.Request(host['origin'] + route, data=None if body is None else json.dumps(body).encode(), headers={'X-Workflow-Token': host['secret'], 'Content-Type': 'application/json'})
@@ -84,6 +93,22 @@ try:
         return selected or state.get('reportPreparation') or {}
     def selected_details(state):
         return next((j for j in selected_report(state).get('jobs',[]) if j['id']==args.finding),None)
+    timing_start = None
+    def arm_interaction(label, kind, target=None):
+        if not args.interaction_timing: return
+        # This diagnostic request happens before the actual click clock starts.
+        global timing_start
+        timing_start = request('/timings')
+        page.evaluate('value=>window.armMeasuredInteraction(value)', {'label':label,'kind':kind,'target':target})
+    def finish_interaction():
+        if not args.interaction_timing: return
+        page.wait_for_function('()=>window.measuredInteractionResult !== null',timeout=120000)
+        sample=page.evaluate('window.measuredInteractionResult')
+        # Trace retrieval, assertions, state dumps and screenshots are outside
+        # the browser endpoint. Clocks remain separate; no cross-clock subtraction.
+        observed=request('/timings?after='+str(timing_start['cursor']))
+        sample.update(hostTrace=observed['trace'],hostWindowMs=observed['monotonicMs']-timing_start['monotonicMs'],providerCallbacks=observed['providerCalls']-timing_start['providerCalls'])
+        result.setdefault('interactionSamples',[]).append(sample)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, executable_path=os.environ.get('FLOWBOARD_CHROMIUM_PATH'))
         page = browser.new_page(viewport={'width': 1440, 'height': 900}, reduced_motion='reduce')
@@ -97,6 +122,32 @@ try:
         errors = []; page.on('pageerror', lambda error: errors.append(error.stack))
         page.expose_function('__send', lambda m: request('/message', m))
         page.expose_function('__poll', lambda n: request('/events?after=' + str(n)))
+        if args.interaction_timing:
+            page.add_init_script('''window.interactionTrace=[];window.measuredInteractionResult=null;window.measuredInteraction=null;
+              window.recordInteraction=(event,fields={})=>{window.interactionTrace.push({event,at:performance.now(),...fields});if(event==='editor-send'&&fields.type==='triage:inspectBlocker'&&window.measuredInteraction)window.measuredInteraction.navigationId=fields.navigationId;};
+              window.armMeasuredInteraction=value=>{window.measuredInteractionResult=null;window.measuredInteraction={...value,clickAt:null,traceStart:window.interactionTrace.length};};
+              document.addEventListener('click',()=>{
+                const pending=window.measuredInteraction;if(!pending||pending.clickAt!==null)return;
+                pending.clickAt=performance.now();let readyAt=null;
+                const visible=node=>{const b=node?.getBoundingClientRect();return !!b&&b.width>0&&b.height>0&&getComputedStyle(node).visibility!=='hidden';};
+                const ready=()=>{
+                  if(pending.kind==='blocker-open'){
+                    const focus=window.hostMessages.findLast(m=>m.type==='triage:blockerFocus'&&m.diagnosticId===pending.target&&m.navigationId===pending.navigationId);
+                    if(!focus)return false;const card=document.querySelector('.triage-blocker-card'),row=card?.querySelector('[data-source-line="'+focus.source.line+'"]'),code=card?.querySelector('.card-code');
+                    if(!visible(row)||!visible(code)||!visible(document.querySelector('.guide-blocker-return')))return false;
+                    const a=row.getBoundingClientRect(),b=code.getBoundingClientRect();return a.top>=Math.max(0,b.top)&&a.bottom<=Math.min(innerHeight,b.bottom);
+                  }
+                  if(pending.kind==='blocker-return')return !document.querySelector('.triage-blocker-card')&&visible(document.querySelector('.guide-preparation'));
+                  if(pending.kind==='blocked-reopen')return window.hostMessages.some(m=>m.type==='triage:load'&&m.issueId===pending.target)&&visible(document.querySelector('.guide-preparation .guide-blocker-groups'));
+                  return false;
+                };
+                const frame=()=>{if(window.measuredInteraction!==pending)return;
+                  if(!ready()){readyAt=null;requestAnimationFrame(frame);return;}
+                  if(readyAt===null){readyAt=performance.now();requestAnimationFrame(frame);return;}
+                  const at=performance.now();window.measuredInteractionResult={label:pending.label,kind:pending.kind,clickAt:pending.clickAt,readyAt,afterFrameAt:at,actualClickToRenderReadyMs:at-pending.clickAt,
+                    boundary:'Browser real click through visible target and two animation-frame observations; not optical paint or human comprehension.',browserTrace:window.interactionTrace.slice(pending.traceStart)};window.measuredInteraction=null;
+                };requestAnimationFrame(frame);
+              },true);''')
         def contrast():
             return page.evaluate('''() => {
               const rgb=s=>(s.match(/[\\d.]+/g)||[]).map(Number);
@@ -114,9 +165,9 @@ try:
             }''')
         page.add_init_script('''window.sent=[];window.hostMessages=[];window.actualFindingClick=null;
           document.addEventListener('click',event=>{if(event.target.closest('[data-finding-id]'))window.actualFindingClick=performance.now()},true);
-          window.acquireVsCodeApi=()=>({postMessage(m){if(!window.closing){window.sent.push(m);return window.__send(m);}}});
+          window.acquireVsCodeApi=()=>({postMessage(m){if(!window.closing){window.sent.push(m);window.recordInteraction?.('editor-send',{type:m.type,navigationId:m.navigationId||null});return window.__send(m);}}});
           let cursor=0;window.polling=false;window.timer=setInterval(async()=>{if(window.polling||window.closing)return;window.polling=true;
-          try{const b=await window.__poll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);window.dispatchEvent(new MessageEvent('message',{data:m}));}}finally{window.polling=false;}},75);''')
+          try{const b=await window.__poll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);const started=performance.now();window.recordInteraction?.('editor-receive',{type:m.type,navigationId:m.navigationId||null});window.dispatchEvent(new MessageEvent('message',{data:m}));window.recordInteraction?.('editor-render-handler',{type:m.type,durationMs:performance.now()-started});}}finally{window.polling=false;}},75);''')
         page.goto(host['origin'])
         finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
         page.wait_for_selector(finding_row, timeout=30000)
@@ -937,7 +988,9 @@ try:
                 inspection_started=time.monotonic()
                 return_position=page.evaluate('()=>({selectedCard:document.querySelector(".triage-selected-source")?.dataset.id||null,scale,panX,panY})')
                 card=page.locator('[data-blocker-id='+json.dumps(source_problem['id'])+']')
+                arm_interaction('blocked evidence open','blocker-open',source_problem['id'])
                 card.get_by_role('button',name='Inspect code',exact=False).first.click()
+                finish_interaction()
                 page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:blockerFocus"&&m.diagnosticId===id)',arg=source_problem['id'])
                 page.wait_for_timeout(300)
                 assert page.locator('.guide-blocker-return').is_visible()
@@ -962,7 +1015,9 @@ try:
                 assert all(line in rows for line in range(source_problem['line'],source_problem['endLine']+1)), rows
                 assert rows == list(range(min(rows),max(rows)+1)), 'Independent blocker inspection must show complete original rows.'
                 return_started=time.monotonic()
+                arm_interaction('blocked evidence Return','blocker-return')
                 page.locator('.guide-blocker-return').click()
+                finish_interaction()
                 page.evaluate('m=>window.dispatchEvent(new MessageEvent("message",{data:m}))',focused)
                 assert not page.locator('.triage-blocker-card').count(), 'A focus response after Return must be ignored.'
                 assert page.evaluate('()=>({selectedCard:document.querySelector(".triage-selected-source")?.dataset.id||null,scale,panX,panY})')==return_position, 'Inspection Return must restore the original source selection and camera.'
@@ -992,17 +1047,38 @@ try:
                 page.set_viewport_size({'width':1440,'height':900})
                 reopen_started=time.monotonic()
                 page.evaluate('window.closing=true;clearInterval(window.timer)');request('/action',{'name':'reopen'})
-                page.reload();page.wait_for_selector(finding_row,timeout=30000);page.locator(finding_row).click()
+                page.reload();page.wait_for_selector(finding_row,timeout=30000)
+                if args.interaction_timing: result['panelRecreationAndReloadMs']=(time.monotonic()-reopen_started)*1000
+                arm_interaction('blocked saved finding reopen','blocked-reopen',args.finding)
+                page.locator(finding_row).click()
                 page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:load"&&m.issueId===id)',arg=args.finding,timeout=120000)
                 page.get_by_role('button',name='Walkthrough',exact=True).click()
                 page.wait_for_function('()=>document.querySelector(".guide-blocker-groups")',timeout=120000)
+                finish_interaction()
                 assert len(request('/state')['providerCalls']) == len(state['providerCalls'])
                 if selected_job.get('verificationCompletion',{}).get('result')=='repair':
                     assert 'This review did not approve a new assessment or tutorial.' in page.locator('.guide-preparation').inner_text()
                 page.screenshot(path=str(out/'blocked-saved-reopened.png'))
                 result['blockedReopenMs']=(time.monotonic()-reopen_started)*1000
+                if args.interaction_timing: result['legacyInclusiveTimingBoundary']='sourceInspectionMs/sourceReturnMs/blockedReopenMs retain their broad automation/check/diagnostic windows, including optional timing retrieval; use interactionSamples for separate real click-to-render-ready observations.'
                 result['localInteractions']={'scope':'group navigation, native blocked saved result, simulated editor IO','samplesMs':samples,'count':len(samples)}
                 result['checks'].append('Every current blocker group is visible/focusable; source inspection and Return preserve blocked status; 801x600 and saved reopen make zero provider calls.')
+            elif args.focused_viewports:
+                # An operational failure need not have an authoritative source
+                # anchor. Inspect its real status geometry, not an invented
+                # code detour or a claim of completed tutorial playback.
+                before_calls=len(request('/state')['providerCalls'])
+                result['blockedViewports']=[]
+                for width,height in [(1440,900),(801,600)]:
+                    page.set_viewport_size({'width':width,'height':height})
+                    pane=page.locator('.guide-preparation')
+                    geometry=pane.evaluate('''n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,fontSize:parseFloat(getComputedStyle(n).fontSize),viewportWidth:innerWidth,viewportHeight:innerHeight};}''')
+                    assert geometry['left']>=0 and geometry['right']<=width and geometry['top']>=0 and geometry['bottom']<=height, geometry
+                    assert not page.locator('.guide-annotation:visible').count()
+                    page.screenshot(path=str(out/f'blocked-status-{width}x{height}.png'))
+                    result['blockedViewports'].append(geometry)
+                assert len(request('/state')['providerCalls'])==before_calls
+                result['checks'].append('Unaccepted operational status remains inside desktop/compact viewports without a fabricated source anchor or provider request.')
             result['checks'].append('Incomplete explanation is withheld, with an explicit preparation status.')
         result['pageErrors'] = errors
         assert not errors, errors

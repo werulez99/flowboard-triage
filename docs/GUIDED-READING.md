@@ -1,4 +1,25 @@
-# Checked finding walkthroughs — 0.19.35
+# Checked finding walkthroughs — 0.19.36
+
+The current reader cannot treat a caller-side argument failure as entering an
+external call's catch. Its exact call/return validation first checks supported
+nested input completion; unsupported input effects remain a visible capability
+limit, not a refutation. Compatible saved views re-evaluate that local boundary
+without new provider requests. This follows the
+[Solidity 0.8.30 try/catch boundary](https://docs.soliditylang.org/en/v0.8.30/control-structures.html#try-catch).
+
+Native timing diagnostics can separately record real click-to-visible-state
+observations and host stages with `checked_guide_browser.py --interaction-timing`.
+These are optional disposable-harness measurements, not production telemetry.
+Stage timers may nest. Screenshots, full diagnostic snapshots and assertions are
+outside the narrower interaction clock; the previous inclusive samples are retained
+under their original names. Simulated editor polling/IO is not an observed Cursor
+session, and no small sample is a latency percentile.
+
+For a checked but materially incomplete assessment, the exact first missing fact
+and host-derived next-action constraint precede verbose reasoning in the status
+dock. The complete checked text remains under **Checked assessment reasoning**;
+its disclosure state survives background progress. This is assessment/source
+inspection, not a partial tutorial or an inherited approval for a private revision.
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 

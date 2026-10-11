@@ -36,13 +36,13 @@ function wire(value = { text }, mode = 'codex') {
     { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(value) } }, { type: 'turn.completed', usage } ].map(JSON.stringify).join('\n') :
     JSON.stringify({ structured_output: value, usage, total_cost_usd: 0, modelUsage: { 'fixture-not-a-model': {} } }));
 }
-function fakeProcess({ stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), code = 0, hanging = false, everyByte = false, chunks, inspect } = {}) {
+function fakeProcess({ stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), code = 0, hanging = false, everyByte = false, chunks, inspect, onKill } = {}) {
   return (executable, args, options) => {
     inspect?.({ executable, args, options });
     const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.stdin.resume(); child.pid = process.pid;
     let closed = false;
     const close = result => { if (!closed) { closed = true; child.emit('close', result); } };
-    child.kill = () => { queueMicrotask(() => close(null)); return true; };
+    child.kill = () => { onKill?.(child);queueMicrotask(() => close(null)); return true; };
     child.stdin.on('finish', () => queueMicrotask(() => {
       child.emit('spawn');
       const emit = (stream, bytes) => { if (everyByte) for (const byte of bytes) stream.write(Buffer.from([byte])); else stream.write(bytes); };
@@ -54,6 +54,69 @@ function fakeProcess({ stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), code 
   };
 }
 function directory(t) { const result = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-provider-test-')); t.after(() => fs.rmSync(result, { recursive: true, force: true })); return result; }
+test('normal exit requires the final result and usage from the same completed turn',async()=>{
+  const final=value=>({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}),end={type:'turn.completed',usage},start={type:'turn.started'};
+  const run=rows=>provider.runCodex(input,{timeoutMs:1000,spawn:fakeProcess({stdout:Buffer.from(rows.map(JSON.stringify).join('\n'))})});
+  const current={text:'A completed current turn is retained without host approval.'};
+  const accepted=await run([start,final({text:'Earlier completed turn'}),end,start,final(current),end]);
+  assert.deepEqual(accepted.value,current);assert.deepEqual(accepted.audit.usage,usage);assert.equal(accepted.audit.hostAcceptedAt,null);
+  assert.equal(accepted.audit.teardown.normalCompletion,true);
+  for(const rows of [[end,final(current)],[start,final({text:'Earlier completed turn'}),end,start,final(current)],[final(current),end,start]]){
+    await assert.rejects(run(rows),error=>{
+      assert.equal(error.failureKind,'transport');assert.match(error.message,/same completed turn/);
+      assert.equal(error.audit.outcome,'failed');assert.equal(error.audit.hostAcceptedAt,null);assert.equal(error.audit.teardown.confirmed,true);return true;
+    });
+  }
+});
+test('a complete structured turn before the deadline survives confirmed exit-lag cleanup without becoming host approval', async () => {
+  const result=await provider.runCodex(input,{timeoutMs:40,terminationGraceMs:20,terminationSettleMs:30,
+    spawn:fakeProcess({stdout:Buffer.concat([wire({text}),Buffer.from('\n')]),hanging:true})});
+  assert.equal(result.value.text,text);assert.equal(result.audit.outcome,'completed');assert.equal(result.audit.hostAcceptedAt,null);
+  assert.deepEqual(result.audit.usage,usage);assert.equal(result.audit.failureKind,null);
+  assert.equal(result.audit.deadline.milliseconds,40);assert.equal(result.audit.deadline.responseCompletedBeforeDeadline,true);
+  assert.equal(result.audit.teardown.triggerKind,'completion-cleanup');assert.equal(result.audit.teardown.confirmed,true);
+  assert.equal(result.audit.responseCompletion.processExit,'deadline-cleanup-confirmed');
+});
+test('exit-lag retention requires exact complete content, matching completed turn and usage within the deadline', async () => {
+  const final={type:'item.completed',item:{type:'agent_message',text:JSON.stringify({text})}},end={type:'turn.completed',usage};
+  for(const rows of [[final],[end,final],[final,{type:'turn.completed'}],[{...final,item:{...final.item,text:'{invalid'}},end],
+    [final,end,{type:'turn.started'}],[final,end,{type:'error',message:'connection lost'}]]){
+    await assert.rejects(provider.runCodex(input,{timeoutMs:20,spawn:fakeProcess({stdout:Buffer.from(rows.map(JSON.stringify).join('\n')+'\n'),hanging:true})}),e=>{
+      assert.equal(e.audit.outcome,'failed');assert.equal(e.audit.failureKind,'timeout');assert.equal(e.audit.hostAcceptedAt,null);return true;
+    });
+  }
+  await assert.rejects(provider.runCodex(input,{timeoutMs:20,spawn:fakeProcess({stdout:Buffer.concat([wire(),Buffer.from('\n{"unfinished":')]),hanging:true})}),{code:'PROVIDER_TIMEOUT'});
+  await assert.rejects(provider.runCodex(input,{timeoutMs:20,spawn:fakeProcess({stdout:Buffer.concat([wire(),Buffer.from('\n')]),hanging:true,
+    inspect:()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,45)})}),e=>{
+    assert.ok(e.audit.monotonic.finalContentMs>20);assert.equal(e.audit.failureKind,'timeout');return true;
+  });
+});
+test('cancellation, unsafe actions and terminal errors after a completed turn still reject exit-lag retention',async()=>{
+  for(const tail of [{type:'item.completed',item:{type:'command_execution',command:'not executed'}},{type:'turn.failed',error:{message:'failed'}}]){
+    await assert.rejects(provider.runCodex(input,{timeoutMs:100,spawn:fakeProcess({stdout:Buffer.concat([wire(),Buffer.from('\n'+JSON.stringify(tail)+'\n')]),hanging:true})}),e=>{
+      assert.equal(e.audit.outcome,'failed');assert.equal(e.audit.hostAcceptedAt,null);assert.ok(['unsafe-action','provider-exit'].includes(e.audit.failureKind));return true;
+    });
+  }
+  const controller=new AbortController();
+  await assert.rejects(provider.runCodex(input,{timeoutMs:100,signal:controller.signal,
+    spawn:fakeProcess({stdout:Buffer.concat([wire(),Buffer.from('\n')]),hanging:true}),onProgress:e=>{if(e.event==='turn.completed')queueMicrotask(()=>controller.abort());}}),e=>{
+    assert.equal(e.audit.failureKind,'cancelled');assert.equal(e.audit.teardown.confirmed,true);return true;
+  });
+});
+test('exit-lag cleanup continues safety parsing and honors a concurrent cancellation before closure',async()=>{
+  for(const mode of ['unsafe','cancel','utf8']){
+    const controller=new AbortController();
+    await assert.rejects(provider.runCodex(input,{timeoutMs:20,signal:controller.signal,
+      spawn:fakeProcess({stdout:Buffer.concat([wire(),Buffer.from('\n')]),hanging:true,onKill:child=>{
+        if(mode==='cancel')controller.abort();
+        else if(mode==='utf8')child.stdout.write(Buffer.from([0xe2]));
+        else child.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:'not executed'}})+'\n');
+      }})}),e=>{
+      assert.equal(e.audit.deadline.responseCompletedBeforeDeadline,true);assert.equal(e.audit.outcome,'failed');
+      assert.equal(e.audit.failureKind,{unsafe:'unsafe-action',cancel:'cancelled',utf8:'transport'}[mode]);return true;
+    });
+  }
+});
 test('shared analytical host policy admits full Unicode requests above the former limit with exact adapter receipts',async()=>{
   const large={...input,metadata:'\u03bb'.repeat(150000)},metrics=provider.requestMetrics(large);
   assert.equal(metrics.limit,require('../extension/review-capacity').limits.analyticalRequestBytes);
