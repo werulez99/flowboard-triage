@@ -1,4 +1,22 @@
-# Checked finding walkthroughs — 0.19.36
+# Checked finding walkthroughs — 0.19.37
+
+Selected **Continue** for a current repair-requested private candidate now admits
+its authoring/full-verification pair together. If one ordinary finding slot is
+missing, only that slot is added within existing shared capacity, after owed
+sibling checks. The operation is bound to the exact candidate, source/premise
+context and negative verifier receipt; stale actions and fixed one-V windows
+cannot start authoring. Used requests, terminal history and sibling ceilings are
+unchanged. Capacity is checked again before reservation. This is allocation for
+the existing finite repair cycle, not a new cycle or approval.
+
+Repair-feedback associations use a shared catalog of canonical argument
+containers and stable items. A grouping such as `/causal` is a non-attesting
+reference, not permission to replace that object. Future wire schemas expose
+these targets; new-item references additionally require the actual admitted add
+edit. Unknown paths, checker fields and claimed changes without corresponding
+edits remain rejected. An exact saved response rejected by the former target
+mismatch can be replayed locally without a new authoring request. Its original
+rejection stays recorded, and only full fresh verification can admit an assessment.
 
 The current reader cannot treat a caller-side argument failure as entering an
 external call's catch. Its exact call/return validation first checks supported

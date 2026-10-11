@@ -33,6 +33,30 @@ test('exact full verifier feedback reaches measured repair authoring and require
   state.verification.candidateHash='wrong';assert.throws(()=>feedback.current(state),/exact candidate/);
   assert.deepEqual(input.earlierDraft.evidence,fixture().input.earlierDraft.evidence,'Feedback is not a partial candidate edit or an approval.');
 });
+test('feedback canonical containers are references, not editable roots or checker approval',()=>{
+  const {input,units}=fixture(),feedback=require('../extension/review-feedback'),candidate=require('../extension/review-candidate');
+  const review={result:'repair',problems:['Reconcile the conditional outcome.'],explanationReviews:[],inputReviews:[],checks:[]};
+  input.hostReview={version:feedback.VERSION,requestId:'V-container',candidateHash:'current',revisionHash:'revision',responseHash:candidate.hash(review),response:review};
+  const value={...response(input,[]),feedbackResponses:[{feedbackIds:['problem:0'],disposition:'retained',reason:'Retained causal conditions are attributed authoring, pending full review.',targets:['/causal','/causal/events/event-local']}]};
+  const spec=provider.responseSchema(input);assert.equal(format.valid(value,spec),true);assert.equal(provider.requestMetrics(input).schemaContract,require('../extension/provider-settings').schemaContract);
+  const mapped=contract.compile(value,input,provider.schema,units);assert.deepEqual(mapped.mapping.feedback.responses,value.feedbackResponses);
+  assert.deepEqual(mapped.output,input.earlierDraft);assert.deepEqual(mapped.output.causal.checks,[]);
+  assert.ok(!contract.catalog(input,provider.schema).targets.some(t=>t.paths.includes('/causal')),'Canonical feedback containers do not expand edit permissions.');
+  for(const target of ['/causal/invented','/','/causal/checks','/explanationReviews','/causal/events/other']){
+    const bad=structuredClone(value);bad.feedbackResponses[0].targets=[target];
+    assert.throws(()=>contract.compile(bad,input,provider.schema,units),error=>error.validationProblems.some(p=>p.code==='REPAIR_FEEDBACK_COVERAGE'));
+    if(target!=='/causal/events/other')assert.equal(format.valid(bad,spec),false,'Noncanonical containers must also fail the wire contract.');
+  }
+  const changed=structuredClone(value);changed.feedbackResponses[0].disposition='changed';changed.feedbackResponses[0].targets=['/causal'];
+  assert.throws(()=>contract.compile(changed,input,provider.schema,units),/Changed feedback must identify actual edits/);
+  changed.edits=[{op:'set',target:'/causal/summary',value:'A source-conditional explanation requiring a fresh complete check.'}];
+  assert.equal(contract.compile(changed,input,provider.schema,units).output.causal.summary,changed.edits[0].value);
+  const rootEdit={...value,edits:[{op:'set',target:'/causal',value:input.earlierDraft.causal}]};
+  assert.equal(format.valid(rootEdit,spec),false);assert.throws(()=>contract.compile(rootEdit,input,provider.schema,units),error=>error.validationProblems.some(p=>p.code==='EDIT_TARGET'));
+  const added=structuredClone(value);added.edits=[{op:'add',target:'/questions',value:{id:'new-question',claimId:'claim-local',text:'Which conditional property applies?',action:'missing-context',target:'Applicable property',why:'The scoped outcome depends on it.'}}];
+  added.feedbackResponses[0].targets=['/questions/new-question'];added.feedbackResponses[0].disposition='changed';
+  assert.equal(format.valid(added,spec),true);assert.equal(contract.compile(added,input,provider.schema,units).output.questions.at(-1).id,'new-question','Historical exact added-item references remain valid only with their own admitted edit.');
+});
 test('review extents reject missing/header-only extra checked sources and preserve explicit sparse context',()=>{
   const{input,units}=fixture(),coverage=require('../extension/source-coverage'),unit=units[0];
   const full=coverage.packet(input,units);assert.doesNotThrow(()=>full.requireUnit(unit.id));

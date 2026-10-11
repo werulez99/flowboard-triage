@@ -54,12 +54,15 @@ class ReportPreparation {
     this.accepted = new Map(); this.requests = new WeakMap(); this.dispatched = new Set();
     this.pendingFindings = new Map(); this.admitting = new Map(); this.localEligible = new Set(); this.controlRevision = 0;
   }
-  continueFinding(id, { repairSavedAnalysis = false, repairResponseHash, recheckLocalPreparation = false, requirements, followupAuthorization, reviseAnalysis } = {}) {
+  continueFinding(id, { repairSavedAnalysis = false, repairResponseHash, recheckLocalPreparation = false, requirements, followupAuthorization, reviseAnalysis, operationIdentity } = {}) {
     p.identifier(id, 'finding continuation ID');
     if (this.disposed) throw new Error('This report owner is closed. Reopen the report.');
     if (!store.readReport(this.root).issues.some(item => item.id === id)) throw new Error('The selected finding is no longer in this report.');
-    if (!this.pendingFindings.has(id) && !this.admitting.has(id) && !this.localEligible.has(id) && !this.tasks.has(id))
-      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis, repairResponseHash, recheckLocalPreparation, requirements, followupAuthorization, reviseAnalysis });
+    if (!this.pendingFindings.has(id) && !this.admitting.has(id) && !this.localEligible.has(id) && !this.tasks.has(id)) {
+      if(!repairSavedAnalysis&&!recheckLocalPreparation&&!reviseAnalysis)
+        operationIdentity ??= require('./next-review-operation').candidateRepair(engine.read(this.root,id))?.identity;
+      this.pendingFindings.set(id, { revision: this.controlRevision, epoch: this.epoch, repairSavedAnalysis, repairResponseHash, recheckLocalPreparation, requirements, followupAuthorization, reviseAnalysis, operationIdentity });
+    }
     // Existing workers admit this at a durable stage boundary. No report-wide
     // resume, allowance increase or cancellation of a sibling is implied.
     return this.ensure();
@@ -497,7 +500,16 @@ class ReportPreparation {
           this.allocateRevision(job,pendingRevision,eligibility);
         }
         const next=require('./next-review-operation').decide(pendingRevision,pendingRevision?policy.gate(pendingRevision):null);
-        if(next.kind==='verify'){
+        if(intent.operationIdentity&&intent.operationIdentity!==next.identity){
+          job.reason='The selected operation changed before admission. Inspect its current candidate, feedback and source; no request was reserved.';this.save();continue;
+        }
+        if(next.reviewPurpose==='candidate-repair'&&!intent.repairSavedAnalysis){
+          const eligibility=this.candidateRepairEligibility(job,pendingRevision,intent.operationIdentity);
+          if(!eligibility.available){job.reason=eligibility.reason;this.save();continue;}
+          this.allocateOperation(job,next.identity,eligibility);
+          job.candidateRepairAdmission={identity:next.identity,candidateHash:next.candidateHash,feedbackRequestId:next.feedbackRequestId};
+          this.save();
+        }else if(next.kind==='verify'){
           const eligibility=this.operationEligibility(job,next);
           if(!eligibility.available){job.reason=eligibility.reason;this.save();continue;}
           this.allocateOperation(job,next.identity,eligibility);
@@ -710,6 +722,11 @@ class ReportPreparation {
             if(data.input.candidateOnly&&(draft.reviewCandidate?.successor||draft.reviewCandidate?.authoringRejection)&&
               (!this.revisionPhases(entry.id)||job.requestLimit-job.requests<2||this.state.resources.limit-this.state.resources.requests-owed<2))
               throw Object.assign(new Error('The explicit revision no longer has capacity for authoring and its fresh verification; no authoring request was reserved.'),{code:'FINDING_BUDGET'});
+            if(data.input.candidateOnly&&draft.reviewCandidate?.state==='repair-requested'&&!draft.reviewCandidate.authoringRejection){
+              const eligible=this.candidateRepairEligibility({...job,state:'queued'},draft,job.candidateRepairAdmission?.identity);
+              if(!job.candidateRepairAdmission?.identity||!eligible.available||eligible.additionalAllocation)
+                throw Object.assign(new Error(eligible.reason||'The exact candidate repair needs selected admission for authoring and fresh verification.'),{code:'FINDING_BUDGET'});
+            }
           };
           challengeCapacity();
           await this.options.authorizeRequest?.({ ...data, findingId: entry.id });
@@ -821,6 +838,7 @@ class ReportPreparation {
     if(job.awaitingRejectedRepair)return blocked('The received repair was rejected. Use Repair saved analysis when its authoring/verification pair is available; local replay cannot edit the response.');
     if(job.publishable||job.correctionHold||job.failureKind==='storage'||job.retainedRejection||['running','waiting-for-provider-capacity'].includes(job.state))return blocked('This finding is already available, active, or needs its specific recovery action.');
     if(job.privateCandidateState==='revision-pending')return this.revisionEligibility(job,engine.read(this.root,job.id),true);
+    if(job.privateCandidateState==='repair-requested')return this.candidateRepairEligibility(job,engine.read(this.root,job.id),job.nextOperation?.identity);
     if(job.nextOperation?.kind==='verify')return this.operationEligibility(job,job.nextOperation);
     if(['evidence','acquire','revalidate'].includes(job.nextOperation?.kind))return blocked(job.nextOperation.reason);
     if(this.state.resources.requests>=this.state.resources.limit)return blocked('Shared report allowance is exhausted.');
@@ -850,6 +868,16 @@ class ReportPreparation {
     if(!['codex','claude'].includes(this.options.configuration().provider))return blocked('Enable the configured source-only provider for the indicated operation.');
     const additionalAllocation=Math.max(0,count-(job.requestLimit-job.requests));
     return{available:true,additionalAllocation,reason:`${operation.reason||'Repair the retained response, then obtain complete fresh verification.'} Required requests: ${count}; selected additional allocation: ${additionalAllocation}; shared remaining: ${remaining}; owed sibling checks: ${owed}.`};
+  }
+  candidateRepairEligibility(job,draft,expectedIdentity){
+    const operation=require('./next-review-operation').candidateRepair(draft),blocked=reason=>({available:false,reason});
+    if(!operation||operation.unavailable)return blocked(operation?.reason||'A current repair-requested candidate is required.');
+    if(expectedIdentity&&expectedIdentity!==operation.identity)return blocked('The retained candidate repair identity changed. Reopen its current feedback and source before continuing.');
+    if(draft.pendingResponse||draft.recoveryRequired)return blocked('Recover the owned response before authoring a repair.');
+    const last=draft.runs?.at(-1);
+    if(last?.requestId!==operation.feedbackRequestId||last.outcome!=='completed'||last.teardown?.confirmed!==true)
+      return blocked('The exact completed verifier response and confirmed cleanup are required before candidate repair.');
+    return {...this.operationEligibility(job,operation),identity:operation.identity,candidateHash:operation.candidateHash,feedbackRequestId:operation.feedbackRequestId};
   }
   revisionEligibility(job,draft,pending=false) {
     let accepted;

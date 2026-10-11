@@ -2,10 +2,22 @@
 // One local decision over the existing lifecycle; never an approval or budget.
 const candidates=require('./review-candidate');
 const coverageCodes=new Set(['OBLIGATION_CHECK_COVERAGE','EVENT_CHECK_COVERAGE','RELATIONSHIP_CHECK_COVERAGE','REVIEW_REQUIREMENTS']);
+function candidateRepair(draft){
+  if(draft?.reviewCandidate?.state!=='repair-requested')return null;
+  const base={kind:'candidate',phase:'challenge',reviewPurpose:'candidate-repair',phases:2};
+  try{
+    const state=candidates.assertCurrent(draft,require('./semantic-provider').schema),feedback=require('./review-feedback').current(state);
+    if(!feedback||state.repairCount>=1)throw new Error('The bounded candidate repair needs its exact current negative review and an unused repair cycle.');
+    const contextHash=candidates.identity(draft),sourceHash=candidates.hash(draft.sources);
+    return {...base,identity:candidates.hash([contextHash,sourceHash,state.candidateHash,feedback.revisionHash,feedback.requestId,feedback.responseHash]),
+      contextHash,sourceHash,candidateHash:state.candidateHash,feedbackRequestId:feedback.requestId,feedbackHash:feedback.responseHash,
+      reason:'Repair this exact retained candidate against its current verifier feedback, then obtain complete fresh verification. No generation or new successor is required.'};
+  }catch(error){return {...base,unavailable:true,reason:error.message};}
+}
 function decide(draft,gate){
   if(!draft)return{kind:'generate',phases:2,reason:'Initial source-grounded authoring and full challenge are required.'};
   if(draft.pendingResponse)return{kind:'recover',phases:0,reason:'Recover the exact owned response locally before any new request.'};
-  if(draft.reviewCandidate)return{kind:draft.reviewCandidate.state==='terminal'?'revision':'candidate',phases:['awaiting-verification'].includes(draft.reviewCandidate.state)?1:2,reason:'Follow the retained private candidate lifecycle.'};
+  if(draft.reviewCandidate)return candidateRepair(draft)||{kind:draft.reviewCandidate.state==='terminal'?'revision':'candidate',phases:['awaiting-verification'].includes(draft.reviewCandidate.state)?1:2,reason:'Follow the retained private candidate lifecycle.'};
   if(draft.phase==='corrected'||draft.claims?.some(c=>c.needsReassessment))return{kind:'reassess',phases:2,reason:'Material inputs changed; existing reassessment and revision obligations apply.'};
   if(require('./technical-assessment').pendingObservations(draft).length)return{kind:'continue',phase:'challenge',phases:1,reason:'Interpret the new associated observation through the ordinary challenge; no generation is needed.'};
   const retained=draft.reviewOperation;
@@ -31,4 +43,4 @@ function decide(draft,gate){
   if(details.some(d=>d.kind==='capability'))return{kind:'revalidate',phases:0,identity,reason:'Revalidate the retained argument locally after the named source/capability changes. Do not regenerate it.'};
   return{kind:'evidence',phases:0,identity,reason:gate?.ready?'The current tutorial is already available.':'The completed review needs the named material evidence or an explicit substantive revision; unchanged generation cannot resolve it.'};
 }
-module.exports={decide,coverageCodes};
+module.exports={decide,candidateRepair,coverageCodes};

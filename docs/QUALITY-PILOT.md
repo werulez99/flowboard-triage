@@ -1,5 +1,149 @@
 # Bounded fresh quality pilot
 
+## Retained L-142 repair and full verification (0.19.37)
+
+Baseline: `d895181757005304a731a438b3675cd05728b7e0`, 0.19.36. The same
+L-142 lineage now has a **current admissible insufficient-evidence / partial
+assessment**, with 30 notes and two claim groups. **No complete fresh tutorial
+was produced.** L-184 remains unassessed; L-113's accepted partial assessment
+remains unchanged. No case was replaced, re-imported or given an expected answer.
+
+The source-grounded result distinguishes conditional exact-key deletion and event
+emission from a violated security rule. A distinct native key can remain unchanged
+when a different submitted key is removed; V3 normalization is separate comparison
+context. Registration and retained support do not guarantee a successful later
+quote. The credible idempotent exact-pair removal interpretation survives. Neither
+the supplied comment nor V3 implementation establishes that V4 must normalize the
+alias or reject absent entries. The report's monitoring and every-consumer claims
+remain explicit rather than silently narrowed away.
+
+The full V returned kept with **30 note reviews, 61 causal/revision checks, one
+premise review and 22 report dispositions**. The four grouped dispositions were
+split without losing original paragraphs, qualifications or proposed changes.
+This is complete review coverage, not independent semantic ground truth. A
+separate AI-only source read-through found the overall inconclusive result
+defensible, but found **over-demanded deployment facts**: several questions require
+actual configured entries/receivers even though conditional source behavior can
+be explained without authenticating a deployment. Do not treat every displayed
+unknown as indispensable external evidence. The existing Ownable helper analyzer
+limit is also distinct from absent source; its downstream "not reached" wording
+does not prove runtime unreachability. No paid answer was edited to remove these
+limitations, and no additional request was purchased to obtain a desired label.
+
+### Generic corrections exercised by the real path
+
+| Boundary | Before | Delivered evidence |
+| --- | --- | --- |
+| Repair-requested selected allocation | A current retained repair at 5/6 had only one free slot and no ordinary selected authoring/full-V pair | Continue derives an identity-bound two-phase operation and uses existing selected allocation for only the missing slot. Actual L-142 became 5/7, then 7/7; shared ceiling stayed 12 and L-184 stayed 3/6. Scripted ordinary-coordinator controls cover 0/1/2 free slots, stale actions, one-V authorization, owed sibling checks and a pre-reservation capacity change. |
+| Feedback references confused with edit permissions | The received R referenced the real `/causal` container in retained feedback; host admission rejected it because only editable paths were catalogued | Schema and host now share canonical feedback containers/items; a reference grants no edit permission or checker approval. Unknown roots, unattested new IDs and changed dispositions without edits still reject. The exact same R was replayed locally and admitted, then received a separate full live V. |
+
+The author received the exact five previous correction problems and complete
+attributed review, original/current argument and acquired route/declaration/oracle
+dependencies. The final R and V each contained **40 exact source units / 506
+numbered rows (503 unique coordinates)**; expanded source views were preserved
+across the transition. Source hashes/ranges and material requirement unions were
+checked, not merely source counts. Newly read code conferred no inherited review.
+The existing 512 KiB request limit and whole-finding Ready gate were not weakened.
+
+| Live stage | Conservative complete packet | Adapter service | Returned input / output tokens |
+| --- | ---: | ---: | ---: |
+| Targeted candidate repair | 259,130 bytes | 196.818s adapter; 196.857s wrapper | 80,921 / 9,755 |
+| Complete candidate reverification | 225,413 bytes | 152.313s adapter; 152.374s wrapper | 72,804 / 7,017 |
+
+The actual stdin plus schema were 78 bytes below these conservative bounds.
+R's initial local rejection, its exact unpaid replay and the full V are preserved
+separately. One V preflight stopped **before reservation, zero calls**, because
+normal source-lookup receipts changed the packet's last-five actions and compact
+dictionary. All expanded material remained identical. Its failed preparation was
+retained; the inspected actual packet was then pinned without deleting receipts
+or relaxing material identity checks. The original exact-purpose R-then-V guard
+was not renewed. Authoring and verification used separately frozen executed build
+manifests; the feedback fix was installed in the latter, not retroactively claimed
+as part of the R's executed instructions.
+Measuring the same R input under the corrected future authoring contract gives
+261,890 bytes (+2,760); this is local schema/instruction overhead, not a second
+live R or a measured model-quality/latency comparison.
+
+Increment: **2 dispatched / 2 completed / 2 admitted / 1 assessment / 0 tutorials**.
+L-142 lifetime: **7 / 5 / 4 / 1 / 0**; L-184: **3 / 1 / 1 / 0 / 0**. The fresh
+two-case cohort is **10 / 6 / 5 / 1 / 0**. Combined recorded history becomes
+**39 / 31 / 23 / 4 / 0**, with four assessment events across three distinct
+findings, not 39 findings or an accuracy sample. Same-request replay is not a
+second response or token charge. L-142 is **7/7**, shared **10/12**, L-184 **3/6**;
+the explicit pair is spent and the numerical shared remainder authorizes no new
+work on a sibling. Original report, human finding, sibling, original reference,
+source/premise context, earlier runs and exact paid response bytes were preserved.
+
+Local source preparation took 100.445s including 76.881s indexing; the R segment
+took 242.106s including 13.457s indexing. Local replay/full-V preparation took
+74.192s including 13.951s indexing. The unpaid V identity stop took 23.654s
+including 11.456s indexing. The successful V segment took 270.514s including
+72.806s indexing; the usable assessment appeared near its end. These are separate
+warm-workspace segments, not one fresh-import latency, disjoint CPU stages or a
+matched speedup. Whole development effort was not instrumented as one timer.
+CLI 0.162.1, CLI-default model, medium effort, two shared slots and the 240s deadline
+were unchanged. Observed model, monetary cost and remote quotas remain unknown.
+Pair adapter service was 349.131s; L-142 lifetime adapter service is 1,464.392s.
+Queue waits were 24ms and 11ms. V receipt-to-admission was 2.860s; R's 392.587s
+receipt-to-replayed-admission includes development/recovery and is not parser CPU.
+The five recorded segments sum to 710.910s, excluding development gaps and a
+standalone read-only preflight; first R start to assessment wall time was
+1,246.781s including those gaps. Neither measures cold import or whole development.
+
+L-184's read-only receipt comparison found no substantive content/final in either
+completion, despite the second receiving additional unit/configuration context.
+Both completed input writes and confirmed owned cleanup; timeout cause remains
+**unknown**, with no demonstrated exit-lag replay opportunity. A supplied ownership
+helper was absent from the later packet and its question retained a reading-limit
+receipt. Reconcile that exact local context before any separately authorized
+future semantic attempt; it is not established as the timeout cause. No new
+L-184 or L-113 dispatch, protocol execution or generated PoC occurred.
+
+Focused final controls passed 11 selected-allocation/coordinator cases and four
+feedback/reference/replay cases (scripted provider responses, not model accuracy).
+Earlier failed focused runs remain recorded: they exposed stale fixture state and
+an actual overlap with the pre-existing rejected-response repair route, which was
+corrected before the live pair. The final-code canonical run was **685/686, zero
+skipped**, in 488.580s: its unchanged 204-job control reached **149/204** at the
+120s deadline (120.759s including termination). This is a failed release gate,
+not a green suite or real-provider throughput result; its assertion was not relaxed.
+One isolated run with the existing profiler also failed, **143/204 in 122.287s**
+(instrumented). Its 80.711s CPU and nested wall timings identify durable journal
+work as dominant: 2,448 saves, 1.778 GB cumulative journal writes, 1.40 MB largest
+journal; save inclusive 74.801s, atomic persistence 64.386s, status 11.397s.
+These overlapping measurements are not additive. The new repair-specific paths
+are absent from this cold G/challenge fixture. No safely removable redundant
+operation or causal environmental explanation was isolated. The deadline and
+durable boundaries remain unchanged; this build is a **development checkpoint,
+not a fully verified release**. No repeated deadline run was used to obtain green.
+
+The actual saved L-142 result passed five native inspection groups using the
+installed original Flowboard 1.2.0 renderer and frozen 0.19.37 companion bytes.
+At 1440x900 and 801x600, the partial result, exact remaining questions, original
+source and Return are readable; source rows 48-51 of the owner modifier and
+169-171 of the key helper remain complete. Compact code was 14px, with its tail
+reachable. These are short source bodies, not a demonstrated long-function
+tutorial. Keyboard-focusable blocker groups, camera/selection restoration, late
+focus rejection after Return and compatible saved reopen passed with **zero
+provider callbacks**. No unchecked tutorial annotations were displayed.
+All captured read-throughs were AI-only with simulated editor I/O, not an observed
+Cursor window or human comprehension study. There was no Ready guide on which
+real Next/Previous or causal tutorial playback could be claimed.
+
+Click-to-visible-target-plus-two-frame samples (n=1 each) were **2,119.6ms** for
+source inspection, **144.1ms** for Return and **28,250.1ms** for saved selected
+reopen. The latter reused the source catalog; its host board-open span was
+5,682.9ms, while the full browser endpoint also awaited subsequent messages.
+Inspection's host span was 1,602.3ms, including currentness/read checks and the
+exact source reply; a focus render handler took 260.5ms. Independent host/browser
+clocks and nested timings are not additive. Broad harness windows were separately
+4,637.6ms / 596.5ms / 42,126.0ms and must not be substituted for those samples.
+These observations do not isolate a new safely removable bottleneck, establish
+p95, or compare matched scenes as a speedup. The generic native smoke gate also
+passed, using fictional manual-review data and simulated editor I/O, not another
+real tutorial. The fresh tutorial milestone and real 200-finding throughput
+target remain unmet/unmeasured respectively.
+
 ## Ordinary fresh journeys and retained correction (0.19.36)
 
 Executed baseline: `84a690ae77240bbaa530313e7bce749199249e1c`, 0.19.35,

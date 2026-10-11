@@ -1,4 +1,18 @@
-# Source investigation runtime — 0.19.36
+# Source investigation runtime — 0.19.37
+
+An explicitly selected repair-requested candidate requires ordinary capacity for
+authoring and its mandatory fresh verifier before authoring starts. Continue uses
+the same exact candidate/source/feedback identity for eligibility and admission;
+it adds only missing selected allocation, never resets usage or resumes siblings.
+Shared capacity and fixed phase permissions are rechecked before paid dispatch.
+No change to source interpretation, provider instructions or review requirements
+is implied by this allocation correction.
+
+The separate feedback-reference correction aligns repair schema and host
+validation on canonical containers/items rather than conflating references with
+editable addresses. Grouped feedback is still untrusted authoring accountability,
+not a checker attestation. Exact paid-response replay preserves its historical
+rejection and cannot bypass fresh substantive verification.
 
 Exact call validation checks nested receiver/option/argument evaluation before
 entering an external call or accepting its return/catch continuation. A proven

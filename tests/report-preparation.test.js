@@ -476,7 +476,7 @@ test('completed negative candidate verification exposes exact feedback and a ter
     f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
     const value=input.candidateOnly?candidatePatch(response({...input,checkOnly:false})):checkedCandidate(input);
     if(input.checkOnly){value.result='repair';value.problems=problems;}
-    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId}};
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};
   };
   await f.runner.continueFinding('I-1');
   assert.equal(engine.read(f.root,'I-1').reviewCandidate.state,'repair-requested');
@@ -494,6 +494,71 @@ test('completed negative candidate verification exposes exact feedback and a ter
   assert.equal(f.calls.length,calls);assert.equal(f.runner.state.jobs['I-1'].requests,used);assert.deepEqual(engine.read(f.root,'I-1').reviewCandidate,exact);
   const mismatched=structuredClone(draft);mismatched.reviewCandidate.verification.candidateHash='other-artifact';const projected={};
   f.runner.recoveryStatus(projected,mismatched);assert.equal(projected.verificationCompletion,null,'A received check cannot be attributed to another candidate.');
+});
+async function seedCandidateRepairAllocation(t,remaining=1){
+  const f=await seedCorrectionRace(t);f.options.invoke=async(input,options)=>{
+    f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);const value=checkedCandidate(input);
+    value.result='repair';value.problems=['Reconcile the false guard with the claim of a committed effect.'];
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};
+  };
+  await f.runner.continueFinding('I-1');
+  const draft=engine.read(f.root,'I-1');assert.equal(draft.reviewCandidate.state,'repair-requested');
+  // Two explicitly fictional earlier completed attempts model the retained
+  // five-used state without altering its actual current negative response.
+  const job=f.runner.state.jobs['I-1'];
+  for(let n=0;n<2;n++)f.runner.state.resources.receipts['earlier-fixture-'+n]={id:'earlier-fixture-'+n,findingId:'I-1',phase:'challenge',outcome:'completed',finishedAt:new Date().toISOString()};
+  job.requests+=2;f.runner.state.resources.requests+=2;job.requestLimit=job.requests+remaining;
+  Object.assign(f.runner.state.jobs['I-2'],{state:'paused',checkpoint:{stage:'challenge'}});
+  f.runner.save();return f;
+}
+for(const left of [0,1,2])test(`selected repair-requested Continue allocates only its missing pair (${left} slots)`,{skip:!native},async t=>{
+  const f=await seedCandidateRepairAllocation(t,left),before=engine.read(f.root,'I-1'),candidate=structuredClone(before.reviewCandidate);let job=f.runner.state.jobs['I-1'];
+  const used=job.requests,limit=f.runner.state.resources.limit,receipts=structuredClone(f.runner.state.resources.receipts),sibling=structuredClone(f.runner.state.jobs['I-2']),calls=f.calls.length;
+  assert.equal(used,5);const eligibility=f.runner.continuationEligibility(job),identity=eligibility.identity;
+  assert.equal(eligibility.available,true,eligibility.reason);assert.equal(eligibility.additionalAllocation,2-left);assert.match(eligibility.reason,/owed sibling checks: 1/);
+  const authorized=[];f.options.authorizeRequest=async data=>{
+    authorized.push(data.input.reviewPurpose);assert.equal(f.runner.state.jobs['I-1'].requestLimit,7);assert.equal(f.runner.state.resources.limit,limit);
+    assert.equal(f.runner.state.jobs['I-2'].requests,sibling.requests);assert.equal(f.runner.state.jobs['I-2'].requestLimit,sibling.requestLimit);
+    if(data.input.candidateOnly){assert.equal(data.input.hostReview.requestId,candidate.verification.requestId);assert.equal(data.input.hostReview.responseHash,require('../extension/review-candidate').hash(candidate.verification.response));}
+  };
+  f.options.invoke=async(input,options)=>{
+    f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
+    const value=input.candidateOnly?candidatePatch(response({...input,checkOnly:false})):checkedCandidate(input);
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};
+  };
+  await Promise.all([f.runner.continueFinding('I-1',{operationIdentity:identity}),f.runner.continueFinding('I-1',{operationIdentity:identity})]);
+  const after=engine.read(f.root,'I-1');job=f.runner.state.jobs['I-1'];assert.equal(f.calls.length,calls+2,JSON.stringify({reason:job.reason,error:after.error,op:job.nextOperation}));
+  assert.deepEqual(authorized,['candidate-repair','candidate-reverification']);assert.ok(f.runner.artifact('I-1'),after.error);
+  assert.equal(job.requests,used+2);assert.equal(job.requestLimit,7);assert.equal(f.runner.state.resources.limit,limit);
+  assert.equal(job.selectedAllocations?.length||0,left<2?1:0);if(left<2){assert.equal(job.selectedAllocations[0].id,identity);assert.equal(job.selectedAllocations[0].used,5);}
+  for(const[id,receipt]of Object.entries(receipts))assert.deepEqual(f.runner.state.resources.receipts[id],receipt);
+  assert.equal(f.runner.state.jobs['I-2'].requests,sibling.requests);assert.equal(f.runner.state.jobs['I-2'].requestLimit,sibling.requestLimit);
+  assert.equal(after.revisionPredecessors?.length||0,before.revisionPredecessors?.length||0,'Ordinary repair does not fabricate a successor.');
+  assert.deepEqual(after.candidateHistory.at(-1).history.at(-1).verification,candidate.verification);
+  f.options.configuration=()=>({provider:'none'});await f.runner.ensure();await f.runner.continueFinding('I-1',{operationIdentity:identity});assert.equal(f.calls.length,calls+2);
+});
+test('repair-requested pair rejects stale, one-V, shared-insufficient and changed admission before reserving authoring',{skip:!native},async t=>{
+  const f=await seedCandidateRepairAllocation(t),calls=f.calls.length;let job=f.runner.state.jobs['I-1'];const used=job.requests,limit=job.requestLimit,reportLimit=f.runner.state.resources.limit;
+  const identity=f.runner.continuationEligibility(job).identity;assert.ok(identity);
+  await f.runner.continueFinding('I-1',{operationIdentity:'stale-operation'});job=f.runner.state.jobs['I-1'];assert.equal(f.calls.length,calls);assert.equal(job.requestLimit,limit);
+  f.options.phasePlan=()=>['challenge'];f.options.phaseRemaining=()=>true;f.options.remainingPhasePlan=()=>[{phase:'challenge',reviewPurpose:'candidate-reverification'}];
+  assert.equal(f.runner.continuationEligibility(job).available,false);await f.runner.continueFinding('I-1',{operationIdentity:identity});job=f.runner.state.jobs['I-1'];assert.equal(f.calls.length,calls);assert.equal(job.requestLimit,limit);
+  delete f.options.phasePlan;delete f.options.phaseRemaining;delete f.options.remainingPhasePlan;
+  f.runner.state.resources.limit=f.runner.state.resources.requests+2;f.runner.save();
+  assert.equal(f.runner.continuationEligibility(job).available,false,'One owed sibling verification leaves less than a repair pair.');
+  await f.runner.continueFinding('I-1',{operationIdentity:identity});job=f.runner.state.jobs['I-1'];assert.equal(f.calls.length,calls);assert.equal(job.requestLimit,limit);
+  f.runner.state.resources.limit=reportLimit;f.runner.save();f.options.configuration=()=>({provider:'none'});
+  assert.equal(f.runner.continuationEligibility(job).available,false);await f.runner.continueFinding('I-1',{operationIdentity:identity});job=f.runner.state.jobs['I-1'];assert.equal(f.calls.length,calls);assert.equal(job.requestLimit,limit);
+  f.options.configuration=()=>({provider:'codex',workers:1,requestLimit:12,findingRequestLimit:6});
+  let authorizations=0;f.options.authorizeRequest=async()=>{authorizations++;f.runner.state.resources.limit=f.runner.state.resources.requests+2;};
+  await f.runner.continueFinding('I-1',{operationIdentity:identity});job=f.runner.state.jobs['I-1'];assert.equal(authorizations,1);assert.equal(f.calls.length,calls,'Capacity is rechecked after awaited authorization, before any paid authoring.');
+  assert.equal(job.requests,used);assert.equal(job.requestLimit,limit+1);assert.equal(job.selectedAllocations.length,1);
+  // The selected ceiling is durable; an interrupted admission/reopen cannot
+  // add it again, even when the remaining shared capacity is later restored.
+  f.runner.state.resources.limit=reportLimit;f.runner.save();delete f.options.authorizeRequest;
+  assert.equal(f.runner.candidateRepairEligibility(job,engine.read(f.root,'I-1'),identity).additionalAllocation,0);
+  f.options.invoke=async(input,options)=>{f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);return{value:input.candidateOnly?candidatePatch(response({...input,checkOnly:false})):checkedCandidate(input),audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};};
+  await f.runner.continueFinding('I-1',{operationIdentity:identity});job=f.runner.state.jobs['I-1'];assert.equal(f.calls.length,calls+2,job.reason);assert.equal(job.selectedAllocations.length,1);assert.equal(job.requestLimit,limit+1);
 });
 for(const findingLimit of [4,5,6])test(`an explicit rejected-repair correction allocates its ordinary pair (${findingLimit-4} slots)`,{skip:!native},async t=>{
   const f=await seedCorrectionRace(t,findingLimit);let bad=true,negative=true,raw;

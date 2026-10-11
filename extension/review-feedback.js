@@ -48,20 +48,39 @@ function diagnostics(draft) {
     action:ref.status==='unbound'?'Correct or explicitly resolve the unbound reference; it is not a canonical acquisition requirement.':'Supply this exact material source in the next review; the past response did not receive its complete extent.'});
   return records;
 }
-function responseSchema(feedback) {
+function targetCatalog(input,full){
+  const {targets}=require('./authoring-contract').catalog(input,full),paths=new Set();
+  // Feedback references describe canonical argument containers as well as
+  // existing items. They are not the operations allowed to mutate that data.
+  for(const target of targets.flatMap(t=>t.paths)){
+    let path=target;
+    while(path){paths.add(path);path=path.slice(0,path.lastIndexOf('/'));}
+  }
+  return {paths:[...paths].sort(),additions:targets.filter(t=>t.op==='add').flatMap(t=>t.paths)};
+}
+function targetSchema(catalog){
+  const choices=[{type:'string',enum:catalog.paths}];
+  // A fresh stable ID is not known before authoring. The host additionally
+  // requires its exact admitted add edit; names merely matching this shape
+  // cannot become references. Existing collection targets remain sufficient.
+  for(const path of catalog.additions)choices.push({type:'string',pattern:'^'+path.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'/[^/~]+$'});
+  return choices.length===1?choices[0]:{anyOf:choices};
+}
+function responseSchema(feedback,catalog) {
   const ids=entries(feedback).map(e=>e.id);
   return {type:'array',maxItems:ids.length,items:{type:'object',additionalProperties:false,
     properties:{feedbackIds:{type:'array',minItems:1,maxItems:ids.length,items:{type:'string',enum:ids}},
       // Use the pinned wire subset, keeping the same nonblank host rule below.
       // Feedback dispositions remain authoring accountability, never checks.
       disposition:{enum:['changed','retained','unresolved']},reason:{type:'string',pattern:'\\S',maxLength:2400},
-      targets:{type:'array',maxItems:80,items:{type:'string'}}},required:['feedbackIds','disposition','reason','targets']}};
+      targets:{type:'array',maxItems:80,items:catalog?targetSchema(catalog):{type:'string'}}},required:['feedbackIds','disposition','reason','targets']}};
 }
 function validate(value,input,edits,full) {
   const f=input.hostReview;if(f?.version!==VERSION)return null;
   const records=value.feedbackResponses,expected=new Set(entries(f).map(e=>e.id)),seen=new Set(),problems=[];
-  if(!require('./challenge-format').valid(records,responseSchema(f)))throw new Error('Private repair must account for the complete attributed verifier feedback.');
-  const known=new Set(require('./authoring-contract').catalog(input,full).targets.flatMap(t=>t.paths));
+  const catalog=targetCatalog(input,full);
+  if(!require('./challenge-format').valid(records,responseSchema(f,catalog)))throw new Error('Private repair must account for the complete attributed verifier feedback using canonical feedback targets.');
+  const known=new Set(catalog.paths);
   for(const r of records){
     for(const id of r.feedbackIds){if(seen.has(id))problems.push(`Repeated feedback ${id}`);seen.add(id);}
     for(const target of r.targets)if(!known.has(target)&&!edits.some(e=>e.path===target))problems.push(`Unknown feedback target ${target}`);
@@ -72,4 +91,4 @@ function validate(value,input,edits,full) {
   if(problems.length)throw new Error(problems.join('; '));
   return {feedbackHash:f.responseHash,requestId:f.requestId,responses:structuredClone(records)};
 }
-module.exports={VERSION,current,entries,diagnostics,responseSchema,validate};
+module.exports={VERSION,current,entries,diagnostics,targetCatalog,responseSchema,validate};

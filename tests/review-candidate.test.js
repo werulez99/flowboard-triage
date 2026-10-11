@@ -413,6 +413,34 @@ test('completed check disagreement alone unlocks repair; absent coverage and tim
   await engine.advance({...f,invoke:async input=>{assert.equal(input.reviewPurpose,'candidate-reverification');return{value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V2'}};}});
   assert.equal(f.draft.phase,'ready',f.draft.error);
 });
+test('retained repair container attribution replays unchanged locally and still needs full fresh verification',{skip:!native},async t=>{
+  const f=await fixture(t);await generation(f);
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'container-C'}})});
+  await engine.advance({...f,invoke:async input=>({value:{...verification(input),result:'repair',problems:['Reconcile the conditional explanation.']},audit:{phase:'challenge',outcome:'completed',requestId:'container-V',teardown:{confirmed:true}}})});
+  assert.equal(f.draft.reviewCandidate.state,'repair-requested');
+  const feedback=require('../extension/review-feedback'),oldSchema=feedback.responseSchema,validate=feedback.validate;let raw,calls=0;
+  // Reproduce the historical mismatch: wire allowed string references, while
+  // the old host confused reference containers with editable operation paths.
+  const schemaMock=t.mock.method(feedback,'responseSchema',value=>oldSchema(value));
+  const validationMock=t.mock.method(feedback,'validate',(value,input,edits,full)=>{
+    const known=new Set(require('../extension/authoring-contract').catalog(input,full).targets.flatMap(t=>t.paths));
+    for(const item of value.feedbackResponses)for(const target of item.targets)if(!known.has(target)&&!edits.some(e=>e.path===target))throw Error('Unknown feedback target '+target);
+    return validate(value,input,edits,full);
+  });
+  try{await engine.advance({...f,invoke:async input=>{
+    calls++;raw={mode:require('../extension/authoring-contract').CANDIDATE,edits:[],feedbackResponses:[{feedbackIds:feedback.entries(input.hostReview).map(e=>e.id),disposition:'retained',reason:'The exact supplied guard and conditional rollback explanation remain for full fresh review.',targets:['/causal']}]};
+    return{value:raw,audit:{phase:'challenge',outcome:'completed',requestId:'container-R',teardown:{confirmed:true}}};
+  }});}finally{schemaMock.mock.restore();validationMock.mock.restore();}
+  assert.match(f.draft.error,/Unknown feedback target \/causal/);assert.ok(f.draft.pendingResponse);assert.equal(f.draft.reviewCandidate.repairCount,0);
+  const rejected=structuredClone(f.draft.currentRejection),pending=structuredClone(f.draft.pendingResponse);f.draft=engine.read(f.root,f.findingId);
+  await engine.advance({...f,localOnly:true,invoke:()=>assert.fail('Exact unpaid response replay must not dispatch')});
+  assert.equal(calls,1);assert.equal(f.draft.reviewCandidate.state,'awaiting-verification',f.draft.error);assert.equal(f.draft.reviewCandidate.repairCount,1);
+  assert.equal(f.draft.reviewCandidate.verification,null);assert.equal(policy.gate(f.draft).ready,false,'Container attribution is not a fresh approval.');
+  assert.deepEqual(f.draft.localRevalidations.at(-1).previousRejection,rejected);assert.equal(f.draft.localRevalidations.at(-1).archive.hash,pending.hash);
+  const archived=JSON.parse(fs.readFileSync(path.join(f.root,f.draft.localRevalidations.at(-1).archive.archive)));assert.deepEqual(archived.result.value,raw,'The paid-equivalent response remains byte-content identical.');
+  await engine.advance({...f,invoke:async input=>{calls++;assert.equal(input.reviewPurpose,'candidate-reverification');return{value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'container-V2',teardown:{confirmed:true}}};}});
+  assert.equal(calls,2);assert.equal(f.draft.phase,'ready',f.draft.error);
+});
 test('saved candidate response recovers locally, and a response for an older candidate cannot verify its replacement',{skip:!native},async t=>{
   const f=await fixture(t);await generation(f);
   // Save the exact completed C response, then interrupt at the durable pending
