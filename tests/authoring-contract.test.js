@@ -99,6 +99,14 @@ test('legacy diagnosis collects illegal addressing and independent quote mismatc
   }
   assert.deepEqual(legacy,copy,'Guidance never repairs a received answer or quote.');
 });
+test('supplied long selections report the existing note limit, not missing source, in actual authoring instructions',()=>{
+  const {input,units}=fixture();units[0].code=Array.from({length:90},(_,i)=>`// line ${i+1}`).join('\n');units[0].source.endLine=90;
+  input.sources[0].endLine=90;input.sources[0].code=units[0].code.split('\n').map((s,i)=>`${i+1} | ${s}`).join('\n');
+  const note={id:'note-new',claimId:'claim-local',stance:'context',explanation:'Bounded source selection, still unreviewed.',selection:{sourceId:'source-local',sourceHash:'a'.repeat(64),line:1,endLine:82}};
+  assert.match(provider.measureRequest(input).system,/at most 81 original lines/);
+  assert.throws(()=>contract.selected(note,input,units,'/evidence/note-new'),e=>e.validationProblems[0].code==='SOURCE_SELECTION_LENGTH');
+  note.selection.endLine=81;assert.equal(contract.selected(note,input,units,'/evidence/note-new').quote.split('\n').length,81);
+});
 test('shared enforced schema references cannot be dangling or cyclic',()=>{
   assert.equal(format.valid('x',{$ref:'#/$defs/nope',$defs:{}}),false);
   assert.equal(format.valid('x',{$ref:'#/$defs/a',$defs:{a:{$ref:'#/$defs/a'}}}),false);

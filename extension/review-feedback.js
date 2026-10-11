@@ -9,16 +9,18 @@ function current(state) {
     v.response.result!=='repair'||hash(v.problems)!==hash(v.response.problems))
     throw Object.assign(new Error('Verifier feedback does not identify this exact candidate and revision.'),{code:'CANDIDATE_STALE'});
   return {version:VERSION,requestId:v.requestId,candidateHash:v.candidateHash,revisionHash:v.revisionHash,
-    responseHash:hash(v.response),response:structuredClone(v.response)};
+    responseHash:hash(v.response),response:structuredClone(v.response),
+    ...(v.sourceReferences?.responseHash===hash(v.response)&&v.sourceReferences.requestId===v.requestId?
+      {referenceDiagnostics:structuredClone(v.sourceReferences.references.filter(r=>r.status!=='supplied'))}:{})};
 }
 function entries(feedback) {
   if(!feedback||feedback.version!==VERSION)return [];
   if(hash(feedback.response)!==feedback.responseHash)throw new Error('Retained verifier feedback changed.');
   const v=feedback.response;
   return [
-    ...(v.problems||[]).map((reason,i)=>({id:`problem:${i}`,target:'/reviewCandidate',reason,evidence:[]})),
-    ...(v.explanationReviews||[]).map((r,i)=>({id:`note:${i}`,target:`/evidence/${r.evidenceId}`,reason:r.reason,evidence:[r.evidenceId],checkedSourceIds:r.checkedSourceIds})),
-    ...(v.inputReviews||[]).map((r,i)=>({id:`premise:${i}`,target:`/inputs/${r.id}`,reason:r.reason,evidence:r.evidence||[]})),
+    ...(v.problems||[]).map((reason,i)=>({id:`problem:${i}`,target:'/reviewCandidate',reason,evidence:[],feedbackRole:'correction'})),
+    ...(v.explanationReviews||[]).map((r,i)=>({id:`note:${i}`,target:`/evidence/${r.evidenceId}`,reason:r.reason,evidence:[r.evidenceId],checkedSourceIds:r.checkedSourceIds,result:r.result})),
+    ...(v.inputReviews||[]).map((r,i)=>({id:`premise:${i}`,target:`/inputs/${r.id}`,reason:r.reason,evidence:r.evidence||[],status:r.status})),
     ...(v.checks||[]).map((r,i)=>({id:`check:${i}`,target:r.target,reason:r.reason,evidence:r.evidence||[]})),
     ...(v.reportReview?[{id:'report',target:'/reportCoverage',reason:JSON.stringify(v.reportReview),evidence:[]}]:[])
   ];
@@ -26,17 +28,25 @@ function entries(feedback) {
 function diagnostics(draft) {
   const f=current(draft.reviewCandidate);if(!f)return [];
   const models=[draft.reviewCandidate.candidate,draft.reviewCandidate.referenceBase||draft.reviewCandidate.acceptedBase];
-  return entries(f).map(item=>{
+  const records=entries(f).map(item=>{
     const notes=item.evidence.flatMap(id=>models.flatMap(m=>(m?.evidence||[]).filter(e=>e.id===id)));
     const locations=notes.map(n=>{const unit=draft.sources.find(u=>u.id===n.sourceId);return unit&&{...unit.source,line:n.source?.line??n.line,endLine:n.source?.endLine??n.endLine};}).filter(Boolean);
     const unique=[...new Map(locations.map(s=>[JSON.stringify(s),s])).values()];
     // Never infer a location from review prose, or arbitrarily choose one of
     // several reviewed sources. Note-specific rows retain exact inspectability.
-    return {id:hash([f.requestId,f.responseHash,item.id]),code:'CANDIDATE_VERIFICATION_REPAIR',target:item.target,
-      feedbackId:item.id,message:item.reason,kind:'interpretation',group:item.id.startsWith('problem:')?'Current corrections':'Review reasoning (not approval)',
+    const correction=item.feedbackRole==='correction';
+    return {id:hash([f.requestId,f.responseHash,item.id]),code:correction?'CANDIDATE_VERIFICATION_REPAIR':'CANDIDATE_REVIEW_REASONING',target:item.target,
+      feedbackId:item.id,feedbackRole:correction?'correction':'reasoning',result:item.result,status:item.status,message:item.reason,kind:'interpretation',group:correction?'Current corrections':'Review reasoning (not approval)',sources:unique,
       ...(unique.length===1?{source:unique[0]}:{}),
-      action:'Reconcile this attributed feedback and its dependent assertions in a private revision; fresh verification is required.'};
+      ...(correction?{action:'Reconcile the affected argument in a private revision; fresh verification is required.'}:{})};
   });
+  const refs=draft.reviewCandidate.verification.sourceReferences;
+  if(refs?.requestId===f.requestId&&refs.responseHash===f.responseHash)for(const ref of refs.references.filter(r=>r.status!=='supplied'))records.push({
+    id:hash([f.requestId,f.responseHash,'reference',ref.sourceId]),code:'FEEDBACK_SOURCE_REFERENCE',feedbackRole:'correction',
+    target:'/reviewCandidate/verification',message:`${ref.sourceId}: ${ref.reason}`,kind:ref.status==='unbound'?'interpretation':'local-reading',
+    group:ref.status==='unbound'?'Unbound feedback references':'Local source needed',sources:ref.source?[ref.source]:[],...(ref.source?{source:ref.source}:{}),
+    action:ref.status==='unbound'?'Correct or explicitly resolve the unbound reference; it is not a canonical acquisition requirement.':'Supply this exact material source in the next review; the past response did not receive its complete extent.'});
+  return records;
 }
 function responseSchema(feedback) {
   const ids=entries(feedback).map(e=>e.id);

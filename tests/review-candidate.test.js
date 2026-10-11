@@ -317,7 +317,7 @@ for(const extraFile of ['Required.sol','test/Required.t.sol'])test(`new material
   await engine.advance({...f,invoke:async input=>({value:verification(input),audit:{phase:'challenge',outcome:'completed',requestId:'V-retained-source'}})});
   assert.equal(f.draft.phase,'ready',f.draft.error);
 });
-test('repair history keeps prior checker source dependencies in the next actual V packet',{skip:!native},async t=>{
+test('negative V retains invalid feedback without poisoning repair; valid history dependencies reach the next V',{skip:!native},async t=>{
   const f=await fixture(t,'route',0,3);await generation(f);
   const context=engine.makeContext(f.catalog,f.request);context.restore(f.draft.sources,f.draft);
   const fn=name=>f.catalog.functions.find(item=>item.name===name);
@@ -326,13 +326,22 @@ test('repair history keeps prior checker source dependencies in the next actual 
   await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'history-C'}})});
   await engine.advance({...f,invoke:async input=>{
     const value=verification(input);value.result='repair';value.problems=['Clarify that the false guard leaves no committed write.'];
-    value.explanationReviews[0].checkedSourceIds.push(dependency);
+    value.explanationReviews[0].checkedSourceIds.push(dependency,'s-invented-feedback');
     return{value,audit:{phase:'challenge',outcome:'completed',requestId:'history-V'}};
   }});
   assert.equal(f.draft.reviewCandidate.state,'repair-requested',f.draft.error);
+  assert.ok(f.draft.reviewCandidate.verification.response.explanationReviews[0].checkedSourceIds.includes('s-invented-feedback'),'Exact received feedback is retained.');
+  assert.ok(!require('../extension/source-coverage').necessary(f.draft).includes('s-invented-feedback'));
+  assert.ok(require('../extension/source-coverage').necessary(f.draft).includes(dependency));
+  assert.ok(require('../extension/review-feedback').diagnostics(f.draft).some(d=>d.code==='FEEDBACK_SOURCE_REFERENCE'&&d.message.includes('s-invented-feedback')));
+  f.draft=engine.read(f.root,f.findingId);
   const paid=f.draft.runs.at(-1).retainedResponse;
   require('../extension/provider-result').retainOriginal(f.root,f.findingId,paid);
-  await engine.advance({...f,invoke:async input=>({value:{mode:format.CANDIDATE,updates:[{path:'/evidence/approval-guard/explanation',valueJSON:JSON.stringify('The false approval reverts the internal call and the preceding intermediate writes. No write in this transaction commits.')} ]},audit:{phase:'challenge',outcome:'completed',requestId:'history-R'}})});
+  await engine.advance({...f,invoke:async input=>{
+    assert.ok(!input.requiredSourceIds.includes('s-invented-feedback'));
+    assert.ok(input.hostReview.response.explanationReviews[0].checkedSourceIds.includes('s-invented-feedback'));
+    return{value:{mode:format.CANDIDATE,updates:[{path:'/evidence/approval-guard/explanation',valueJSON:JSON.stringify('The false approval reverts the internal call and the preceding intermediate writes. No write in this transaction commits.')} ]},audit:{phase:'challenge',outcome:'completed',requestId:'history-R'}};
+  }});
   assert.equal(f.draft.reviewCandidate.verification,null);assert.ok(f.draft.reviewCandidate.history[0].verification.response.explanationReviews[0].checkedSourceIds.includes(dependency));
   const required=fn('definition1'),doc=f.catalog.document('Required.sol'),exact=structuredClone(f.draft.reviewCandidate);
   f.draft.localPreparation={contextHash:candidate.identity(f.draft),requirements:[{file:'Required.sol',line:required.startLine,endLine:required.endLine,sourceHash:engine.hash(doc.text),reason:'New material definition; old review dependencies remain independently protected.'}]};

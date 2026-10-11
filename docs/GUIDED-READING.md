@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.32
+# Checked finding walkthroughs — 0.19.33
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -50,9 +50,25 @@ review when current source/premises, owned response/cleanup, phase plan and
 remaining finding/report capacity permit both authoring and fresh verification.
 Its exact predecessor and paid response are archived unchanged. Consumed usage
 and repair counts remain monotonic; repeated clicks/reopen do not restart a cycle.
-One remaining request does not fund an authoring/verification pair. A new prompt
-or numerical slot never resets a terminal record. Unavailable actions explain
-the governing provider, recovery or allowance boundary.
+Within ordinary configuration, the explicit selected action can add the missing
+allocation to that finding's allowed ceiling (including five used of six allowed),
+only when shared capacity can cover authoring and fresh verification after owed
+sibling checks. Spent counters and sibling ceilings do not change. A fixed phase
+window containing only one V still cannot authorize the pair. Continue and Revise
+use host-derived phase eligibility; an interrupted successor allocation can be
+completed by explicit selected Continue without duplicating the successor. A new
+prompt or numerical slot never resets a terminal record. Unavailable actions
+explain the governing provider, recovery or allowance boundary.
+
+A completed typed repair rejected atomically remains available for zero-call
+local replay. **Repair saved analysis** can explicitly request correction of that
+exact response, carrying its raw unaccepted edits and current diagnostics beside
+the original verifier feedback. It requires the existing remaining authoring + V
+pair, exact current candidate/response/source identities and confirmed cleanup;
+it adds no allowance and cannot run twice from a stale click. Source selections
+are bounded to 81 original lines per evidence note, not per full source function.
+A longer supplied selection gets a length diagnostic, not a claim that its code
+was missing. The model must choose relevant spans; the host never trims its answer.
 
 Typed original/current/revision source dependencies share restore and priority
 handling, including candidate-only test sources and still-relevant prior checker
@@ -62,12 +78,23 @@ numbered bytes and ranges; extra returned checked source IDs must also have
 their complete callable body, or explicit bounded context extent, in that packet.
 Historical packets and their narrower attestations are not retroactively changed.
 Unbound discovery neighbors remain optional; the source/byte limits are unchanged.
+Unaccepted verifier IDs are bound to their originating packet and canonical
+sources before becoming acquisition requirements. Unknown IDs remain exact
+inspectable feedback, not impossible canonical dependencies. An archived source
+omitted from that packet is prospective acquisition, not proof of past delivery.
+Named local implementation acquisition uses the typed question target as well
+as its text/reason, still requiring an unambiguous exact contract match; matching
+a name does not authenticate a deployed receiver.
 
 Negative feedback is labeled unaccepted guidance. Known note targets open exact
 original rows, comments and complete functions, without exposing private causal
 roles or unchecked tutorial annotations. Unbound prose gets no guessed source
 anchor. Return restores the source scroll/selection/camera; late navigation
-responses cannot reclaim focus after Return or a newer selection.
+responses cannot reclaim focus after Return or a newer selection. Explicit
+correction problems are separate from supporting review reasoning, whose original
+note result and premise status remain visible without implying whole-finding
+approval. Multiple known anchors have separate exact source actions. Private
+terminal predecessor narratives never enter ready/blocked native or copy DTOs.
 
 The shared capacity is 64 evidence notes, 128 old/new explanation reviews and a
 separate finite ceiling of 160 non-note revision checks (bounded claims,

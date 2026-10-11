@@ -1,5 +1,113 @@
 # Bounded fresh quality pilot
 
+## Ordinary real import and bounded recovery (0.19.33)
+
+Baseline: `67f214a746f5b68e3e99b112d26f303f44034c34`, 0.19.32.
+L-113 was prospectively selected from the user's original imported report, with
+versioned local source, before any new response. It had no prior review and was
+imported alone into an owned workspace with the ordinary six-request allocation.
+No expected verdict, candidate or tutorial was supplied. The user's original
+workspace and the six-case historical ledger were not reset or modified.
+
+**The primary tutorial milestone remains unmet.** Six real responses completed;
+four stages passed host ingestion, including one fresh `kept` verification.
+The final gate withheld the technical projection (`not-assessed`, needs recheck)
+because three current-obligation checks omitted required evidence references.
+The argument also retains collection-rule/account-capability unknowns and a
+supplied inherited-modifier owner-resolution limitation. A completed response,
+host ingestion and an admissible checked assessment are different results:
+there are **zero new admissible assessments and zero published tutorials**.
+No paid check was filled locally, and no alternative live case was substituted.
+
+| Real stage | Complete conservative bytes | Source units | Adapter wall seconds |
+| --- | ---: | ---: | ---: |
+| Initial generation | 82,860 | 11 | 210.448 |
+| Private completion | 150,936 | 18 | 236.113 |
+| Verification: repair requested | 162,956 | 18 | 169.109 |
+| Repair: rejected selection length | 222,524 | 19 | 169.563 |
+| Explicit corrected repair: admitted | 246,019 | 19 | 160.661 |
+| Fresh verification: kept, final gate blocked | 188,890 | 19 | 146.672 |
+
+The first repair received the full current verifier response (three problems,
+23 note reviews, one premise review, 51 current/revision checks). Its missing
+implementation question named the contract only in `target`; the existing
+resolver read only `text`. The generic exact/unambiguous lookup now reads all
+typed question fields. The complete 323-line local unit reached both repairs
+and the final V; it was not treated as authenticated deployed identity.
+
+That repair selected the whole file for one note. The existing 81-line note
+limit correctly rejected it, but the instruction omitted the bound and the
+error falsely implied absent source. The bound is unchanged, now explicit in
+instructions with a distinct length diagnostic. Explicit **Repair saved
+analysis** can correct the exact rejected typed repair using its immutable raw
+guidance and diagnostics, only with capacity for authorship plus fresh V. The
+model selected bounded ranges itself; the host did not trim its answer. Final
+content retains 25 notes and both original claim groups.
+
+Other completion fixes: the ordinary selected terminal action handles five used
+of six allowed by adding only the missing selected allocation from available
+shared capacity, after reserving owed sibling checks. Fixed one-V windows still
+deny an authoring/V pair. Unbound negative-feedback source IDs remain attributed
+diagnostics rather than impossible acquisition requirements. Private terminal
+predecessors are stripped from ready/blocked/copy projections. Explicit
+corrections are separate from supporting review reasoning and its result/status;
+multiple known anchors remain individually inspectable. Return preserves the
+reasoning disclosure and its scroll position as well as source/camera state.
+
+Configuration stayed CLI-default model, medium effort, two shared slots and
+240 seconds per request; Codex CLI observed locally: 0.162.1. All six owned
+cleanups completed. No actual model identity or monetary cost was returned.
+Returned totals: 335,099 input / 48,151 output tokens, including 5,908 reported
+reasoning output tokens (not added again to output). Queue wait totaled 91 ms.
+Adapter wall durations total 1,092.566 seconds; monotonic provider durations
+total 1,015.914 seconds. The clocks differ, so these are retained separately.
+The three owned run segments total 1,109.100 monotonic seconds, including
+49.372 seconds indexing; intervening development/tests are not provider time
+or a fresh-import speed claim. Time to a usable assessment/tutorial was not
+achieved. No 200-finding throughput estimate follows from this case.
+
+On identical smaller/larger saved authoring packets, the explicit selection
+instruction changes 150,936 → 151,058 and 412,820 → 412,942 bytes (+122 each);
+the enforced schema is unchanged. Actual recovery metadata/source additions
+are measured separately in the table. No archived request was changed or sent
+again as though it were a new immutable identity.
+
+The actual saved result was inspected in original native 1.2.0 with simulated
+editor I/O and provider none: all current groups, exact source focus, full
+original rows, Return and reopen. At 801×600 the cited three-line range is
+visible at 14px beside its attributed diagnostic; the function tail remains
+scrollable. One real sample measured source open 598.316 ms, Return 86.144 ms,
+and blocked reopen 2,126.193 ms; three group-focus samples were 40.099, 48.432
+and 58.527 ms. These are changed-path samples, not before/after speedups or p95.
+No provider callback occurred. Screenshots/read-through establish useful
+blocked code inspection, **not completed tutorial playback**, independent
+auditor adjudication or observed Cursor-window activation.
+
+Private evidence: `private-evaluations/v47-ordinary/` in the user's Flowboard
+data directory, including prospective selection, pinned builds, exact six
+inputs/contracts/responses, `FINAL-ANALYSIS.json` and native captures. The old
+six-case denominator remains 17 dispatched / 14 completed / 10 admitted / one
+checked assessment / zero tutorials; adding this distinct case gives 23 / 20 /
+14 / one / zero. These are completion records, not accuracy estimates.
+
+The final supported gate passed **613/613**, zero failures/skips, in 119.977 s
+with original native 1.2.0 enabled. The unchanged 204-job control passed in
+70.096 s within its 120-second assertion; its 408 millisecond scripted callbacks
+are orchestration controls, not real model throughput. Focused exact-source
+navigation passed 17/17. The fictional negative-review native fixture also
+passed: one explicit correction is separate from 18 review records, exact
+comment/multiline anchors remain inspectable, and Return restores the open
+reasoning disclosure. Initial focused/native failures and their concrete fixes
+remain in the private logs; they are not rewritten as successful runs.
+
+The next focused prerequisite is reliable complete evidence-reference coverage
+in fresh verifier attestations, without fabricating checks or purchasing an
+unnecessary candidate rewrite. The unresolved property/conditional recovery
+scope and inherited-owner capability remain separate questions; this AI-only
+read-through does not establish that abstention was the correct adjudication.
+Broader source families and independently established reference reasoning remain
+necessary for the later real-evaluation checklist below.
+
 ## Complete negative-review handoff (0.19.32)
 
 Baseline: `1bbf10a4057f63d5e4c1729d7f3a3531f8a1809f`, 0.19.31.

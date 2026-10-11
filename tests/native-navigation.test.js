@@ -66,12 +66,15 @@ test('blocker Return restores status intent after native show, including a pendi
  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
  const body=source.slice(source.indexOf('  function returnFromBlocker'),source.indexOf('  function highlightCallOccurrence'));
  const card={el:{classList:{remove(){}}},codeEl:{parentElement:{scrollTop:0}}};
- const context={blockerReturn:{view:{selectedCard:'prior',drawerTab:'brief',scrollTop:17,camera:{scale:1,panX:2,panY:3}},checkedLocation:null,intent:'waiting',expanded:true,scrolls:[['prior',24]]},
+ const details=[{open:false}];
+ const context={blockerReturn:{view:{selectedCard:'prior',drawerTab:'brief',scrollTop:17,camera:{scale:1,panX:2,panY:3}},checkedLocation:null,intent:'waiting',expanded:true,scrolls:[['prior',24]],preparationDetails:[true],preparationScroll:84},
   crypto:require('node:crypto'),guideNavigation:'pending',cards:new Map([['prior',card]]),drawer:{scrollTop:0},
+  preparationSurface:{scrollTop:0,querySelectorAll:()=>details},
   show(){context.guideIntent='explore';},applyTransform(){},redrawEdges(){},renderPreparation(){},schedulePersist(){}};
  require('node:vm').runInNewContext(body+'\nreturnFromBlocker();',context);
  assert.equal(context.guideIntent,'waiting');assert.equal(context.preparationExpanded,true);assert.equal(context.blockerReturn,null);assert.notEqual(context.guideNavigation,'pending');
  assert.equal(context.drawer.scrollTop,17);assert.equal(card.codeEl.parentElement.scrollTop,24);assert.equal(context.selectedCard,'prior');
+ assert.equal(details[0].open,true);assert.equal(context.preparationSurface.scrollTop,84);
 });
 test('guidance revocation removes blocker view mode and pending navigation authority',()=>{
  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
@@ -178,6 +181,9 @@ test('actual preparation renderer retains selected job reason and shows current 
     }
   }
   context.reportPreparation.requestLimit = 3;
+  context.reportPreparation.jobs.find(j=>j.id==='B').continueAction={available:false,reason:'No permitted phase'};
+  vm.runInNewContext('renderPreparation()', context);assert.ok(!flat(surface).some(n=>n.text==='Continue this finding'));
+  context.reportPreparation.jobs.find(j=>j.id==='B').continueAction={available:true};
   vm.runInNewContext('renderPreparation()', context); assert.ok(flat(surface).some(n => n.text === 'Continue this finding'));
   context.guideAvailability = { ready: false, reason: 'The walkthrough needs one missing function card.' };
   vm.runInNewContext('renderPreparation()', context);

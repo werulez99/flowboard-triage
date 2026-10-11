@@ -51,6 +51,16 @@ test('only a complete checked snapshot crosses the publication boundary, includi
   const old = checked(); delete old.causal; delete old.publication;
   assert.equal(walk.build(old, ''), null); assert.equal(policy.expose(old).causal, undefined);
 });
+test('private predecessor narrative never crosses ready, blocked, copied or reopened projections',()=>{
+  const draft=checked();draft.revisionPredecessors=[{id:'successor',candidate:{state:'terminal',candidate:{conclusion:{text:'PRIVATE_PREDECESSOR_NEVER_APPROVED'}}}}];
+  const exact=JSON.stringify(draft.revisionPredecessors);
+  for(const phase of ['ready','blocked']){
+    const reopened=JSON.parse(JSON.stringify({...draft,phase})),dto=policy.expose(reopened);
+    assert.equal(dto.revisionPredecessors,undefined);assert.ok(!JSON.stringify(dto).includes('PRIVATE_PREDECESSOR_NEVER_APPROVED'));
+    assert.equal(JSON.stringify(reopened.revisionPredecessors),exact);
+    if(phase==='ready')assert.equal(dto.evidence[0].quote,draft.evidence[0].quote);
+  }
+});
 test('missing obligations, open branches and unsupported impact block the whole guide', () => {
   for (const alter of [d => d.causal.obligations.pop(), d => d.claims.push({ id: 'c2', status: 'unresolved', unknowns: ['Adapter absent'] }),
     d => d.causal.obligations[0].state = 'open', d => d.evidence[0].quote = 'accepted = true;',

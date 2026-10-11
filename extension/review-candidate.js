@@ -133,6 +133,13 @@ function packet(input, draft, schema, selectedPurpose) {
   else { result.candidateOnly = true; if (selectedPurpose === 'candidate-repair') {
       result.hostReview=require('./review-feedback').current(state);
       delete result.candidateProblems; // exact problems live once in response
+      if(state.authoringRejection){
+        const rejected=state.authoringRejection;
+        if(hash(rejected.response)!==rejected.responseHash||rejected.candidateHash!==state.candidateHash)throw new Error('Rejected repair guidance changed.');
+        result.candidateProblems=rejected.diagnostics;
+        result.untrustedAuthoring={status:'RECEIVED REPAIR REJECTED ATOMICALLY; NO EDIT APPLIED; NOT A CANDIDATE OR APPROVAL',
+          requestId:rejected.requestId,responseHash:rejected.responseHash,proposal:require('./authoring-contract').guidance(rejected.response)};
+      }
     }
     if(selectedPurpose==='rejected-proposal-repair')result.candidateProblems=rejected.validationProblems;
     if(selectedPurpose==='rejected-proposal-followup'){

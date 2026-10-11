@@ -73,7 +73,7 @@
   const sharedAllowanceExhausted = () => Number.isFinite(reportPreparation?.requests) && Number.isFinite(reportPreparation?.requestLimit) && reportPreparation.requests >= reportPreparation.requestLimit;
   const canContinueFinding = () => {
     const job = preparationJob(active);
-    return !localAdmission() && !sharedAllowanceExhausted() && job && job.privateCandidateState!=='terminal' && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
+    return !localAdmission() && !sharedAllowanceExhausted() && job?.continueAction?.available===true && job.privateCandidateState!=='terminal' && !job.retainedRejection && job.failureKind!=='storage' && !job.publishable && !['running', 'waiting-for-provider-capacity'].includes(job.state) &&
       !(job.state !== 'queued' && ['material-evidence', 'capability'].includes(job.failureKind)) && (job.state !== 'queued' || reportPreparation.mode !== 'running');
   };
   const jobLabel = job => !job && !reportPreparation ? 'Status not loaded' : job?.publishable ? 'Ready' : job?.state === 'completed' ? 'Checking saved walkthrough' :
@@ -262,22 +262,26 @@
           'Supply missing local code or the named external observation first. New code then needs substantive review within an explicitly applicable allowance. Continuing unchanged cannot establish an unavailable fact.'));
         parent.append(needed);
       }
-      if (selectedJob?.validationProblems?.length) {
-        const invalid = element('section','guide-blockers'); invalid.append(element('h3', '', selectedJob.verificationCompletion?'Current walkthrough blockers':'Current received response: correction details'));
+      const feedbackRows=[...(selectedJob?.validationProblems||[]),...(selectedJob?.reviewReasoning||[])];
+      if (feedbackRows.length) {
+        const invalid = element('section','guide-blockers'); invalid.append(element('h3', '', selectedJob.verificationCompletion?.result==='repair'?'Current corrections':selectedJob.verificationCompletion?'Current walkthrough blockers':'Current received response: correction details'));
         if(selectedJob.currentAttempt)invalid.append(element('small','triage-muted',`${selectedJob.currentAttempt.reviewPurpose} · ${selectedJob.currentAttempt.requestId || 'retained response'} · ${selectedJob.currentAttempt.verificationStarted?'Verification attempted':'Verification not started'}`));
-        for(const group of [...new Set(selectedJob.validationProblems.map(p=>p.group||'Explanation correction'))]){
-          const section=element('section','guide-blocker-group');section.dataset.blockerGroup=group;section.tabIndex=-1;
-          const items=selectedJob.validationProblems.filter(p=>(p.group||'Explanation correction')===group);section.append(element('h4','',`${group} · ${items.length}`));
+        for(const group of [...new Set(feedbackRows.map(p=>p.group||'Explanation correction'))]){
+          const items=feedbackRows.filter(p=>(p.group||'Explanation correction')===group),reasoning=items.every(p=>p.feedbackRole==='reasoning');
+          const section=element(reasoning?'details':'section','guide-blocker-group');section.dataset.blockerGroup=group;section.tabIndex=-1;
+          section.append(element(reasoning?'summary':'h4','',`${reasoning?'Supporting review reasoning and uncertainty (not approval)':group} · ${items.length}`));
           for (const item of items) {
             const card=element('article','guide-blocker');card.dataset.blockerId=item.id||'';
+            if(item.result||item.status)card.append(element('small','triage-muted',`Reviewer record: ${item.result||item.status} · not whole-finding approval`));
             card.append(element('p','',item.message),...(item.action?[element('p','triage-muted',item.action)]:[]));
             const technical=element('details');technical.append(element('summary','','Exact field and diagnostic'),element('small','triage-muted',`${item.code}${item.target?' · '+item.target:''}`));
             if(item.file)technical.append(element('small','triage-muted',`${item.file}:${item.line}-${item.endLine}`));card.append(technical);
-            if(item.source&&!sourceStale)card.append(button(`Inspect code · L${item.line}–${item.endLine}`,()=>{
+            for(const [sourceIndex,anchor] of (item.sources?.length?item.sources:item.source?[item.source]:[]).entries())if(!sourceStale)card.append(button(`Inspect code · ${anchor.file} · L${anchor.line}–${anchor.endLine}`,()=>{
               rememberLocation();guideNavigation=crypto.randomUUID();
               blockerReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),intent:guideIntent,expanded:preparationExpanded,
+                preparationScroll:preparationSurface.scrollTop,preparationDetails:[...preparationSurface.querySelectorAll('details')].map(node=>node.open),
                 navigationId:guideNavigation,diagnosticId:item.id,scrolls:[...cards].map(([id,c])=>[id,c.codeEl.parentElement.scrollTop])};
-              send('triage:inspectBlocker',{diagnosticId:item.id,navigationId:guideNavigation});renderPreparation();
+              send('triage:inspectBlocker',{diagnosticId:item.id,sourceIndex,navigationId:guideNavigation});renderPreparation();
             }));
             if(item.file&&!sourceStale)card.append(button('Open source in editor',()=>send('triage:openReference',{file:item.file,line:item.line})));
             section.append(card);
@@ -344,7 +348,7 @@
       const expand = button(preparationExpanded ? 'Less detail' : 'Details', () => { preparationExpanded = !preparationExpanded; renderPreparation(); preparationSurface.querySelector('.guide-status-row button')?.focus({ preventScroll: true }); }); expand.setAttribute('aria-expanded', String(preparationExpanded));
       row.append(heading, expand);
       if (!preparing && !sourceStale && canContinueFinding()) row.append(button('Continue this finding', () => send('triage:investigationRetry')));
-      if(!preparing&&job?.repairAvailable&&!localAdmission()&&!sharedAllowanceExhausted())row.append(button('Repair saved analysis',()=>send('triage:repairSavedAnalysis')));
+      if(!preparing&&job?.repairAvailable&&!localAdmission()&&!sharedAllowanceExhausted())row.append(button('Repair saved analysis',()=>send('triage:repairSavedAnalysis',{responseHash:job.currentAttempt?.responseHash})));
       if(!preparing&&job?.localRecheckAvailable)row.append(button('Recheck local preparation',()=>send('triage:recheckLocalPreparation')));
       row.append(button('Close status', () => { guideIntent = 'explore'; renderPreparation(); }, 'guide-status-close')); preparationSurface.append(row);
       const technical=selectedProjection(job)?.technical;
@@ -363,6 +367,10 @@
       if(job?.verificationCompletion)preparationSurface.append(element('p','guide-verification-status',job.verificationCompletion.result==='repair'?
         'Verifier returned · correction required. No technical assessment or tutorial was accepted.':job.verificationCompletion.published?
         'Full verification completed · checked tutorial available.':'Full verification completed · walkthrough unavailable. The technical assessment and the remaining evidence or presentation blockers are shown separately.'));
+      if(job?.verificationCompletion?.result==='repair'&&job.validationProblems?.length){
+        preparationSurface.append(element('p','guide-current-requirement',job.validationProblems[0].message));
+        if(job.validationProblems.length>1)preparationSurface.append(element('small','triage-muted',`${job.validationProblems.length-1} additional correction records below. Supporting review reasoning is separate and is not a defect count.`));
+      }
       if(job?.privateCandidateState==='terminal')preparationSurface.append(element('p','guide-status-reason guide-current-requirement','The bounded candidate repair cycle is finished. Inspect the verifier’s corrections and source; continuing unchanged cannot start another request.'));
       if(job?.privateCandidateState==='terminal'&&job.revisionAction){
         preparationSurface.append(element('p','guide-status-reason',job.revisionAction.reason));
@@ -409,7 +417,10 @@
     const v=saved.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=saved.checkedLocation;
     show(v.drawerTab);guideIntent=saved.intent;preparationExpanded=saved.expanded;({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;
     redrawEdges();for(const[id,scroll]of saved.scrolls){const card=cards.get(id);if(card)card.codeEl.parentElement.scrollTop=scroll;}
-    renderPreparation();schedulePersist();
+    renderPreparation();
+    if(saved.preparationDetails)[...preparationSurface.querySelectorAll('details')].forEach((node,index)=>node.open=!!saved.preparationDetails[index]);
+    if(Number.isFinite(saved.preparationScroll))preparationSurface.scrollTop=saved.preparationScroll;
+    schedulePersist();
   }
   function highlightCallOccurrence() {
     for (const row of flowboard.querySelectorAll('[data-call-site-id]')) delete row.dataset.callSiteId;
@@ -2030,7 +2041,7 @@
       // Update small row badges only, preserving note nodes/caret and camera.
       renderPreparation(); updatePreparationRows();
       if(!selectedProjection()?.technical.identity)document.querySelectorAll('.guide-opinion,.guide-severity,.guide-assessment-inspection:not(.guide-blocker-inspection)').forEach(node=>node.remove());
-      if(blockerReturn&&!preparationJob(active)?.validationProblems?.some(item=>item.id===blockerReturn.diagnosticId))returnFromBlocker();
+      if(blockerReturn&&![...(preparationJob(active)?.validationProblems||[]),...(preparationJob(active)?.reviewReasoning||[])].some(item=>item.id===blockerReturn.diagnosticId))returnFromBlocker();
       return;
     }
     if (message?.type === 'triage:load') {

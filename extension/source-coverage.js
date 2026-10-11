@@ -40,9 +40,26 @@ function necessary(draft) {
   for(const model of models)visit(model);
   for(const record of [state,...(state?.history||[])].filter(Boolean))
     for(const review of record.verification?.response?.explanationReviews||[])
-      if(notes.has(review.evidenceId))for(const id of review.checkedSourceIds||[])ids.add(id);
+      if(notes.has(review.evidenceId))for(const id of review.checkedSourceIds||[]){
+        const v=record.verification,refs=v.sourceReferences;
+        // Negative feedback is not a canonical source catalog. New records
+        // bind references to the exact received response/request. Legacy
+        // feedback can pin an existing canonical unit, never invent one.
+        const bound=refs?.responseHash===require('./review-candidate').hash(v.response)&&refs.requestId===v.requestId;
+        if(bound?refs.references.some(r=>r.sourceId===id&&r.status!=='unbound'):draft.sources?.some(s=>s.id===id))ids.add(id);
+      }
   for(const q of models.flatMap(m=>m.questions||[]))if(draft.sources?.some(s=>s.id===q.target))ids.add(q.target);
   return [...ids];
+}
+function feedbackReferences(response,input,units,requestId) {
+  const coverage=packet(input,units),known=new Map(units.map(u=>[u.id,u]));
+  const references=[...new Set((response.explanationReviews||[]).flatMap(r=>r.checkedSourceIds||[]))].map(sourceId=>{
+    const unit=known.get(sourceId);
+    if(!unit)return{sourceId,status:'unbound',reason:'This feedback reference is not a canonical source in its originating review context. It cannot create a mandatory source identity.'};
+    try{coverage.requireUnit(sourceId);return{sourceId,status:'supplied',source:unit.source};}
+    catch(error){return{sourceId,status:'acquire',source:unit.source,reason:error.message};}
+  });
+  return{version:1,requestId,responseHash:require('./review-candidate').hash(response),references};
 }
 // Check the actual expanded, numbered payload, not acquisition receipts or
 // historical reading cursors. This proves supplied bytes, never interpretation.
@@ -96,4 +113,4 @@ function packet(input, units, models = []) {
   }
   return { expanded, requireSpan, requireUnit };
 }
-module.exports = { contains, ranges, union, covers, read, packet, necessary };
+module.exports = { contains, ranges, union, covers, read, packet, necessary, feedbackReferences };

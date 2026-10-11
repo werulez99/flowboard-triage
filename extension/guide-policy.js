@@ -158,7 +158,7 @@ function expose(draft, report = null, evaluation=null) {
   if (!draft) return null;
   const evaluated=evaluation||evaluate(draft),checked=evaluated.checked;
   if (checked && (!report || report.findingReady === true && report.findingId === draft.findingId)) {
-    const copy = structuredClone(draft); for(const key of ['reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
+    const copy = structuredClone(draft); for(const key of ['revisionPredecessors','reviewCandidate','candidateHistory','candidateVerification','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','lastRejected','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
     delete copy.technicalReview;delete copy.technicalReviewHistory;
     // Withheld optional assertions stay in the immutable private response,
     // not in the native/copy/export semantic DTO. This grants no new checks.
@@ -168,7 +168,7 @@ function expose(draft, report = null, evaluation=null) {
   // Partial model prose never crosses the host boundary. It stays in the
   // private draft for diagnostics/retry, separate from researcher decisions.
   const copy = structuredClone(draft);
-  for(const key of ['invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
+  for(const key of ['revisionPredecessors','invalidatedCandidates','invalidatedReviews','correctionHistory','rejectedProposal','rejectedProposalHistory','localRevalidations','localDiagnosticHistory','tutorialDiagnostics'])delete copy[key];
   for (const field of ['reportCoverage','reportReview','causal', 'bindingPlan', 'nativeSources', 'walkthrough', 'explanationReviews', 'inputReviews', 'challengeChanges', 'documentation', 'checkpoint', 'lastRejected', 'reviewCandidate', 'candidateHistory', 'candidateVerification']) delete copy[field];
   Object.assign(copy, { claims: [], evidence: [], sources: [], transitions: [], questions: [], property: { text: '', basis: 'report-assumption', evidence: [] }, conclusion: { text: '', limitations: [] } });
   delete copy.technicalReview;delete copy.technicalReviewHistory;

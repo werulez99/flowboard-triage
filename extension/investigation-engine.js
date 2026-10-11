@@ -291,7 +291,7 @@ function modelSources(units, packetLimit = 110000, completeReview = false) {
 }
 // Negative lookup receipts are valid only for this resolver contract. This is
 // not semantic policy and never invalidates an accepted explanation/review.
-const ACQUISITION_VERSION = 'local-context-v5-required-first';
+const ACQUISITION_VERSION = 'local-context-v6-question-target';
 function makeContext(catalog, request, issue) {
   const compiler = workspaceSnapshot.compiler(catalog), engine = search(catalog);
   const units = [], functions = new Map(); let budget = 110000, sourceLimit = 28;
@@ -616,8 +616,11 @@ function makeContext(catalog, request, issue) {
           include(fn, 'Explicitly requested local receiving definition; not proof of runtime receiver identity, dispatch, self-call reachability or settlement.');
         if (/\b(?:self-call|recovery|collection)\b/i.test(question.text)) enclosing(entry, 'The question asks about alternative local routes. Inspect the complete declaring source; receiving code alone cannot establish absence of recovery.');
       }
-      if (/\b(?:capability|capabilities|implementation)\b/i.test(question.text)) {
-        const names = new Set((question.text.match(/\b[A-Z][A-Za-z0-9_$]+\b/g) || []));
+      // Typed targets carry the requested implementation independently of the
+      // prose question. They are acquisition hints, never runtime identities.
+      const implementationHint = [question.text, question.target, question.why].filter(value => typeof value === 'string').join(' ');
+      if (/\b(?:capability|capabilities|implementation)\b/i.test(implementationHint)) {
+        const names = new Set((implementationHint.match(/\b[A-Z][A-Za-z0-9_$]+\b/g) || []));
         for (const name of names) {
           const files = [...new Map(catalog.functions.filter(fn => fn.contract === name && !isTest(catalog.relative(fn.file))).map(fn => [fn.file, fn])).values()];
           if (files.length === 1) enclosing(files[0], 'Explicitly named local implementation supplied for capability review. Its name is not authenticated deployed receiver identity.');
@@ -1401,7 +1404,13 @@ async function advance({ root, catalog, request, issue, findingId, draft, provid
           if (data.checkOnly && challengeFormat.valid(response.value, require('./semantic-provider').responseSchema(data)) &&
               response.value.result === 'repair' && response.value.problems.length) {
             const state = candidates.assertCurrent(draft, reviewSchema);
+            const feedbackIds=(response.value.explanationReviews||[]).flatMap(r=>r.checkedSourceIds||[]);
+            const archived=require('./provider-result').archivedSources(root,draft,feedbackIds.filter(id=>!context.units.some(u=>u.id===id)));
+            // Archive discovery is only prospective acquisition. Check its
+            // current bytes before binding it; it cannot certify old delivery.
+            const currentArchives=archived.filter(unit=>{try{validateCurrent(catalog,{...draft,sources:[unit]});return true;}catch{return false;}});
             state.verification = { result: 'repair', problems: response.value.problems, response: response.value,
+              sourceReferences: require('./source-coverage').feedbackReferences(response.value,data,[...context.units,...currentArchives],response.audit?.requestId),
               candidateHash: state.candidateHash, revisionHash: hash(state.revisions), requestId: response.audit?.requestId, at: now() };
             state.state = state.repairCount ? 'terminal' : 'repair-requested';
             delete draft.pendingResponse;
@@ -1614,4 +1623,22 @@ function beginCandidateRevision({root,draft,catalog,request,issue,revision}) {
   const state=candidates.revise(draft,reviewSchema,revision);
   draft.revision++;write(root,draft);return state;
 }
-module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, beginRejectedRepair, beginRejectedFollowup, beginCandidateRevision, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };
+function candidateRepairRetry(draft) {
+  const r=draft?.currentRejection,run=draft?.runs?.findLast(item=>item.requestId===r?.requestId&&item.retainedResponse);
+  return !!(draft?.pendingResponse&&draft.reviewCandidate?.state==='repair-requested'&&r?.reviewPurpose==='candidate-repair'&&
+    draft.runs.at(-1)?.requestId===r.requestId&&run?.resultAccepted===false&&run.teardown?.confirmed===true&&run.retainedResponse?.hash===draft.pendingResponse.hash);
+}
+function beginCandidateRepairRetry({root,draft,catalog,request,issue,responseHash}) {
+  if(!candidateRepairRetry(draft)||responseHash!==draft.currentRejection.responseHash||!sameSnapshot(draft.snapshot,snapshot(catalog,request,issue)))throw new Error('Only the exact current, completed rejected repair can be explicitly retried.');
+  validateCurrent(catalog,draft);
+  const state=candidates.assertCurrent(draft,reviewSchema),r=draft.currentRejection,checkpoint=require('./provider-result');
+  const archive=checkpoint.retainOriginal(root,draft.findingId,draft.pendingResponse);
+  const record=checkpoint.read(root,draft.findingId,archive,{phase:'challenge',snapshot:draft.snapshot,corrections:draft.corrections,previous:hash(challengeFormat.earlier(draft,reviewSchema))});
+  if(!record||record.input.candidateIdentity?.candidateHash!==state.candidateHash||record.input.candidateIdentity.revisionHash!==hash(state.revisions)||
+    record.result.audit.requestId!==r.requestId||hash(record.result.value)!==r.responseHash)throw new Error('Rejected repair does not belong to this exact candidate and input.');
+  state.authoringRejection={requestId:r.requestId,responseHash:r.responseHash,candidateHash:state.candidateHash,
+    response:record.result.value,diagnostics:structuredClone(r.validationProblems),archive};
+  delete draft.pendingResponse;
+  draft.phase='candidate-repair-pending';draft.revision++;write(root,draft);return state;
+}
+module.exports = { snapshot, findingInputHash, sameSnapshot, compatible, revalidate, migrateChecked, write, read, archive, create, makeContext, accept, checkExplanations, correct, advance, beginRejectedRepair, beginRejectedFollowup, beginCandidateRevision, candidateRepairRetry, beginCandidateRepairRetry, validateCurrent, modelSources, hash, isTest, ACQUISITION_VERSION };

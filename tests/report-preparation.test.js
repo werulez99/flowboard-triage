@@ -251,14 +251,42 @@ test('completed negative candidate verification exposes exact feedback and a ter
   assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').privateCandidateState,'terminal','The ordinary webview DTO must carry lifecycle eligibility, not only the private journal.');
   assert.equal(job.verificationCompletion.published,false);assert.equal(job.assessmentProjection.technical.result,'not-assessed');
   assert.deepEqual(job.validationProblems.filter(p=>p.target==='/reviewCandidate').map(p=>p.message),problems);assert.ok(job.validationProblems.every(p=>p.code==='CANDIDATE_VERIFICATION_REPAIR'));
-  assert.ok(job.validationProblems.some(p=>p.target.startsWith('/evidence/')&&p.source),'Known note feedback must open exact code; unbound summary prose gets no guessed anchor.');
+  assert.equal(job.validationProblems.length,problems.length);
+  assert.ok(job.reviewReasoning.some(p=>p.target.startsWith('/evidence/')&&p.source&&p.result),'Known note feedback keeps its result and exact code, separately from correction problems.');
   const calls=f.calls.length,used=job.requests,exact=structuredClone(draft.reviewCandidate);
   f.options.configuration=()=>({provider:'none'});await f.runner.ensure();
   assert.equal(f.calls.length,calls);assert.equal(f.runner.state.jobs['I-1'].requests,used);assert.deepEqual(engine.read(f.root,'I-1').reviewCandidate,exact);
   const mismatched=structuredClone(draft);mismatched.reviewCandidate.verification.candidateHash='other-artifact';const projected={};
   f.runner.recoveryStatus(projected,mismatched);assert.equal(projected.verificationCompletion,null,'A received check cannot be attributed to another candidate.');
 });
-for(const limit of [6,8])test(`explicit terminal successor uses ordinary capacity and immutable history (${limit})`,{skip:!native},async t=>{
+test('an explicit rejected-repair correction keeps exact feedback and spends only the remaining ordinary pair',{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t);let bad=true,negative=true,raw;
+  f.options.invoke=async(input,options)=>{
+    f.calls.push([input.phase,input.reviewPurpose]);let value;
+    if(input.candidateOnly){
+      if(bad){
+        const note=input.earlierDraft.evidence[0];
+        raw={mode:'candidate-edit-v2',edits:[{op:'replace',target:'/evidence/'+note.id,value:{id:note.id,claimId:note.claimId,stance:note.stance,explanation:note.explanation,
+          selection:{sourceId:note.sourceId,sourceHash:'f'.repeat(64),line:note.line,endLine:note.endLine}}}],feedbackResponses:[]};value=raw;
+      }else{assert.deepEqual(input.untrustedAuthoring.proposal,raw);assert.equal(input.candidateProblems[0].code,'SOURCE_SELECTION_VERSION');value=candidatePatch(response({...input,checkOnly:false}));}
+    }else{value=checkedCandidate(input);if(negative){value.result='repair';value.problems=['Reconcile this guard explanation.'];}}
+    return{value,audit:{phase:input.phase,requestId:options.requestId,outcome:'completed',teardown:{confirmed:true}}};
+  };
+  await f.runner.continueFinding('I-1');await f.runner.continueFinding('I-1');
+  const saved=engine.read(f.root,'I-1'),candidate=structuredClone(saved.reviewCandidate.candidate);assert.equal(f.calls.length,4);
+  assert.equal(engine.candidateRepairRetry(saved),true);assert.equal(f.runner.state.jobs['I-1'].repairAvailable,true);
+  assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').continueAction.available,false);
+  await f.runner.ensure();assert.equal(f.calls.length,4,'Reopen only rechecks the retained response.');
+  assert.equal(engine.candidateRepairRetry(engine.read(f.root,'I-1')),true,'Local replay preserves explicit repair eligibility.');
+  assert.deepEqual(engine.read(f.root,'I-1').reviewCandidate.candidate,candidate);
+  bad=false;negative=false;
+  await f.runner.continueFinding('I-1',{repairSavedAnalysis:true,repairResponseHash:'stale-response'});assert.equal(f.calls.length,4);
+  const retry={repairSavedAnalysis:true,repairResponseHash:saved.currentRejection.responseHash};
+  await Promise.all([f.runner.continueFinding('I-1',retry),f.runner.continueFinding('I-1',retry)]);
+  assert.equal(f.calls.length,6,f.runner.state.jobs['I-1'].reason);assert.ok(f.runner.artifact('I-1'));
+  assert.equal(f.runner.state.jobs['I-1'].requestLimit,6);assert.equal(f.runner.state.jobs['I-2'].requests,0);
+});
+for(const limit of [5,6,8])test(`explicit terminal successor uses ordinary capacity and immutable history (${limit})`,{skip:!native},async t=>{
   const f=await seedCorrectionRace(t,limit);
   let reject=true,authoringFeedback;
   f.options.invoke=async(input,options)=>{
@@ -277,19 +305,45 @@ for(const limit of [6,8])test(`explicit terminal successor uses ordinary capacit
   const revision={id:'explicit-revision',candidateHash:parent.candidateHash,feedbackHash:require('../extension/review-feedback').current(parent).responseHash,feedbackRequestId:parent.verification.requestId,reason:'Reconcile the exact verifier objection about the guarded transaction effect.'};
   const later=structuredClone(before);later.reviewCandidate.verification.requestId='later-identical-review';
   assert.throws(()=>require('../extension/review-candidate').revise(later,require('../extension/semantic-provider').schema,revision),/current terminal review/,'An old UI cannot revise a different verifier attempt even if its candidate and response bytes happen to match.');
+  const siblingLimit=f.runner.state.jobs['I-2'].requestLimit;
+  const resources=f.runner.state.resources,originalLimit=resources.limit;
+  resources.limit=resources.requests+1;
+  assert.equal(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],before).available,false);
+  const sibling=structuredClone(f.runner.state.jobs['I-2']);
+  Object.assign(f.runner.state.jobs['I-2'],{state:'queued',checkpoint:{stage:'challenge'},publishable:false});
+  resources.limit=resources.requests+2;
+  assert.equal(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],before).available,false,'A sibling’s owed verification cannot be spent on this repair pair.');
+  f.runner.state.jobs['I-2']=sibling;
+  resources.limit=originalLimit;
+  f.options.phasePlan=()=>['challenge'];f.options.phaseRemaining=()=>true;
+  f.options.remainingPhasePlan=()=>[{phase:'challenge',reviewPurpose:'candidate-reverification'}];
+  assert.equal(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],before).available,false,'One allowed V is not a repair + V pair.');
+  await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls);
+  delete f.options.phasePlan;delete f.options.phaseRemaining;delete f.options.remainingPhasePlan;
+  assert.equal(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],before).additionalAllocation,Math.max(0,7-limit));
   reject=false;
-  await Promise.all([f.runner.continueFinding('I-1',{reviseAnalysis:revision}),f.runner.continueFinding('I-1',{reviseAnalysis:revision})]);
+  if(limit===6){
+    const begin=engine.beginCandidateRevision;
+    engine.beginCandidateRevision=options=>{begin(options);throw Error('Simulated interruption after durable successor, before allocation journal.');};
+    try{await f.runner.continueFinding('I-1',{reviseAnalysis:revision});}finally{engine.beginCandidateRevision=begin;}
+    assert.equal(engine.read(f.root,'I-1').reviewCandidate.state,'revision-pending');
+    assert.equal(f.runner.state.jobs['I-1'].requestLimit,6);assert.equal(f.calls.length,calls);
+    await f.runner.ensure();
+    await Promise.all([f.runner.continueFinding('I-1'),f.runner.continueFinding('I-1')]);
+  }else await Promise.all([f.runner.continueFinding('I-1',{reviseAnalysis:revision}),f.runner.continueFinding('I-1',{reviseAnalysis:revision})]);
   const after=engine.read(f.root,'I-1');
-  if(limit===6){assert.deepEqual(after.reviewCandidate,parent);assert.equal(f.calls.length,calls);assert.match(f.runner.state.jobs['I-1'].reason,/remaining finding\/report requests: 1\//);}
-  else{
+  {
     assert.equal(f.calls.length,calls+2,after.error);assert.equal(f.runner.state.jobs['I-1'].requests,used+2);
     assert.deepEqual(after.revisionPredecessors[0].candidate,parent);assert.equal(after.revisionPredecessors[0].id,revision.id);
     assert.deepEqual(authoringFeedback.response,parent.verification.response);assert.ok(f.runner.artifact('I-1'),after.error);
     assert.equal(after.candidateHistory.at(-1).repairCount,2,'Lifetime repair accounting is monotonic, not reset for the successor.');
+    assert.equal(f.runner.state.jobs['I-1'].requestLimit,Math.max(7,limit));assert.equal(f.runner.state.jobs['I-2'].requestLimit,siblingLimit);
+    for(const draft of [after,{...after,phase:'blocked'}]){
+      const projection=policy.expose(draft);assert.equal(projection.revisionPredecessors,undefined);assert.equal(projection.reviewCandidate,undefined);
+    }
     await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls+2);
   }
   const finalCalls=f.calls.length;f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(f.calls.length,finalCalls);
-  if(limit===6)assert.match(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],engine.read(f.root,'I-1')).reason,/remaining finding\/report requests: 1\//,'Provider-none inspection must not imply that enabling a provider alone funds the missing pair.');
   assert.deepEqual(engine.read(f.root,'I-1').corrections,before.corrections);
 });
 function correctThroughBoard(f) {

@@ -144,6 +144,11 @@ class EvaluationPlanGuard {
     const phases=this.phasePlan(id);
     return this.ledger.used<this.manifest.maximumRequests && this.ledger.receipts.filter(r=>r.findingId===id).length<phases.length;
   }
+  remainingPhasePlan(id) {
+    const phases=this.phasePlan(id),used=this.ledger.receipts.filter(r=>r.findingId===id).length;
+    const item=this.manifest.cases.find(c=>c.findingId===id);
+    return phases.slice(used,used+Math.max(0,this.manifest.maximumRequests-this.ledger.used)).map(phase=>({phase,reviewPurpose:item?.reviewPurpose||null}));
+  }
   authorize(input) {
     const timeoutMs=this.check(input), receipt={findingId:input.finding.id,phase:input.phase,reviewPurpose:input.reviewPurpose||null,timeoutMs,...packetIdentity(input),
       reservedAt:new Date().toISOString(),outcome:'reserved',requestId:null,dispatched:false};

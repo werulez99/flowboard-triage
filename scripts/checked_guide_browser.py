@@ -786,7 +786,8 @@ try:
             if (selected_job or {}).get('verificationCompletion'):
                 if not questions:
                     expand_preparation()
-                assert page.get_by_text('Current walkthrough blockers', exact=True).count() == int(bool(selected_job.get('validationProblems')))
+                heading = 'Current corrections' if selected_job['verificationCompletion']['result'] == 'repair' else 'Current walkthrough blockers'
+                assert page.locator('.guide-blockers > h3').inner_text() == heading
                 assert selected_job['reason'] in page.locator('.guide-preparation').inner_text(), 'Full current reason remains accessible beside grouped diagnostics.'
                 history = page.locator('details').filter(has=page.get_by_text('Earlier response history', exact=True))
                 assert history.count() == int(bool(selected_job.get('rejectionHistory')))
@@ -831,7 +832,9 @@ try:
                 result['checks'].append('Expanded current-attempt diagnostics name this received request and every affected field; earlier failures are separate history, with no provider call.')
             if args.blocker_check:
                 problems=selected_job['validationProblems']
-                assert len(problems)==page.locator('.guide-blocker').count(), 'No current host failures may disappear from projection.'
+                reasoning=selected_job.get('reviewReasoning', [])
+                assert len(problems)+len(reasoning)==page.locator('.guide-blocker').count(), 'All corrections and attributed reasoning remain separately available.'
+                assert all(p.get('feedbackRole') != 'reasoning' for p in problems), 'Supporting reasoning is not counted as a correction.'
                 groups=sorted(set(p['group'] for p in problems))
                 samples=[]
                 for group in groups:
@@ -842,11 +845,18 @@ try:
                     assert section.locator('h4').evaluate('n=>{const a=n.getBoundingClientRect(),p=n.closest(".guide-preparation").getBoundingClientRect();return a.top>=p.top&&a.bottom<=p.bottom;}')
                     samples.append((time.monotonic()-begin)*1000)
                     page.screenshot(path=str(out / ('group-'+group.lower().replace(' ','-')+'.png')))
-                source_problem=next((p for p in problems if p.get('source') and p['kind']=='capability'),next(p for p in problems if p.get('source')))
+                inspectable=problems+reasoning
+                source_problem=next((p for p in inspectable if p.get('source') and p['kind']=='capability'),next(p for p in inspectable if p.get('source')))
+                if source_problem in reasoning:
+                    review_details=page.locator('.guide-preparation details[data-blocker-group="Review reasoning (not approval)"]')
+                    review_details.locator('summary').first.click()
+                    assert review_details.evaluate('n=>n.open')
+                    if source_problem.get('result') or source_problem.get('status'):
+                        assert (source_problem.get('result') or source_problem['status']) in review_details.inner_text()
                 inspection_started=time.monotonic()
                 return_position=page.evaluate('()=>({selectedCard:document.querySelector(".triage-selected-source")?.dataset.id||null,scale,panX,panY})')
                 card=page.locator('[data-blocker-id='+json.dumps(source_problem['id'])+']')
-                card.get_by_role('button',name='Inspect code',exact=False).click()
+                card.get_by_role('button',name='Inspect code',exact=False).first.click()
                 page.wait_for_function('id=>window.hostMessages.some(m=>m.type==="triage:blockerFocus"&&m.diagnosticId===id)',arg=source_problem['id'])
                 page.wait_for_timeout(300)
                 assert page.locator('.guide-blocker-return').is_visible()
@@ -876,12 +886,14 @@ try:
                 assert not page.locator('.triage-blocker-card').count(), 'A focus response after Return must be ignored.'
                 assert page.evaluate('()=>({selectedCard:document.querySelector(".triage-selected-source")?.dataset.id||null,scale,panX,panY})')==return_position, 'Inspection Return must restore the original source selection and camera.'
                 assert page.locator('.guide-preparation.expanded').is_visible()
+                if source_problem in reasoning:
+                    assert page.locator('.guide-preparation details[data-blocker-group="Review reasoning (not approval)"]').evaluate('n=>n.open'), 'Return restores the attributed reasoning disclosure being read.'
                 result['sourceReturnMs']=(time.monotonic()-return_started)*1000
                 page.set_viewport_size({'width':801,'height':600})
                 page.locator('.guide-preparation .guide-blocker-groups button').first.click()
                 page.screenshot(path=str(out/'blockers-801x600.png'))
                 multiline=next((p for p in problems if p.get('source') and p['endLine']>p['line']),source_problem)
-                page.locator('.guide-preparation [data-blocker-id='+json.dumps(multiline['id'])+']').get_by_role('button',name='Inspect code',exact=False).click()
+                page.locator('.guide-preparation [data-blocker-id='+json.dumps(multiline['id'])+']').get_by_role('button',name='Inspect code',exact=False).first.click()
                 page.wait_for_function('id=>document.querySelector(".triage-blocker-card [data-source-line=\\""+id+"\\"]")',arg=multiline['line'])
                 compact_card=page.locator('.triage-blocker-card')
                 compact_rows=compact_card.locator('[data-source-line]').evaluate_all('(rows)=>rows.map(r=>Number(r.dataset.sourceLine))')

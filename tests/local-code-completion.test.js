@@ -149,6 +149,23 @@ test('a mixed missing-context request supplies the available local part without 
   assert.ok(added.some(unit => unit.code.includes('mapping(uint256 => address) public owner;')));
   assert.ok(added.every(unit => unit.contextKind === 'state'));
 });
+test('a missing-context implementation named only in the typed target is acquired, but ambiguous names are not selected', {skip:!native},async t=>{
+  for(const ambiguous of [false,true]){
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'named-question-context-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+    fs.mkdirSync(path.join(root,'src'));
+    fs.writeFileSync(path.join(root,'src/Ledger.sol'),'pragma solidity ^0.8.20;\ncontract Ledger {\n function read() external pure returns(uint) { return 1; }\n}\n');
+    const relay='pragma solidity ^0.8.20;\ncontract MessagePort {\n function redirect(address destination) external { require(destination != address(0)); }\n}\n';
+    fs.writeFileSync(path.join(root,'src/MessagePort.sol'),relay);
+    if(ambiguous)fs.writeFileSync(path.join(root,'src/OtherPort.sol'),relay);
+    const indexed=await analyze(native,root),catalog=new SourceCatalog(root,indexed.runner,indexed.result);
+    const request={findingId:'I-1',finding:{title:'Ledger.read',summary:'Inspect the reading rule.'},cards:[{file:'src/Ledger.sol',line:3,function:'read'}]};
+    const context=engine.makeContext(catalog,request),entry=context.units.find(u=>u.name==='Ledger::read');
+    const action=context.act({id:'q',claimId:'c',action:'missing-context',target:'MessagePort redirect implementation',text:'Which local update and fee rules apply?',why:'Separate source capabilities from an unavailable deployed identity.'},{entry:entry.id});
+    const found=context.units.filter(u=>action.sourceIds.includes(u.id)&&u.source.file.includes('Port.sol'));
+    assert.equal(found.length,ambiguous?0:1);
+    if(!ambiguous){assert.match(found[0].code,/function redirect/);assert.match(found[0].reason,/not authenticated deployed receiver/);}
+  }
+});
 test('an explicitly scoped receiving question supplies local receive/fallback without inventing a runtime receiver', { skip: !native }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-receiving-context-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'src'));

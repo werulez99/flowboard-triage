@@ -104,7 +104,7 @@ function verifyParent(manifest) {
 }
 function executionOptions({manifest,guard,catalog,invoke}) {
   return {configuration:()=>({provider:'codex',executable:manifest.executable,workers:1,requestLimit:manifest.maximumRequests,findingRequestLimit:2}),
-    catalog,prepareRequest:input=>guard.preparedInput(input),candidateSeed:id=>guard.candidateSeed(id),phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
+    catalog,prepareRequest:input=>guard.preparedInput(input),candidateSeed:id=>guard.candidateSeed(id),phasePlan:id=>guard.phasePlan(id),phaseRemaining:id=>guard.phaseRemaining(id),remainingPhasePlan:id=>guard.remainingPhasePlan(id),evaluationContinuation:journal=>guard.continuation(journal),authorizeRequest:({input})=>guard.authorize(input),invoke,
     log:message=>console.error(message)};
 }
 async function runCases(coordinator,manifest) {

@@ -227,7 +227,10 @@ class TriageBoard {
     const draft=investigationEngine.read(this.root,model.id);
     if(!draft||!investigationEngine.compatible(draft,model.catalog,model.request,model.issue))throw new Error('The diagnostic source changed. Reopen the finding.');
     const diagnostic=[...(guidePolicy.gate(draft).details||[]),...require('./review-feedback').diagnostics(draft)].find(d=>d.id===message.diagnosticId);
-    const source=diagnostic?.source;if(!source)throw new Error('This current blocker has no unambiguous source location. Inspect its named premise or field.');
+    const anchors=diagnostic?.sources?.length?diagnostic.sources:diagnostic?.source?[diagnostic.source]:[];
+    const index=message.sourceIndex??0;
+    const source=Number.isSafeInteger(index)&&index>=0?anchors[index]:null;
+    if(!source)throw new Error('This current feedback has no such source location. Inspect its named premise or field.');
     p.sources(this.root,{cards:[source]});
     let fn;try{fn=model.catalog.resolveCard({file:source.file,line:source.line});}catch{
       return this.receive({...message,type:'triage:openReference',file:source.file,line:source.line});
@@ -777,7 +780,7 @@ class TriageBoard {
         if(!this.investigationCurrent(model))return;
         const report=this.callbacks.reportPreparation?.();
         if(!report)throw new Error('Open this imported finding through its report preparation to repair saved analysis.');
-        report.continueFinding(model.id,{repairSavedAnalysis:true})?.catch(error=>this.vscode.window.showErrorMessage(error.message));
+        report.continueFinding(model.id,{repairSavedAnalysis:true,repairResponseHash:message.responseHash})?.catch(error=>this.vscode.window.showErrorMessage(error.message));
         return this.reportProgress();
       }
       if(message.type==='triage:recheckLocalPreparation'){
