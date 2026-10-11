@@ -1,5 +1,154 @@
 # Bounded fresh quality pilot
 
+## Local gate recovery and retained reading (0.19.38)
+
+Baseline: `b4185f8c26183db9da305350698141aa44644d34`, 0.19.37. This is a
+**zero configured-provider request** increment: no top-up, semantic retry, new
+case or protocol execution. L-142 retains the same current insufficient-evidence
+/ partial assessment, 30 notes and 22 report dispositions. The fresh cohort is
+still **1/2 assessed and 0/2 complete tutorials**. L-184 remains unassessed and
+L-113's accepted partial assessment remains readable. No paid response or accepted
+interpretation was rewritten.
+
+### Measured persistence correction
+
+One extended run of the unchanged 204-job/120-second control reproduced the
+failure at **113/204 in 122.120s**, with instrumentation. Of 2,036 journal saves,
+987 merely copied stage/checkpoint/revision after the engine had already saved
+that exact investigation. Those duplicate writes accounted for 593,079,326 bytes
+and 29.468s inclusive wall time. The profile separates save call sites, serialized
+field sizes and nested serialization/path/hash/write/rename/status spans; nested
+times are not additive CPU time. The previous 149/204 canonical and 143/204
+profiled failures remain recorded below in the 0.19.37 history.
+
+The coordinator now updates that checkpoint projection and notifies the reader
+without another whole-report write. The engine's durable investigation write is
+unchanged. Reservation, completed-response, admission, final publication,
+cancellation, correction and ownership boundaries still save synchronously.
+Reopen restores the authoritative investigation checkpoint before scheduling or
+calculating owed challenges. There is no journal migration, global debounce,
+timeout extension or assertion change.
+
+Focused controls passed **12/12 selected cases**: an actual child-process crash
+after the generation checkpoint but before the report projection, owed V before
+an untouched sibling, pause/cancel/dispose, durable reservation/publication,
+response-storage failure and stale/damaged replay. These use fictional source and
+scripted responses, not a model or real-provider throughput.
+
+One after-change profiled run eliminated all duplicate publish saves, retaining
+1,471 investigation writes. It still failed at **173/204 in 123.761s** under the
+unchanged deadline. It made 1,530 journal saves for 377 scripted requests, compared
+with 2,036 saves for 256 requests in the before profile. Different completion
+denominators, instrumentation and variable I/O prevent a matched speedup claim.
+Both failed profiles are retained; no repeated unchanged run was used to seek green.
+
+The first canonical run with that correction passed **694/695**, but the same
+204-job control stopped at **177/204** (130.413s test wall time). The correction
+was therefore insufficient. Field profiling identified another removable cost:
+new jobs duplicated complete source snapshots, accepted dependencies and recent
+provider audit arrays already stored in canonical investigations and receipts.
+New report projections now retain their consumed publication identity and report
+hash, while the validated live accepted map retains full source/dependency data.
+Existing legacy audit fields are preserved; no authoritative record is truncated
+or migrated. A matched two-finding serialization control measured **14,638 bytes
+versus 19,828 bytes** for the duplicate-equivalent projection, with identical
+canonical records and receipts. Ten focused controls passed, including exact
+zero-provider reopen, stale source/premise withdrawal, a missing canonical record
+not reviving from its journal marker, and independent sibling availability.
+
+With both corrections frozen, the final canonical suite passed **696/696, zero
+skipped**, in 147.400s. Its unchanged 204-job control completed **204/204** in
+37.837s test wall time (37.730s controlled workflow span), within the original
+120-second deadline. It used one catalog and 408 scripted callbacks at up to 16
+fixture slots, **zero external requests**. This establishes the local regression
+gate, not real-provider throughput. The earlier failed profiles and 694/695
+canonical run remain retained; the final elapsed time is not attributed solely
+to either optimization or reported as a matched inference speedup.
+
+### Accurate local diagnostics and semantic boundary
+
+An unknown outer-call path now says its reachability is **not established** and
+retains the concrete capability reason. Only a source-proven rejecting path says
+the invocation **was not reached**. Codes, source binding, readiness and accepted
+model content are unchanged. The ordinary source/checked-model/gate/replay control
+passes unsupported-helper, rejecting-prefix and passing-prefix cases (four TAP
+passes including the parent). Earlier fixture-setup failures remain recorded.
+Read-only projection of actual saved L-142 preserves its technical identity and
+partial outcome while showing the corrected diagnostic.
+
+All six accepted L-142 questions were read against their admitted reviews and
+exact source. Four mix source-resolvable mechanics, explicit conditional premises
+and facts needed only for an actual deployed instance. Existing local test source
+contains concrete setup and assertions for native registration, warm-up, quotes,
+exact-key removal and burner selection; those tests were **read, not executed**. V3's native/WETH comparison
+tests its own convention, not a V4 alias rule. Blanket deployment-data demands are
+overbroad for conditional code reasoning, but removing those demands would not
+settle the complete allegation or make a tutorial Ready.
+
+Two applicable-rule questions within that retained set are whether V4 `removeRoute` must treat WETH
+and native ETH as one key, and whether `RouteRemoved` certifies prior existence
+or only resulting absence. The credible idempotent exact-key interpretation,
+monitoring claim and every-consumer consequence remain explicit. A retained route
+does not guarantee a later successful quote. The two precise proposed questions
+are private, unreviewed and unsent; no new provider instruction or assessment
+amendment was substituted for missing evidence.
+The current source-conditional questions and supported-subset capability limit
+remain visible; this local audit is not a fresh semantic approval removing them.
+
+L-184's actual second completion packet omitted the exact `Context::_msgSender`
+body that its previous packet supplied. The later reading-limit receipt confirms
+available-but-unacquired local context; unit documentation and counterpart/config
+context were already present. Reacquire/preserve that material helper closure
+before any separately authorized future attempt. It is not evidence of either
+no-final timeout's cause, which remains unknown.
+
+### Saved native observation boundary
+
+Harness-only correlated timing now records control clicks, poll round trips,
+report reconciliation/projection spans and event-loop lateness. On the unchanged
+installed 0.19.37/native 1.2.0 runtime, the actual saved partial assessment passed
+desktop/compact source inspection, Return and reopen with zero provider callbacks.
+One click-to-visible-target-plus-two-frame sample per action measured **255.3ms
+inspection / 39.1ms Return / 2,910.7ms reopen**. The earlier samples remain
+2,119.6ms / 144.1ms / 28,250.1ms. The endpoint predicate and initial checked
+content were unchanged; the historical post-load delay did not reproduce before
+any production reading change. Its old trace lacks the second control click and
+poll boundaries needed to attribute that tail. No reader speedup, journal cause,
+percentile or latency target is claimed, and no speculative reader optimization
+was made.
+
+The final installed 0.19.38/native 1.2.0 run passed the same five saved-reading
+control groups, with no page/host errors and zero provider callbacks. At the same
+click-to-visible-target-plus-two-frame boundary, one sample per action was
+**214.6ms inspection / 30.2ms Return / 1,432.9ms reopen**. These are comparable
+single observations, not a percentile or causal speedup. The inclusive host
+`board.open` span was 1,877.9ms and includes work continuing beyond the first
+visible target; independent clocks and overlapping spans are not subtracted.
+The source catalog was reused. Desktop 1440×900 and compact 801×600 captures show
+the exact original modifier/helper rows, identifiable function headers and
+readable 14px compact code. Return restores the saved camera/selection; stale
+focus replies and saved reopen remain guarded. These short-function inspections
+do not establish a full long-function or complete causal tutorial journey.
+
+The accepted technical identity, paid verifier receipt, 30 notes, questions,
+source and checked-content hashes remain unchanged. A local projection revision
+refreshes the diagnostic wording only. Preservation checks compare 15 paid/human
+files, 11 source files, accepted semantic fields, full resource accounting and
+L-113's saved result. Fresh usage remains **L-142 7/7, L-184 3/6, shared 10/12**;
+L-113 remains 12/12. No additional allocation or health reset occurred.
+
+The separate required native visual smoke passed keyboard/save acknowledgments,
+session races, Undo, exact-line notes, filters and narrow layout using fictional
+data. It is not a fresh real tutorial. The 0.19.38 package was installed without
+an editor reload; all 76 packaged runtime files matched the checkout and the
+258-file public allowlist contained no private evaluation/report artifacts.
+
+These are AI-only native observations with simulated editor I/O, not an observed
+Cursor window or complete tutorial playback. Version-bound editor logs inspected
+in this increment named 0.19.31; installation alone cannot establish activation
+of a later build. The real tutorial milestone and 200-finding throughput target
+remain unmet/unmeasured respectively.
+
 ## Retained L-142 repair and full verification (0.19.37)
 
 Baseline: `d895181757005304a731a438b3675cd05728b7e0`, 0.19.36. The same

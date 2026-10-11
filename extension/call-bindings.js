@@ -611,7 +611,10 @@ function validateTransition({ draft, link, from, to, source, destination, units,
     const originalCaller = events.find(event => event.id === incoming[0].from);
     if (site) {
       const path = callPath(destination, site, originalCaller, units, evidence);
-      if (path.reachable !== true) { fail(`${from.title}: no return/catch continuation is established because the outer invocation was not reached. ${path.reason}`, path.kind || 'capability', { code: path.code || 'CALL_PATH_UNKNOWN', source: path.source || destination.source }); return; }
+      if (path.reachable !== true) {
+        const reachability = path.reachable === false ? 'the outer invocation was not reached' : 'reachability of the outer invocation is not established';
+        fail(`${from.title}: no return/catch continuation is established because ${reachability}. ${path.reason}`, path.kind || 'capability', { code: path.code || 'CALL_PATH_UNKNOWN', source: path.source || destination.source }); return;
+      }
     }
     const entering = events.find(event => event.id === incoming[0].to);
     const handling = site && scenarioFailure({ site, source: destination, destination: source, to: entering, events, evidence, link: incoming[0], fail, units });

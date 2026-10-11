@@ -1,4 +1,18 @@
-# Source investigation runtime — 0.19.37
+# Source investigation runtime — 0.19.38
+
+The engine persists an investigation before publishing its checkpoint projection.
+The report coordinator no longer writes a duplicate journal solely for that
+projection. Durable accounting, response/admission, final publication and control
+writes remain synchronous. A restarted coordinator reads the saved investigation
+before scheduling, including the mandatory challenge owed after generation.
+New journal projections retain the report hash and accepted publication identity;
+full source/dependency metadata remains in canonical investigations and the
+validated live accepted map. Provider audits remain in investigations and
+receipts. Existing legacy journal fields are preserved on reopen.
+
+Return/catch diagnostics distinguish proven caller-path rejection from unknown
+reachability. Unsupported supplied helpers remain capability limits, not claims
+that the runtime invocation cannot occur; no accepted model text is rewritten.
 
 An explicitly selected repair-requested candidate requires ordinary capacity for
 authoring and its mandatory fresh verifier before authoring starts. Continue uses

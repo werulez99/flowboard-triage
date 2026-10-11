@@ -1,4 +1,20 @@
-# Checked finding walkthroughs — 0.19.37
+# Checked finding walkthroughs — 0.19.38
+
+Investigation checkpoints remain synchronously durable in each finding's saved
+record. Their progress callback updates the report view without also rewriting
+every sibling's journal entry. Reopen restores the authoritative checkpoint before
+scheduling or reserving owed verification. Reservation, completed-response,
+admission, final publication, cancellation and correction boundaries still save
+the report synchronously; this is not global save debouncing.
+New report entries keep compact publication identity instead of duplicating full
+source snapshots and run audits. Exact records remain in per-finding storage and
+receipts. Reopen validates those records before restoring an available artifact;
+a compact ready marker cannot replace a missing or stale checked assessment.
+
+Unknown call-path analysis now says that invocation reachability is not
+established, with the actual capability reason. Only a proven rejecting path says
+the invocation was not reached. The diagnostic wording changes neither source
+bindings nor the assessment/readiness outcome.
 
 Selected **Continue** for a current repair-requested private candidate now admits
 its authoring/full-verification pair together. If one ordinary finding slot is

@@ -802,6 +802,93 @@ test('a fresh host restores an intact sibling with no provider despite missing, 
   assert.equal(restored.jobs['I-2'].publishable, false);
   assert.equal(fs.readFileSync(file('I-1'), 'utf8'), bytes);
 });
+test('durable engine projection avoids duplicate journal writes while reservation and final publication remain synchronous',{skip:!native},async t=>{
+  const f=await fixture(t,2),atomic=p.atomicJson;let duplicateWrites=0,invocations=0,published=0;
+  t.mock.method(p,'atomicJson',function(root,file,value,...options){
+    if(file==='.flowboard/report-preparation.json'&&new Error().stack.includes('at publish '))duplicateWrites++;
+    return atomic.call(this,root,file,value,...options);
+  });
+  const invoke=f.options.invoke;f.options.invoke=async(input,...options)=>{
+    const state=p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024),job=state.jobs[input.finding.id],receipt=state.resources.receipts[job.lastReservation.id];
+    assert.equal(receipt.findingId,input.finding.id);assert.equal(receipt.phase,input.phase);assert.equal(receipt.outcome,'reserved');
+    invocations++;return invoke(input,...options);
+  };
+  const changed=f.options.changed;f.options.changed=status=>{
+    for(const row of status.jobs.filter(j=>j.publishable)){
+      const state=p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024);
+      assert.equal(state.jobs[row.id].publishable,true,'A readable guide is durably published before notification.');published++;
+    }changed(status);
+  };
+  await f.runner.ensure();assert.equal(duplicateWrites,0);assert.equal(invocations,4);assert.ok(published);
+  const journal=p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024);
+  assert.equal(journal.resources.requests,4);assert.equal(journal.publication!==null,true);
+  assert.ok(Object.values(journal.resources.receipts).every(r=>r.finishedAt&&r.outcome==='completed'));
+  assert.equal(f.runner.status().ready,2);
+});
+test('compact new journal jobs retain canonical audits and revalidate before restoring publication',{skip:!native},async t=>{
+  const f=await fixture(t,2);await f.runner.ensure();const file='.flowboard/report-preparation.json';
+  const saved=p.readWorkspaceJson(f.root,file,8*1024*1024),full=structuredClone(saved),canonical=new Map();
+  for(const[id,job]of Object.entries(saved.jobs)){
+    const draft=engine.read(f.root,id),live=f.runner.accepted.get(id);canonical.set(id,fs.readFileSync(path.join(f.root,'.flowboard/investigations',id+'.json'),'utf8'));
+    assert.deepEqual(Object.keys(job.snapshot),['reportHash']);assert.equal(job.snapshot.reportHash,draft.snapshot.reportHash);
+    assert.equal(job.runs,undefined);assert.deepEqual(Object.keys(job.accepted).sort(),['at','digest','findingHash','generation','policy','project']);
+    assert.deepEqual(live.sourceSnapshot,draft.snapshot);assert.deepEqual(live.dependencies,draft.dependencies||null);assert.equal(draft.runs.length,2);
+    full.jobs[id].snapshot=draft.snapshot;full.jobs[id].accepted=live;full.jobs[id].runs=draft.runs.slice(-12);
+  }
+  const compactBytes=Buffer.byteLength(JSON.stringify(saved)),repeatedBytes=Buffer.byteLength(JSON.stringify(full));
+  assert.ok(compactBytes<repeatedBytes);const receipts=structuredClone(saved.resources);
+  // An existing legacy audit field is not deleted or silently migrated. The
+  // new projection merely stops producing another duplicate audit collection.
+  const legacyRuns=structuredClone(engine.read(f.root,'I-1').runs);f.runner.state.jobs['I-1'].runs=legacyRuns;f.runner.save();f.runner.dispose();await f.runner.loop;
+  f.options.configuration=()=>({provider:'none'});f.runner=new ReportPreparation(f.root,f.options);const calls=f.calls.length;
+  await f.runner.ensure();assert.equal(f.calls.length,calls);assert.equal(f.runner.status().ready,2);assert.deepEqual(f.runner.state.resources,receipts);
+  assert.deepEqual(f.runner.state.jobs['I-1'].runs,legacyRuns);
+  for(const[id,bytes]of canonical){assert.equal(fs.readFileSync(path.join(f.root,'.flowboard/investigations',id+'.json'),'utf8'),bytes);assert.deepEqual(f.runner.accepted.get(id).sourceSnapshot,engine.read(f.root,id).snapshot);}
+  // A saved compact ready marker cannot stand in for its missing canonical
+  // checked artifact. The intact sibling must remain independently readable.
+  fs.unlinkSync(path.join(f.root,'.flowboard/investigations/I-1.json'));
+  f.runner.dispose();await f.runner.loop;f.runner=new ReportPreparation(f.root,f.options);await f.runner.ensure();
+  assert.equal(f.calls.length,calls);assert.equal(f.runner.artifact('I-1'),null);assert.ok(f.runner.artifact('I-2'));assert.equal(f.runner.status().ready,1);
+  assert.deepEqual(f.runner.state.resources,receipts);
+  t.diagnostic(JSON.stringify({scene:'two scripted completed findings',compactJournalBytes:compactBytes,duplicateProjectionEquivalentBytes:repeatedBytes,externalProviderRequests:0,scriptedProviderCallbacks:calls,limits:'Exact serialized byte comparison, not a timing or inference benchmark.'}));
+});
+test('crash after durable generation checkpoint restores owed verification before cold sibling admission',{skip:!native},async t=>{
+  const f=await fixture(t,2),catalog=await f.options.catalog(),{report,entries}=reconcile(f.root);
+  const request=f.runner.request(entries[0],catalog,report),issue=f.runner.issue(entries[0]);
+  fs.writeFileSync(path.join(f.root,'.flowboard/controlled-answer.json'),JSON.stringify(response({phase:'challenge',sources:engine.makeContext(catalog,request,issue).units})));
+  const run=mode=>require('node:child_process').spawnSync(process.execPath,[path.join(__dirname,'fixtures/reopen-preparation-host.js'),f.root,mode],{encoding:'utf8',timeout:15000});
+  const crash=run('crash-after-generation-checkpoint');assert.equal(crash.status,73,crash.stderr);
+  const saved=engine.read(f.root,'I-1'),before=p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024);
+  assert.equal(saved.checkpoint.stage,'challenge');assert.equal(saved.yielded,true);assert.equal(saved.pendingResponse,undefined);
+  assert.notEqual(before.jobs['I-1'].checkpoint?.stage,'challenge','Crash occurred before the journal projection was updated.');
+  assert.equal(before.resources.requests,1);assert.equal(Object.values(before.resources.receipts)[0].outcome,'completed');
+  // A legitimate historical small remaining allowance must finish the owed V,
+  // not spend its only remaining request on the untouched sibling generation.
+  before.resources.limit=2;p.atomicJson(f.root,'.flowboard/report-preparation.json',before,{compact:true});
+  const resumed=run('resume');assert.equal(resumed.status,0,resumed.stderr);const result=JSON.parse(resumed.stdout);
+  assert.deepEqual(result.calls,['challenge']);assert.deepEqual(result.readable,['I-1']);assert.equal(result.status.requests,2);
+  assert.equal(result.jobs['I-2'].requests,0);assert.equal(result.jobs['I-2'].publishable,false);
+  assert.deepEqual(Object.keys(result.receipts).filter(id=>Object.hasOwn(before.resources.receipts,id)),Object.keys(before.resources.receipts));
+  const reopened=run('restore');assert.equal(reopened.status,0,reopened.stderr);assert.deepEqual(JSON.parse(reopened.stdout).calls,[]);
+});
+for(const control of ['pause','cancel','dispose'])test(`durable checkpoint projection preserves ${control} and verification-only reopening`,{skip:!native},async t=>{
+  const f=await fixture(t,1);let stopped=false;
+  f.options.changed=()=>{
+    if(stopped)return;const draft=engine.read(f.root,'I-1');
+    if(!draft?.yielded||draft.checkpoint?.stage!=='challenge')return;
+    stopped=true;if(control==='dispose')f.runner.dispose();else f.runner.control(control);
+  };
+  await f.runner.ensure();assert.equal(stopped,true);assert.deepEqual(f.calls.map(c=>c[1]),['generate']);
+  const before=p.readWorkspaceJson(f.root,'.flowboard/report-preparation.json',8*1024*1024);
+  assert.equal(before.resources.requests,1);assert.equal(before.jobs['I-1'].checkpoint.stage,'challenge');
+  if(control!=='dispose')assert.equal(before.mode,control==='pause'?'paused':'cancelled');
+  f.runner.dispose();await f.runner.loop;
+  f.options.changed=()=>{};f.options.configuration=()=>({provider:'none',requestLimit:4});f.runner=new ReportPreparation(f.root,f.options);
+  await f.runner.ensure();assert.equal(f.calls.length,1);assert.equal(f.runner.status().ready,0);
+  f.options.configuration=()=>({provider:'codex',requestLimit:4});await f.runner.continueFinding('I-1');
+  assert.deepEqual(f.calls.map(c=>c[1]),['generate','challenge']);assert.equal(f.runner.status().ready,1);
+  assert.equal(f.runner.state.resources.requests,2);assert.equal(f.runner.state.resources.limit,before.resources.limit);
+});
 test('a crash after a durable provider response reuses generation in a fresh process without a phantom reservation', { skip: !native }, async t => {
   const f = await fixture(t, 1), catalog = await f.options.catalog(), { report, entries } = reconcile(f.root);
   const request = f.runner.request(entries[0], catalog, report), issue = f.runner.issue(entries[0]);

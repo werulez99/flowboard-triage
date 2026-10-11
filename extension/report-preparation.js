@@ -237,8 +237,12 @@ class ReportPreparation {
     const digest = evaluated.digest, at = job.accepted?.digest === digest ? job.accepted.at : now();
     const accepted = { digest, at, policy: policy.POLICY, project: this.state.project, findingHash: entryHash(entry),
       generation: draft.revision, sourceSnapshot: draft.snapshot, dependencies: draft.dependencies || null };
-    Object.assign(job, { state: 'completed', stage: 'ready', publishable: true, digest, snapshot: draft.snapshot, outcome: draft.causal.outcome,
-      findingHash: entryHash(entry), accepted, publishedAt: at, reason: '', failureKind: null, missingInputs: [], validationProblems: [],assessmentProjection:evaluated.assessment });
+    const {sourceSnapshot,dependencies,...acceptedSummary}=accepted;
+    // The journal records publication identity, not another copy of source
+    // dependencies or provider audits. Exact records stay in the investigation
+    // and receipts. Reopen rebuilds the full live map only after validating them.
+    Object.assign(job, { state: 'completed', stage: 'ready', publishable: true, digest, snapshot: {reportHash:draft.snapshot.reportHash}, outcome: draft.causal.outcome,
+      findingHash: entryHash(entry), accepted:acceptedSummary, publishedAt: at, reason: '', failureKind: null, missingInputs: [], validationProblems: [],assessmentProjection:evaluated.assessment });
     this.accepted.set(entry.id, accepted);
   }
   artifact(id) { return this.state?.jobs[id]?.correctionHold || this.options.dirty?.(id) ? null : this.accepted.get(id)?.digest || null; }
@@ -696,7 +700,7 @@ class ReportPreparation {
     let settled;const abort = new AbortController(); this.active = { abort, id: entry.id, settled:new Promise(resolve=>settled=resolve) }; this.tasks.set(entry.id, this.active);
     const attemptId = crypto.randomUUID();
     Object.assign(job, { state: 'running', stage: preparationOnly?'preparing-local-context':draft.checkpoint?.stage || 'locating-code', progress: null,
-      attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: fresh.snapshot, publishable: false }); this.save();
+      attempt: job.attempt + 1, attemptId, owner: this.owner, startedAt: now(), snapshot: {reportHash:fresh.snapshot.reportHash}, publishable: false }); this.save();
     const owns = () => epoch === this.epoch && this.state.jobs[entry.id]?.attemptId === attemptId;
     const current = () => {
       if (this.disposed || job.correctionHold || (!localOnly && this.expired()) || !owns() || !this.ownsLock() || abort.signal.aborted || this.options.dirty?.(entry.id)) return false;
@@ -775,7 +779,17 @@ class ReportPreparation {
           if (receipt) { receipt.hostAcceptedAt = audit.hostAcceptedAt; receipt.audit = audit; receipt.localIngestionElapsedMs = Date.parse(audit.hostAcceptedAt) - Date.parse(receipt.finishedAt); job.lastUsefulActivity = audit.hostAcceptedAt; this.save(); }
         },
         onDispatchEnd: reservation => { if (reservation) this.dispatched.delete(reservation.id); },
-        publish: async value => { if (!current()) return; job.stage = value.phase; job.checkpoint = value.checkpoint || null; job.revision = value.revision; this.save(); }
+        publish: async value => {
+          if (!current()) return;
+          job.stage = value.phase; job.checkpoint = value.checkpoint || null; job.revision = value.revision;
+          // advance has already persisted this exact investigation revision.
+          // Stage/checkpoint are a report projection, not another receipt or
+          // publication boundary. Reopen restores them from the investigation
+          // before scheduling/owed-challenge admission. Keep reservation,
+          // result, acceptance, final publication and controls synchronously
+          // saved below/above; do not rewrite every sibling for this projection.
+          this.notifyStatus();
+        }
       });
       if (!current()) return;
       // One synchronous evaluation of this exact terminal revision. No cache
@@ -784,7 +798,7 @@ class ReportPreparation {
       Object.assign(job, { state: ready ? 'completed' : draft.yielded ? 'queued' : draft.failureKind === 'provider' || draft.failureKind === 'validation' || draft.failureKind === 'structural' ? 'failed' : ['report-budget', 'finding-budget', 'paused', 'provider-health'].includes(draft.failureKind) ? 'paused' : draft.failureKind === 'capacity' ? 'retry-scheduled' : 'blocked',
         outcome: evaluated.assessment.technical.result,assessmentProjection:evaluated.assessment, reason: draft.error || 'The explanation still needs material evidence.',
         publishable: ready, digest: ready ? evaluated.digest : null, checkpoint: draft.checkpoint || null,
-        finishedAt: now(), elapsedMs: Date.now() - Date.parse(job.startedAt), runs: draft.runs.slice(-12) });
+        finishedAt: now(), elapsedMs: Date.now() - Date.parse(job.startedAt) });
       if (ready) this.accept(entry, draft, job,evaluated);
       else this.recoveryStatus(job, draft,evaluated);
       if (this.observationOnly(entry.id) && draft.yielded && draft.checkpoint?.stage === 'challenge') {

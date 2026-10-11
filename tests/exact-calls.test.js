@@ -509,6 +509,53 @@ test('source selectors reject stale identities before publication and preserve r
   const replay = require('../scripts/replay-review').replayReview({ saved: result.accepted, input, response, units: draft.sources });
   assert.equal(replay.fullSchema, true, JSON.stringify(replay.errors)); assert.deepEqual(replay.errors, []); assert.equal(replay.gate.ready, true, JSON.stringify(replay.gate.problems)); assert.equal(replay.inputsUnchanged, true);
 });
+test('ordinary return diagnostics distinguish an unsupported supplied modifier helper from a proven rejecting prefix', { skip: !native }, async t => {
+  for (const [name, prefix, expected] of [
+    ['unsupported helper', 'check();', null],
+    ['rejecting prefix', 'require(false);', false],
+    ['passing prefix', 'require(true);', true]
+  ]) await t.test(name, async t => {
+    const catalog = await sourceFixture(t, `pragma solidity ^0.8.20;
+contract Guard {
+ address private reader;
+ modifier permitted() { ${prefix} _; }
+ function check() internal view virtual { require(msg.sender == reader); }
+ function enter() external permitted {
+  finish(true);
+  return;
+ }
+ function finish(bool accepted) internal {
+  require(accepted, "rejected");
+ }
+}`);
+    const caller = unit(catalog, catalog.named('enter')[0], 'caller'), callee = unit(catalog, catalog.named('finish')[0], 'callee');
+    const modifier = unit(catalog, catalog.modifierAt('src/Calls.sol', 4, 'permitted'), 'modifier'), helper = unit(catalog, catalog.named('check')[0], 'helper');
+    const declaration = unit(catalog, catalog.stateDeclarations('src/Calls.sol', 'Guard').find(fn => /\breader\b/.test(catalog.code(fn))), 'state');
+    const draft = callDraft(), call = caller.relatedCalls.find(site => site.sourceExpression === 'finish(true)');
+    draft.sources = [caller, callee, modifier, helper, declaration];
+    for (const source of draft.sources) source.readThrough = source.source.endLine;
+    draft.evidence = [note(caller, 'call', call.line), note(callee, 'guard', callee.source.line + 1, 'contradicts'), note(caller, 'back', call.line + 1)];
+    const ids = draft.evidence.map(item => item.id), [entry, finish] = draft.causal.events;
+    entry.callSiteId = call.id; finish.effect = 'return'; finish.inputs[0].expression = 'true';
+    const link = draft.causal.relationships[0]; link.callSiteId = call.id; link.evidence = ids;
+    draft.causal.events.push({ ...structuredClone(entry), id: 'back', title: 'Return from the original invocation', evidenceId: 'back', callSiteId: '', effect: 'return' });
+    draft.causal.relationships.push({ ...structuredClone(link), from: 'finish', to: 'back', kind: 'return' });
+    draft.causal.order.push('back');
+    draft.causal.checks = capacity.targets(draft.causal).map(item => ({ target: item.key, reason: 'Scripted review; the exact source path still controls admission.', evidence: ids, documentation: [] }));
+    const result = checkedPipeline(draft, true), replay = JSON.parse(JSON.stringify(result.accepted));
+    assert.equal(result.gate.ready, expected === true, result.gate.problems.join('\n'));
+    assert.equal(policy.gate(replay).ready, expected === true, 'Saved replay must not change path admission.');
+    const detail = result.gate.details.find(item => item.target === 'relationship:finish->back:return');
+    if (expected === null) {
+      assert.equal(detail.code, 'MODIFIER_EFFECT_UNSUPPORTED'); assert.equal(detail.kind, 'capability');
+      assert.match(detail.reason, /reachability of the outer invocation is not established/);
+      assert.doesNotMatch(detail.reason, /outer invocation was not reached/);
+    } else if (expected === false) {
+      assert.equal(detail.code, 'MODIFIER_PREFIX_REJECTS'); assert.equal(detail.kind, 'structural');
+      assert.match(detail.reason, /outer invocation was not reached/);
+    } else assert.equal(detail, undefined);
+  });
+});
 test('native reviewed direct/enclosing callable frames have identical root parameter semantics and exact overload resolution', { skip: !native }, async t => {
   for (const prefix of ['', '// overload\n', 'interface IGuard { function finish(bool accepted) external; }\n', 'contract Other { function finish(bool accepted) external {} }\n']) {
     const source = `pragma solidity ^0.8.20;\n${prefix}contract Guard {\n function finish(bool accepted) external {\n  require(accepted, "rejected");\n  return;\n }\n${prefix === '// overload\n' ? ' function finish(uint256 value) external {}\n' : ''}}`;

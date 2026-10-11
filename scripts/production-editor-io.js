@@ -57,6 +57,11 @@ function activateProduct({ extension, upstream, root, api, Board, invoke, storag
         authorizeRequest: () => { throw new Error('Saved-workspace measurement authorizes zero provider reservations.'); }
       } : {}) }); initialPreparation = this; onCoordinator(this); }
       status(...args){return measure?measure('report.status',()=>super.status(...args)):super.status(...args);}
+      ensure(...args){return measure?measure('report.ensure',()=>super.ensure(...args),{hadLoop:!!this.loop,mode:this.state?.mode||null}):super.ensure(...args);}
+      run(...args){return measure?measure('report.run',()=>super.run(...args),{mode:this.state?.mode||null}):super.run(...args);}
+      save(...args){return measure?measure('report.save',()=>super.save(...args)):super.save(...args);}
+      validatedCatalog(...args){return measure?measure('report.validatedCatalog',()=>super.validatedCatalog(...args)):super.validatedCatalog(...args);}
+      recoveryStatus(job,...args){return measure?measure('report.recoveryStatus',()=>super.recoveryStatus(job,...args),{findingId:job.id}):super.recoveryStatus(job,...args);}
     } };
     if (name === './runner-adapter') return { ...value, analyze: async (...args) => { const start = performance.now(); trace('index-start');
       try { return await value.analyze(...args); } finally { trace('index-end', { durationMs: performance.now() - start }); } } };

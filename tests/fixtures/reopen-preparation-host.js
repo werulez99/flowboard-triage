@@ -10,6 +10,16 @@ const [root, mode = 'restore'] = process.argv.slice(2);
 const calls = [];
 let indexes = 0, catalog, coordinator;
 async function main() {
+  if(mode==='crash-after-generation-checkpoint'){
+    const protocol=require('../../extension/protocol'),atomic=protocol.atomicJson;
+    protocol.atomicJson=function(root,file,value,...options){
+      const result=atomic.call(this,root,file,value,...options);
+      // The per-finding generation checkpoint is durable, but neither the
+      // report projection callback nor final work save has run yet.
+      if(file==='.flowboard/investigations/I-1.json'&&value.yielded&&value.checkpoint?.stage==='challenge')process.exit(73);
+      return result;
+    };
+  }
   coordinator = new ReportPreparation(root, {
     // These saved-response compatibility controls intentionally exercise the
     // pre-checklist wire contract, including its supported full-result form.

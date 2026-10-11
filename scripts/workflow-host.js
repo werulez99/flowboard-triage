@@ -62,7 +62,7 @@ function boardClass(storage, invoke, trace, measure) {
     return value;
   };
   loaded._compile(fs.readFileSync(filename, 'utf8'), filename);
-  if(measure)for(const key of ['open','assertCurrent','inspectBlocker','inspectAssessmentEvidence','focusInvestigation','exposed','libraryObservation']){
+  if(measure)for(const key of ['open','assertCurrent','inspectBlocker','inspectAssessmentEvidence','focusInvestigation','exposed','libraryObservation','guideAvailability','startInvestigation','reportProgress']){
     const original=loaded.exports.TriageBoard.prototype[key];
     loaded.exports.TriageBoard.prototype[key]=function(...args){return measure(`board.${key}`,()=>original.apply(this,args));};
   }
@@ -122,10 +122,17 @@ async function start(options = {}) {
   const trace = (event, fields = {}) => productionTrace.push({ event, at: Date.now(), monotonicMs:performance.now(), ...fields });
   // Disposable-harness measurement only. Durations can nest; they must not be
   // summed as disjoint CPU time or confused with model service time.
-  const measure=options.interactionTiming?(event,action)=>{
-    const startedMs=performance.now();const done=()=>trace('interaction-stage',{stage:event,startedMs,durationMs:performance.now()-startedMs});
+  const measure=options.interactionTiming?(event,action,fields={})=>{
+    const startedMs=performance.now();const done=()=>trace('interaction-stage',{stage:event,startedMs,durationMs:performance.now()-startedMs,...fields});
     try{const value=action();if(value&&typeof value.then==='function')return value.finally(done);done();return value;}catch(error){done();throw error;}
   }:null;
+  // Observe blocking in this disposable host, not an inferred product cause.
+  // This is wall-clock timer lateness; it is not CPU time or a new product timer.
+  let expectedTick=performance.now()+100;
+  const eventLoopProbe=measure?setInterval(()=>{const observed=performance.now(),latenessMs=observed-expectedTick;
+    if(latenessMs>=50)trace('harness-event-loop-delay',{expectedMs:expectedTick,latenessMs});expectedTick=observed+100;
+  },100):null;
+  eventLoopProbe?.unref();
   protocolTrace = trace;
   const uri = file => ({ fsPath: file, toString: () => file });
   const disposable = () => ({ dispose() {} });
@@ -298,7 +305,7 @@ async function start(options = {}) {
               const start = performance.now(), bytes = Buffer.byteLength(JSON.stringify(message));
               pending.push(structuredClone(message));
               if (message.type === 'triage:load') trace('load-payload', { durationMs: performance.now() - start, bytes, findingId: message.issueId, token: message.token });
-              if(measure&&['triage:load','triage:blockerFocus','triage:assessmentFocus','triage:investigationFocus'].includes(message.type))trace('editor-message-queued',{type:message.type,navigationId:message.navigationId||null,bytes,durationMs:performance.now()-start});
+              if(measure&&['triage:load','triage:blockerFocus','triage:assessmentFocus','triage:investigationFocus','triage:reportPreparation','triage:investigation'].includes(message.type))trace('editor-message-queued',{type:message.type,navigationId:message.navigationId||null,selectedId:message.report?.selectedId||null,bytes,startedMs:start,durationMs:performance.now()-start});
               return true;
             }
           } };
@@ -334,6 +341,7 @@ async function start(options = {}) {
   const server = http.createServer(async (request, response) => {
     const requestStartedMs=performance.now();
     const address = new URL(request.url, origin || 'http://127.0.0.1');
+    if(measure&&['/state','/action'].includes(address.pathname))trace('harness-request',{route:address.pathname,startedMs:requestStartedMs});
     const json = (value, status = 200) => { const serializationStartedMs=performance.now(),encoded=JSON.stringify(value),serializationMs=performance.now()-serializationStartedMs;
       response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(encoded);
       if(measure&&address.pathname!=='/timings')trace('harness-response',{route:address.pathname,status,startedMs:requestStartedMs,durationMs:performance.now()-requestStartedMs,serializationMs,bytes:Buffer.byteLength(encoded)});
@@ -447,6 +455,7 @@ async function start(options = {}) {
   origin = `http://127.0.0.1:${server.address().port}`;
   await createBoard();
   return { origin, secret, root, readOnly, productionExtension, productionVersion, close: async () => {
+    clearInterval(eventLoopProbe);
     releaseMixed?.();
     reportPreparation?.dispose(); if (reportPreparation?.loop) await reportPreparation.loop;
     productionEditor?.dispose();

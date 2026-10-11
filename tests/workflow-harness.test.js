@@ -54,6 +54,8 @@ test('optional native interaction timing separates host stages and compact obser
  assert.ok(timing.trace.some(item=>item.event==='editor-message-queued'&&item.type==='triage:load'&&item.bytes>0));
  const diagnostic=timing.trace.findLast(item=>item.event==='harness-response'&&item.route==='/state');
  assert.ok(diagnostic.bytes>0);assert.ok(diagnostic.durationMs>=diagnostic.serializationMs);
+ assert.ok(timing.trace.some(item=>item.event==='harness-request'&&item.route==='/state'&&item.startedMs<=diagnostic.startedMs));
+ assert.ok(timing.trace.some(item=>item.event==='interaction-stage'&&item.stage==='board.guideAvailability'));
  for(const key of ['investigation','privatePreparationDraft','snapshots','lastLoad','library'])assert.equal(Object.hasOwn(timing,key),false,'Timing retrieval must not deserialize the report or return a copied source/argument packet.');
  assert.equal((await request('/timings?after='+timing.cursor)).value.trace.some(item=>item.event==='harness-response'&&item.route==='/timings'),false);
  assert.equal((await fetch(host.origin+'/timings')).status,403);

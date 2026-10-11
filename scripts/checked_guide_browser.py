@@ -126,8 +126,11 @@ try:
             page.add_init_script('''window.interactionTrace=[];window.measuredInteractionResult=null;window.measuredInteraction=null;
               window.recordInteraction=(event,fields={})=>{window.interactionTrace.push({event,at:performance.now(),...fields});if(event==='editor-send'&&fields.type==='triage:inspectBlocker'&&window.measuredInteraction)window.measuredInteraction.navigationId=fields.navigationId;};
               window.armMeasuredInteraction=value=>{window.measuredInteractionResult=null;window.measuredInteraction={...value,clickAt:null,traceStart:window.interactionTrace.length};};
-              document.addEventListener('click',()=>{
-                const pending=window.measuredInteraction;if(!pending||pending.clickAt!==null)return;
+              document.addEventListener('click',event=>{
+                const pending=window.measuredInteraction;if(!pending)return;
+                const control=event.target.closest('button,[role="button"],[data-finding-id]');
+                window.recordInteraction('interaction-control-click',{control:control?.getAttribute('aria-label')||control?.textContent?.trim().slice(0,100)||null});
+                if(pending.clickAt!==null)return;
                 pending.clickAt=performance.now();let readyAt=null;
                 const visible=node=>{const b=node?.getBoundingClientRect();return !!b&&b.width>0&&b.height>0&&getComputedStyle(node).visibility!=='hidden';};
                 const ready=()=>{
@@ -167,7 +170,8 @@ try:
           document.addEventListener('click',event=>{if(event.target.closest('[data-finding-id]'))window.actualFindingClick=performance.now()},true);
           window.acquireVsCodeApi=()=>({postMessage(m){if(!window.closing){window.sent.push(m);window.recordInteraction?.('editor-send',{type:m.type,navigationId:m.navigationId||null});return window.__send(m);}}});
           let cursor=0;window.polling=false;window.timer=setInterval(async()=>{if(window.polling||window.closing)return;window.polling=true;
-          try{const b=await window.__poll(cursor);cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);const started=performance.now();window.recordInteraction?.('editor-receive',{type:m.type,navigationId:m.navigationId||null});window.dispatchEvent(new MessageEvent('message',{data:m}));window.recordInteraction?.('editor-render-handler',{type:m.type,durationMs:performance.now()-started});}}finally{window.polling=false;}},75);''')
+          const pollStarted=performance.now();if(window.measuredInteraction)window.recordInteraction?.('editor-poll-start',{cursor});
+          try{const b=await window.__poll(cursor);if(window.measuredInteraction)window.recordInteraction?.('editor-poll-response',{durationMs:performance.now()-pollStarted,messages:b.messages.length,cursor:b.cursor});cursor=b.cursor;for(const m of b.messages){window.hostMessages.push(m);const started=performance.now();window.recordInteraction?.('editor-receive',{type:m.type,navigationId:m.navigationId||null});window.dispatchEvent(new MessageEvent('message',{data:m}));window.recordInteraction?.('editor-render-handler',{type:m.type,durationMs:performance.now()-started});}}finally{window.polling=false;}},75);''')
         page.goto(host['origin'])
         finding_row = '[data-finding-id=' + json.dumps(args.finding) + ']'
         page.wait_for_selector(finding_row, timeout=30000)
