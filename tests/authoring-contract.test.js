@@ -12,6 +12,31 @@ function fixture(candidateOnly=true){
   return{units,input:{phase:'challenge',assessmentContract:require('../extension/technical-assessment').VERSION,authoringFormat:contract.VERSION,candidateOnly,...(!candidateOnly?{repairOnly:true}:{}),earlierDraft,sources:[{id:'source-local',file:'Local.sol',sourceHash,line:1,endLine:5,code:code.split('\n').map((l,i)=>`${i+1} | ${l}`).join('\n')}]}};
 }
 const response=(input,edits)=>({mode:input.candidateOnly?contract.CANDIDATE:contract.REPAIR,edits,...(!input.candidateOnly?{inputReviews:[],explanationReviews:[],checks:[]}:{})});
+test('exact full verifier feedback reaches measured repair authoring and requires non-attesting dispositions',()=>{
+  const {input,units}=fixture(),feedback=require('../extension/review-feedback'),candidates=require('../extension/review-candidate');
+  const review={result:'repair',problems:['Reconcile the argument.'],explanationReviews:[{evidenceId:'note-local',result:'repaired',reason:'The guard interpretation needs its caller condition.',checkedSourceIds:['source-local']}],
+    inputReviews:[{id:'premise-local',status:'unresolved',reason:'The deployment premise remains unavailable.',evidence:['note-local']}],checks:[{target:'event:event-local',reason:'This supplied call can fail; settlement is conditional.',evidence:['note-local'],documentation:[]}]};
+  const state={candidateHash:'candidate',revisions:{changes:[]}};state.verification={candidateHash:'candidate',revisionHash:candidates.hash(state.revisions),result:'repair',problems:review.problems,response:review,requestId:'V-local'};
+  input.hostReview=feedback.current(state);const f=feedback.entries(input.hostReview);assert.equal(f.length,4);
+  const value={...response(input,[]),feedbackResponses:[{feedbackIds:f.map(e=>e.id),disposition:'unresolved',reason:'The precise unknown and caller condition are retained for full review.',targets:[]}]};
+  assert.equal(format.valid(value,provider.responseSchema(input)),true);const mapped=contract.compile(value,input,provider.schema,units);assert.deepEqual(mapped.mapping.feedback.responses,value.feedbackResponses);
+  const measured=provider.measureRequest(input);assert.ok(measured.requestBytes>0);assert.match(measured.system,/authoring accountability ONLY/);assert.deepEqual(input.hostReview.response,review);
+  for(const bad of [{...value,feedbackResponses:[]},{...value,feedbackResponses:[{...value.feedbackResponses[0],disposition:'changed',targets:['/questions']}]},
+    {...value,feedbackResponses:[value.feedbackResponses[0],value.feedbackResponses[0]]}])assert.throws(()=>contract.compile(bad,input,provider.schema,units),e=>e.validationProblems.some(p=>p.code==='REPAIR_FEEDBACK_COVERAGE'));
+  state.verification.candidateHash='wrong';assert.throws(()=>feedback.current(state),/exact candidate/);
+  assert.deepEqual(input.earlierDraft.evidence,fixture().input.earlierDraft.evidence,'Feedback is not a partial candidate edit or an approval.');
+});
+test('review extents reject missing/header-only extra checked sources and preserve explicit sparse context',()=>{
+  const{input,units}=fixture(),coverage=require('../extension/source-coverage'),unit=units[0];
+  const full=coverage.packet(input,units);assert.doesNotThrow(()=>full.requireUnit(unit.id));
+  assert.throws(()=>coverage.packet({...input,sources:[]},units).requireUnit(unit.id),/not supplied/);
+  const source={...input.sources[0],providedRanges:[{line:1,endLine:1}],code:input.sources[0].code.split('\n')[0]};
+  assert.throws(()=>coverage.packet({...input,sources:[source]},units).requireUnit(unit.id),/1-5/);
+  const context={...unit,contextKind:'excerpt',modelRanges:[{line:2,endLine:3},{line:5,endLine:5}]};
+  source.providedRanges=context.modelRanges;source.code=input.sources[0].code.split('\n').filter((_,i)=>[1,2,4].includes(i)).join('\n');
+  assert.doesNotThrow(()=>coverage.packet({...input,sources:[source]},[context]).requireUnit(unit.id));
+  assert.throws(()=>coverage.packet({...input,sources:[source]},[context],[{evidence:[{id:'old',sourceId:unit.id,line:4,endLine:4}]}]),/evidence old.*4-4/);
+});
 test('rejected typed edits retain independently valid scoped questions without applying edits or erasing originals',()=>{
   const {input,units}=fixture(),q={id:'local-question',claimId:'claim-local',text:'Which guard controls the callback?',action:'symbol',target:'Receiver::callback',why:'The return depends on this guard.'};
   input.earlierDraft.questions=[{...q,id:'original-question',target:'Original::settle'}];

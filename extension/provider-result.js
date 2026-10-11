@@ -59,4 +59,18 @@ function recover(root,findingId,reservation,expected) {
      value.reservation&&digest(value.reservation)!==digest(reservation))throw new Error('Retained response does not match the owned reservation/context or confirmed cleanup.');
   return {reference,value};
 }
-module.exports = { save, read, retain, retainOriginal, recover, digest };
+// Exact archived source is acquisition, not historical semantic approval.
+function archivedSources(root,draft,ids) {
+  const needed=new Set(ids),found=new Map();
+  for(const run of [...draft.runs].reverse()){
+    if(!needed.size)break;
+    const ref=run.retainedResponse;if(!ref)continue;
+    const archive=`.flowboard/recovery/provider-result-${p.identifier(draft.findingId,'finding ID')||draft.findingId}-${ref.hash}.json`;
+    let raw;try{raw=p.readWorkspaceJson(root,archive,MAX_BYTES);}catch(error){if(error.code==='ENOENT')continue;throw error;}
+    const record=read(root,draft.findingId,{...ref,archive},{phase:raw.input?.phase,snapshot:raw.snapshot,corrections:raw.corrections,previous:raw.previous});
+    if(!record||record.result.audit.requestId!==run.requestId)throw new Error('Archived source recovery lost its owned response identity.');
+    for(const unit of record.units)if(needed.has(unit.id)){found.set(unit.id,unit);needed.delete(unit.id);}
+  }
+  return [...found.values()];
+}
+module.exports = { save, read, retain, retainOriginal, recover, digest, archivedSources };

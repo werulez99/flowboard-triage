@@ -569,13 +569,13 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-assessment-inspection p { line-height:1.5; overflow-wrap:anywhere; }
 .guide-assessment-inspection h2 { font-size:17px; line-height:1.4; overflow-wrap:anywhere; }
 .guide-currentness { position:sticky; top:var(--triage-tabs-bottom,58px); z-index:2; padding:8px; background:var(--card-bg); border:1px solid var(--triage-warn); font-size:12px; }
-.triage-assessment-card { width:var(--assessment-card-width,640px)!important; min-width:0!important; max-height:calc(100vh - 110px); display:flex; flex-direction:column; box-sizing:border-box; }
-.triage-assessment-card .card-header { display:flex; flex-wrap:wrap; gap:8px; flex:none; }
-.triage-assessment-card .card-header > :has(> .card-title) { flex:1 1 100%; min-width:0; }
-.triage-assessment-card .card-title { white-space:normal; overflow-wrap:anywhere; overflow:visible; }
-.triage-assessment-card .triage-card-inspect { display:none; }
-.triage-assessment-card .card-code { min-height:100px; flex:1 1 auto; overflow:auto; font-size:14px; }
-.triage-assessment-card .card-code,.triage-assessment-card .code-line { white-space:pre-wrap; overflow-wrap:anywhere; width:auto; }
+:is(.triage-assessment-card,.triage-blocker-card) { width:var(--assessment-card-width,640px)!important; min-width:0!important; max-height:calc(100vh - 110px); display:flex; flex-direction:column; box-sizing:border-box; }
+:is(.triage-assessment-card,.triage-blocker-card) .card-header { display:flex; flex-wrap:wrap; gap:8px; flex:none; }
+:is(.triage-assessment-card,.triage-blocker-card) .card-header > :has(> .card-title) { flex:1 1 100%; min-width:0; }
+:is(.triage-assessment-card,.triage-blocker-card) .card-title { white-space:normal; overflow-wrap:anywhere; overflow:visible; }
+:is(.triage-assessment-card,.triage-blocker-card) .triage-card-inspect { display:none; }
+:is(.triage-assessment-card,.triage-blocker-card) .card-code { min-height:100px; flex:1 1 auto; overflow:auto; font-size:14px; }
+:is(.triage-assessment-card,.triage-blocker-card) .card-code,:is(.triage-assessment-card,.triage-blocker-card) .code-line { white-space:pre-wrap; overflow-wrap:anywhere; width:auto; }
 .guide-status-row { display:flex; gap:8px; align-items:center; }
 .guide-status-row > strong { flex:1; min-width:0; }
 .guide-status-row button { flex-shrink:0; }

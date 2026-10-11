@@ -5,7 +5,7 @@ module.exports = function render(reportPreparation, active) {
   const node = (tag, cls, text = '') => ({ tag, text, children: [], dataset:{}, disabled: false, scrollTop: 0, classList: { toggle() {} },
     append(...items) { this.children.push(...items); }, replaceChildren() { this.children = []; }, setAttribute() {}, querySelectorAll() { return []; } });
   const surface = node('div'), context = { active, reportPreparation, report: '', element: node, button: text => node('button', '', text),
-    preparationLabel: s => s, guideAvailability: null, preparing: null, guideIntent: 'waiting', preparationState: null, investigationDraft: null,
+    preparationLabel: s => s, guideAvailability: null, preparing: null, guideIntent: 'waiting', preparationState: null, investigationDraft: null, blockerReturn: null,
     sourceStale: false, preparationExpanded: true, preparationSurface: surface, issueIdentifier: () => active,
     FlowboardWalkthrough: { build: () => null }, document: { body: { classList: { toggle() {} } } } };
   require('node:vm').runInNewContext(source.slice(source.indexOf('  const preparationJob'), source.indexOf('  const readyDraft')) + '\n' +

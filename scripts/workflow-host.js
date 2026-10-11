@@ -81,7 +81,7 @@ async function start(options = {}) {
   if (!readOnly) {
     if (options.mixedFixture || options.routeFixture || options.teachingFixture) {
       fs.cpSync(teachingFolder ? path.join(teachingFolder, 'project') : path.join(__dirname, options.routeFixture ? 'fixtures/route-preparation/project' : 'fixtures/mixed-preparation/project'), root, { recursive: true });
-      if(['exploration','scenarios'].includes(options.assessmentFixture))fs.copyFileSync(path.join(__dirname,'fixtures/assessment-source.sol'),path.join(root,'src/DeadlineWindow.sol'));
+      if(['exploration','scenarios','repair'].includes(options.assessmentFixture))fs.copyFileSync(path.join(__dirname,'fixtures/assessment-source.sol'),path.join(root,'src/DeadlineWindow.sol'));
       if (options.productionSelection) {
         const git = (...args) => require('node:child_process').execFileSync('git', args, { cwd: root, stdio: 'pipe', timeout: 10000 });
         git('init', '-q'); git('add', '.');
@@ -160,7 +160,11 @@ async function start(options = {}) {
       })]);
       mixedHeld = false;
     }
-    const result = { value: options.assessmentFixture?require('./fixtures/assessment-output').response(input,{blocked:options.assessmentFixture==='blocked',refuted:assessmentRefuted,scenarios:options.assessmentFixture==='scenarios',inspection:['exploration','scenarios'].includes(options.assessmentFixture)}):require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed' } };
+    const result = { value: options.assessmentFixture?require('./fixtures/assessment-output').response(input,{blocked:options.assessmentFixture==='blocked',refuted:assessmentRefuted,scenarios:options.assessmentFixture==='scenarios',inspection:['exploration','scenarios','repair'].includes(options.assessmentFixture)}):require(options.teachingFixture ? './fixtures/teaching-output' : options.routeFixture ? './fixtures/route-ready-output' : './fixtures/mixed-ready-output').response(input, options.teachingFixture), audit: { provider: 'controlled-local-fixture', phase: input.phase, outcome: 'completed',requestId:settings.requestId,teardown:{confirmed:true} } };
+    if(options.assessmentFixture==='repair'){
+      if(input.phase==='generate')result.value.questions=[{id:'interpret-rule',claimId:'c1',action:'inspect',target:result.value.evidence[0].sourceId,text:'Interpret the supplied comment and guard together.',why:'The scoped property and entry condition need a coherent explanation.'}];
+      if(input.checkOnly){result.value.result='repair';result.value.problems=['Reconcile the comment, guarded starting clock and resulting deadline. This fixture is unaccepted, not a checked tutorial.'];}
+    }
     if(options.routeFixture&&options.longQualification){
       const explanation='The checked guard bounds this source interpretation. '.repeat(82)+' MATERIAL SCOPE: only this false-approval invocation rolls back; no historical deployment loss is established.';
       const note=result.value.evidence?.find(e=>e.id==='approval-guard');if(note)note.explanation=explanation;

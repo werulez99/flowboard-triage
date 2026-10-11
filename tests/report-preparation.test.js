@@ -220,8 +220,8 @@ for(const receiptFault of [false,true,'followup'])test(`ordinary coordinator rep
   assert.equal(f.runner.state.jobs['I-1'].requests,receiptFault==='followup'?4:3);assert.equal(f.runner.state.jobs['I-2'].requests,2);
   const count=stages.length;f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(stages.length,count);
 });
-async function seedCorrectionRace(t) {
-  const f=await fixture(t,2);f.options.configuration=()=>({provider:'codex',workers:1,requestLimit:12,findingRequestLimit:6});
+async function seedCorrectionRace(t,findingRequestLimit=6) {
+  const f=await fixture(t,2);f.options.configuration=()=>({provider:'codex',workers:1,requestLimit:12,findingRequestLimit});
   f.runner.prioritize('I-1');
   f.options.invoke=async input=>{
     f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
@@ -250,12 +250,47 @@ test('completed negative candidate verification exposes exact feedback and a ter
   assert.equal(job.privateCandidateState,'terminal');assert.equal(job.verificationCompletion.result,'repair');
   assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').privateCandidateState,'terminal','The ordinary webview DTO must carry lifecycle eligibility, not only the private journal.');
   assert.equal(job.verificationCompletion.published,false);assert.equal(job.assessmentProjection.technical.result,'not-assessed');
-  assert.deepEqual(job.validationProblems.map(p=>p.message),problems);assert.ok(job.validationProblems.every(p=>p.code==='CANDIDATE_VERIFICATION_REPAIR'));
+  assert.deepEqual(job.validationProblems.filter(p=>p.target==='/reviewCandidate').map(p=>p.message),problems);assert.ok(job.validationProblems.every(p=>p.code==='CANDIDATE_VERIFICATION_REPAIR'));
+  assert.ok(job.validationProblems.some(p=>p.target.startsWith('/evidence/')&&p.source),'Known note feedback must open exact code; unbound summary prose gets no guessed anchor.');
   const calls=f.calls.length,used=job.requests,exact=structuredClone(draft.reviewCandidate);
   f.options.configuration=()=>({provider:'none'});await f.runner.ensure();
   assert.equal(f.calls.length,calls);assert.equal(f.runner.state.jobs['I-1'].requests,used);assert.deepEqual(engine.read(f.root,'I-1').reviewCandidate,exact);
   const mismatched=structuredClone(draft);mismatched.reviewCandidate.verification.candidateHash='other-artifact';const projected={};
   f.runner.recoveryStatus(projected,mismatched);assert.equal(projected.verificationCompletion,null,'A received check cannot be attributed to another candidate.');
+});
+for(const limit of [6,8])test(`explicit terminal successor uses ordinary capacity and immutable history (${limit})`,{skip:!native},async t=>{
+  const f=await seedCorrectionRace(t,limit);
+  let reject=true,authoringFeedback;
+  f.options.invoke=async(input,options)=>{
+    f.calls.push([input.finding.id,input.phase,input.reviewPurpose]);
+    let value;
+    if(input.candidateOnly){
+      authoringFeedback=input.hostReview;const next=response({...input,checkOnly:false});
+      if(!reject)next.evidence[0].explanation+=' The false guard prevents a committed effect in this transaction.';
+      value=candidatePatch(next);
+    }else{value=checkedCandidate(input);if(reject){value.result='repair';value.problems=['Reconcile the guard and committed-effect explanation.'];}}
+    return{value,audit:{phase:input.phase,outcome:'completed',requestId:options.requestId,teardown:{confirmed:true}}};
+  };
+  await f.runner.continueFinding('I-1');await f.runner.continueFinding('I-1');
+  const before=engine.read(f.root,'I-1'),parent=structuredClone(before.reviewCandidate),used=f.runner.state.jobs['I-1'].requests,calls=f.calls.length;
+  assert.equal(parent.state,'terminal');assert.equal(used,5);
+  const revision={id:'explicit-revision',candidateHash:parent.candidateHash,feedbackHash:require('../extension/review-feedback').current(parent).responseHash,feedbackRequestId:parent.verification.requestId,reason:'Reconcile the exact verifier objection about the guarded transaction effect.'};
+  const later=structuredClone(before);later.reviewCandidate.verification.requestId='later-identical-review';
+  assert.throws(()=>require('../extension/review-candidate').revise(later,require('../extension/semantic-provider').schema,revision),/current terminal review/,'An old UI cannot revise a different verifier attempt even if its candidate and response bytes happen to match.');
+  reject=false;
+  await Promise.all([f.runner.continueFinding('I-1',{reviseAnalysis:revision}),f.runner.continueFinding('I-1',{reviseAnalysis:revision})]);
+  const after=engine.read(f.root,'I-1');
+  if(limit===6){assert.deepEqual(after.reviewCandidate,parent);assert.equal(f.calls.length,calls);assert.match(f.runner.state.jobs['I-1'].reason,/remaining finding\/report requests: 1\//);}
+  else{
+    assert.equal(f.calls.length,calls+2,after.error);assert.equal(f.runner.state.jobs['I-1'].requests,used+2);
+    assert.deepEqual(after.revisionPredecessors[0].candidate,parent);assert.equal(after.revisionPredecessors[0].id,revision.id);
+    assert.deepEqual(authoringFeedback.response,parent.verification.response);assert.ok(f.runner.artifact('I-1'),after.error);
+    assert.equal(after.candidateHistory.at(-1).repairCount,2,'Lifetime repair accounting is monotonic, not reset for the successor.');
+    await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls+2);
+  }
+  const finalCalls=f.calls.length;f.options.configuration=()=>({provider:'none'});await f.runner.ensure();assert.equal(f.calls.length,finalCalls);
+  if(limit===6)assert.match(f.runner.revisionEligibility(f.runner.state.jobs['I-1'],engine.read(f.root,'I-1')).reason,/remaining finding\/report requests: 1\//,'Provider-none inspection must not imply that enabling a provider alone funds the missing pair.');
+  assert.deepEqual(engine.read(f.root,'I-1').corrections,before.corrections);
 });
 function correctThroughBoard(f) {
   const model={id:'I-1',investigationDraft:engine.read(f.root,'I-1')};

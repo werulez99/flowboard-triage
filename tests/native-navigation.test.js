@@ -45,11 +45,54 @@ test('Ready exploration evidence uses approved assessment inspection; only the m
 test('independent inspection original-source mode preserves comment rows and CRLF without changing ordinary native cleanup',()=>{
  const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),body=source.slice(source.indexOf('  function originalSource'),source.indexOf('  function arrangeCards'));
  const raw='function sample() {\r\n // cited comment\r\n /* first\r\n    last */\r\n return;\r\n}',clean=require('../extension/webview/inline-review').cleanCode(raw);
- const card={id:'card',data:{code:raw},clean,codeEl:{setAttribute(){}},name:'sample'},context={sourceStale:false,guide:null,guideMode:'closed',selectedCard:'card',assessmentReturn:{cardId:'card'},hints:{},
+ const card={id:'card',data:{code:raw},clean,codeEl:{setAttribute(){}},name:'sample'},context={sourceStale:false,guide:null,guideMode:'closed',selectedCard:'card',assessmentReturn:{cardId:'card'},blockerReturn:null,hints:{},
   FlowboardWalkthrough:require('../extension/webview/walkthrough-model'),highlightSolidity:s=>s,esc:s=>s,nativeRenderCode:c=>{context.rendered=c.clean;},decorateInline(){}};
  require('node:vm').runInNewContext(body,context);context.renderCodeBody(card);assert.equal(context.rendered,raw.replace(/\r\n/g,'\n'));assert.equal(card.clean,clean);assert.equal(card._triageOriginal,true);
  context.assessmentReturn=null;context.renderCodeBody(card);assert.equal(context.rendered,clean);assert.equal(card._triageOriginal,false);
+ context.blockerReturn={cardId:'card'};context.renderCodeBody(card);assert.equal(context.rendered,raw.replace(/\r\n/g,'\n'),'Unaccepted review feedback still opens exact original source, not unchecked annotations.');context.blockerReturn=null;
  context.assessmentReturn={cardId:'card'};context.sourceStale=true;context.renderCodeBody(card);assert.equal(context.rendered,clean);
+});
+test('blocker inspection rejects late, out-of-order and returned focus replies before moving native cards',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+ const start=source.indexOf("else if(message?.type==='triage:blockerFocus'"),end=source.indexOf("    else if(message?.type==='triage:assessmentProjection'",start);
+ const run=context=>require('node:vm').runInNewContext('(function(){if(false){} '+source.slice(start,end)+'})()',context);
+ for(const change of [{navigationId:'old'},{issueId:'different'},{token:'old'},{diagnosticId:'different'}]){
+  const context={active:'F',token:'T',sourceStale:false,guideNavigation:'new',blockerReturn:{navigationId:'new',diagnosticId:'D'},cards:{get(){assert.fail('Stale reply must not focus code');}},
+   message:{type:'triage:blockerFocus',issueId:'F',token:'T',navigationId:'new',diagnosticId:'D',...change}};run(context);
+ }
+ run({active:'F',token:'T',sourceStale:false,guideNavigation:'cancelled',blockerReturn:null,cards:{get(){assert.fail('Return while pending revoked inspection');}},message:{type:'triage:blockerFocus',issueId:'F',token:'T',navigationId:'new',diagnosticId:'D'}});
+});
+test('blocker Return restores status intent after native show, including a pending inspection',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+ const body=source.slice(source.indexOf('  function returnFromBlocker'),source.indexOf('  function highlightCallOccurrence'));
+ const card={el:{classList:{remove(){}}},codeEl:{parentElement:{scrollTop:0}}};
+ const context={blockerReturn:{view:{selectedCard:'prior',drawerTab:'brief',scrollTop:17,camera:{scale:1,panX:2,panY:3}},checkedLocation:null,intent:'waiting',expanded:true,scrolls:[['prior',24]]},
+  crypto:require('node:crypto'),guideNavigation:'pending',cards:new Map([['prior',card]]),drawer:{scrollTop:0},
+  show(){context.guideIntent='explore';},applyTransform(){},redrawEdges(){},renderPreparation(){},schedulePersist(){}};
+ require('node:vm').runInNewContext(body+'\nreturnFromBlocker();',context);
+ assert.equal(context.guideIntent,'waiting');assert.equal(context.preparationExpanded,true);assert.equal(context.blockerReturn,null);assert.notEqual(context.guideNavigation,'pending');
+ assert.equal(context.drawer.scrollTop,17);assert.equal(card.codeEl.parentElement.scrollTop,24);assert.equal(context.selectedCard,'prior');
+});
+test('guidance revocation removes blocker view mode and pending navigation authority',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+ const body=source.slice(source.indexOf('  function revokeGeneratedGuidance'),source.indexOf("  window.addEventListener('message'",source.indexOf('  function revokeGeneratedGuidance')));
+ const removed=[],context={blockerReturn:{navigationId:'pending'},guideNavigation:'pending',sourceStale:false,crypto:require('node:crypto'),
+  cards:new Map([['card',{el:{classList:{remove:(...names)=>removed.push(...names)}}}]]),drawer:{querySelectorAll:()=>[]},document:{querySelectorAll:()=>[]}};
+ require('node:vm').runInNewContext(body+'\nrevokeGeneratedGuidance();',context);
+ assert.equal(context.blockerReturn,null);assert.notEqual(context.guideNavigation,'pending');assert.ok(removed.includes('triage-blocker-card'));assert.equal(context.checkedLocation,null);
+});
+test('source editor inspection resolves indexed declaration-only files without relaxing path or view ownership',async t=>{
+ const fs=require('node:fs'),path=require('node:path'),root=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'flowboard-declaration-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const file=path.join(root,'IRules.sol');fs.writeFileSync(file,'interface IRules {\n // Documented context, not executable proof.\n function limit() external view returns(uint);\n}\n');
+ const model={catalog:{functions:[],sourceStamps:new Map([[file,{}]])},request:{}},opened=[];
+ const board=Object.assign(Object.create(TriageBoard.prototype),{root,activeId:'F',activeToken:'T',models:new Map([['F',model]]),native:{panel:{viewColumn:2}},assertCurrent(){},
+  vscode:{Uri:{file:fsPath=>({fsPath})},Range:class {constructor(line){this.line=line;}},workspace:{isTrusted:true,openTextDocument:async uri=>({uri,isDirty:false})},window:{showTextDocument:async(doc,options)=>opened.push({doc,options})}}});
+ await board.receive({type:'triage:openReference',issueId:'F',token:'T',file:'IRules.sol',line:2});
+ assert.equal(opened.length,1);assert.equal(opened[0].doc.uri.fsPath,file);assert.equal(opened[0].options.selection.line,1);
+ await assert.rejects(board.receive({type:'triage:openReference',issueId:'F',token:'T',file:'../IRules.sol',line:2}),/unambiguously/);
+ await assert.rejects(board.receive({type:'triage:openReference',issueId:'F',token:'old',file:'IRules.sol',line:2}),/out of date/);
+ assert.equal(opened.length,1);
 });
 
 test('board final revision check rejects a Git change during its ready await before any view publication', async t => {
@@ -114,7 +157,7 @@ test('actual preparation renderer retains selected job reason and shows current 
     jobs: [{ id: 'A', publishable: true, state: 'completed' }, { id: 'B', state: 'paused', reason: 'Finding request allowance exhausted.' }],
     admission: { scope: 'report', project: 'P', reportHash: 'R', reason: 'Report preparation is already owned by another local host.', action: 'Reopen after that host stops.' } },
     element: node, button: (label, action) => ({ ...node('button', '', label), action }), preparationLabel: s => s,
-    report: '', guideAvailability: null, guideIntent: 'waiting', preparing: null, preparationState: null, investigationDraft: null, sourceStale: false, preparationExpanded: true,
+    report: '', guideAvailability: null, guideIntent: 'waiting', preparing: null, preparationState: null, investigationDraft: null, sourceStale: false, preparationExpanded: true,blockerReturn:null,
     preparationSurface: surface, document: { body: { classList: { toggle() {} } } }, FlowboardWalkthrough: { build: () => null }, issueIdentifier: () => 'B', send() {} };
   const vm = require('node:vm'); vm.runInNewContext(`${definitions}\n${rendering}\nrenderPreparation();`, context);
   const text = flat(surface).map(n => n.text).join('\n');

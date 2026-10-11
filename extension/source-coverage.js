@@ -23,6 +23,27 @@ function union(ranges) {
 function covers(ranges,line,endLine){return union(ranges).some(r=>r.line<=line&&r.endLine>=endLine);}
 function read(unit,line,endLine){return (unit.readThrough??unit.source.line-1)>=endLine||covers(unit.readRanges,line,endLine);}
 function failure(message){return Object.assign(new Error(message),{code:'LOCAL_READING_LIMIT'});}
+// Typed semantic references only. Archived discovery/receipts and words which
+// happen to resemble IDs are not material dependencies. Previous note reviews
+// remain relevant while the note belongs to the original/current revision.
+function necessary(draft) {
+  const state=draft?.reviewCandidate,models=[draft,state?.acceptedBase,state?.referenceBase,state?.candidate,draft?.rejectedProposal?.proposal].filter(Boolean);
+  const ids=new Set(), notes=new Set(models.flatMap(m=>(m.evidence||[]).map(e=>e.id)));
+  const visit=value=>{
+    if(!value||typeof value!=='object')return;
+    for(const [key,v]of Object.entries(value)){
+      if(['sourceId','implementationSourceId','entry'].includes(key)&&typeof v==='string'&&v)ids.add(v);
+      else if(key==='checkedSourceIds'&&Array.isArray(v))for(const id of v)ids.add(id);
+      else if(!['history','reviewCandidate','candidateHistory','revisionPredecessors','runs','actions','sources','verification','lineage'].includes(key))visit(v);
+    }
+  };
+  for(const model of models)visit(model);
+  for(const record of [state,...(state?.history||[])].filter(Boolean))
+    for(const review of record.verification?.response?.explanationReviews||[])
+      if(notes.has(review.evidenceId))for(const id of review.checkedSourceIds||[])ids.add(id);
+  for(const q of models.flatMap(m=>m.questions||[]))if(draft.sources?.some(s=>s.id===q.target))ids.add(q.target);
+  return [...ids];
+}
 // Check the actual expanded, numbered payload, not acquisition receipts or
 // historical reading cursors. This proves supplied bytes, never interpretation.
 function packet(input, units, models = []) {
@@ -42,6 +63,15 @@ function packet(input, units, models = []) {
     const available=views.filter(v=>v.source.file===file&&v.source.sourceHash===sourceHash&&(!ids||ids.includes(v.source.id))).flatMap(v=>v.selected);
     if(!covers(available,line,endLine))throw failure(`${label} is not supplied in this request: ${file}:${line}-${endLine}.`);
   };
+  const requireUnit=(id,label='Reviewed source')=>{
+    const unit=known.get(id);
+    if(!unit)throw failure(`${label} ${id} is missing from the current canonical source set.`);
+    // An explicitly bounded context excerpt can contain declarations or
+    // complete enclosed functions. A callable unit requires its whole body.
+    const extent=unit.contextKind==='excerpt'&&unit.modelRanges?.length?unit.modelRanges:[unit.source];
+    for(const r of extent)requireSpan(unit.source.file,unit.source.sourceHash,r.line,r.endLine,`${label} ${id}`,[id]);
+  };
+  for(const id of expanded.requiredSourceIds||[])requireUnit(id,'Required review source');
   for(const item of expanded.materialSourceRequirements||[])
     for(const range of item.ranges||[{line:item.line,endLine:item.endLine}])requireSpan(item.file,item.sourceHash,range.line,range.endLine,'Mandatory source');
   const notes=(models||[]).flatMap(model=>model?.evidence||[]);
@@ -64,6 +94,6 @@ function packet(input, units, models = []) {
       requireSpan(unit.source.file,unit.source.sourceHash,anchor.source.line,anchor.source.endLine,`Review event ${event.id}`);
     }
   }
-  return { expanded, requireSpan };
+  return { expanded, requireSpan, requireUnit };
 }
-module.exports = { contains, ranges, union, covers, read, packet };
+module.exports = { contains, ranges, union, covers, read, packet, necessary };

@@ -213,7 +213,7 @@
     document.body.style.setProperty('--guide-card-width', `${Math.max(300, Math.min(960, flowboard.clientWidth - 48))}px`);
     requestAnimationFrame(() => {
       const card = cards.get(selectedCard);
-      if(assessmentReturn?.cardId===card?.id&&card&&!sourceStale){
+      if((assessmentReturn?.cardId===card?.id||blockerReturn?.cardId===card?.id)&&card&&!sourceStale){
         card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);
         if(checkedLocation)guideReveal(checkedLocation.line);
       }
@@ -273,7 +273,12 @@
             card.append(element('p','',item.message),...(item.action?[element('p','triage-muted',item.action)]:[]));
             const technical=element('details');technical.append(element('summary','','Exact field and diagnostic'),element('small','triage-muted',`${item.code}${item.target?' · '+item.target:''}`));
             if(item.file)technical.append(element('small','triage-muted',`${item.file}:${item.line}-${item.endLine}`));card.append(technical);
-            if(item.source&&!sourceStale)card.append(button(`Inspect code · L${item.line}–${item.endLine}`,()=>{rememberLocation();blockerReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),scrolls:[...cards].map(([id,c])=>[id,c.codeEl.scrollTop])};send('triage:inspectBlocker',{diagnosticId:item.id});}));
+            if(item.source&&!sourceStale)card.append(button(`Inspect code · L${item.line}–${item.endLine}`,()=>{
+              rememberLocation();guideNavigation=crypto.randomUUID();
+              blockerReturn={view:location(),checkedLocation:checkedLocation&&structuredClone(checkedLocation),intent:guideIntent,expanded:preparationExpanded,
+                navigationId:guideNavigation,diagnosticId:item.id,scrolls:[...cards].map(([id,c])=>[id,c.codeEl.parentElement.scrollTop])};
+              send('triage:inspectBlocker',{diagnosticId:item.id,navigationId:guideNavigation});renderPreparation();
+            }));
             if(item.file&&!sourceStale)card.append(button('Open source in editor',()=>send('triage:openReference',{file:item.file,line:item.line})));
             section.append(card);
           }invalid.append(section);
@@ -359,6 +364,12 @@
         'Verifier returned · correction required. No technical assessment or tutorial was accepted.':job.verificationCompletion.published?
         'Full verification completed · checked tutorial available.':'Full verification completed · walkthrough unavailable. The technical assessment and the remaining evidence or presentation blockers are shown separately.'));
       if(job?.privateCandidateState==='terminal')preparationSurface.append(element('p','guide-status-reason guide-current-requirement','The bounded candidate repair cycle is finished. Inspect the verifier’s corrections and source; continuing unchanged cannot start another request.'));
+      if(job?.privateCandidateState==='terminal'&&job.revisionAction){
+        preparationSurface.append(element('p','guide-status-reason',job.revisionAction.reason));
+        if(job.revisionAction.available&&!sourceStale)preparationSurface.append(button('Revise analysis',()=>send('triage:reviseAnalysis',{revision:{id:crypto.randomUUID(),candidateHash:job.revisionAction.candidateHash,feedbackHash:job.revisionAction.feedbackHash,feedbackRequestId:job.revisionAction.feedbackRequestId,
+          reason:'Reconcile the current complete verifier feedback and its dependent argument against the supplied material sources.'}})));
+      }
+      if(blockerReturn)preparationSurface.append(button('Return to blockers',returnFromBlocker));
       if(job?.verificationCompletion&&job.verificationCompletion.result!=='repair'&&!job.verificationCompletion.published&&job.missingInputs?.length)
         preparationSurface.append(element('p','guide-status-reason guide-current-requirement',`Still required: ${job.missingInputs[0].text}`));
       if(job?.validationProblems?.length){
@@ -391,6 +402,14 @@
     const contextInset = Math.min(48, Math.max(8, box.height / 4));
     if (rect.top < box.top + 24 || rect.bottom > box.bottom - 24) scroller.scrollTop += (rect.top - box.top - contextInset) / scale;
     placeGuideAnchor();
+  }
+  function returnFromBlocker(){
+    const saved=blockerReturn;if(!saved)return;blockerReturn=null;guideNavigation=crypto.randomUUID();
+    for(const card of cards.values())card.el.classList.remove('triage-blocker-card');
+    const v=saved.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=saved.checkedLocation;
+    show(v.drawerTab);guideIntent=saved.intent;preparationExpanded=saved.expanded;({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;
+    redrawEdges();for(const[id,scroll]of saved.scrolls){const card=cards.get(id);if(card)card.codeEl.parentElement.scrollTop=scroll;}
+    renderPreparation();schedulePersist();
   }
   function highlightCallOccurrence() {
     for (const row of flowboard.querySelectorAll('[data-call-site-id]')) delete row.dataset.callSiteId;
@@ -1882,7 +1901,7 @@
   // call listeners. Our text-only notes are applied afterwards, independently.
   const nativeRenderCode = renderCodeBody;
   function originalSource(card){return !sourceStale&&!card.data.notFound&&selectedCard===card.id&&
-    (!!guide&&guideMode!=='closed'||assessmentReturn?.cardId===card.id);}
+    (!!guide&&guideMode!=='closed'||assessmentReturn?.cardId===card.id||blockerReturn?.cardId===card.id);}
   renderCodeBody = function(card) {
     const original = originalSource(card);
     card._triageOriginal = original;
@@ -1980,8 +1999,8 @@
   function revokeGeneratedGuidance(withdrawAssessment = true) {
     guide = null; guideMode = 'closed'; guideReturn = null; checkedLocation = null;
     if (withdrawAssessment) investigationDraft = null;
-    assessmentReturn=null;
-    for(const card of cards.values())card.el.classList.remove('triage-assessment-card');
+    assessmentReturn=null;blockerReturn=null;guideNavigation=crypto.randomUUID();
+    for(const card of cards.values())card.el.classList.remove('triage-assessment-card','triage-blocker-card');
     visibleInvestigation = null;
     for (const workbench of drawer.querySelectorAll('.inv-workbench')) {
       const adjustment = workbench.querySelector('.inv-correction')?.closest('details');
@@ -2010,7 +2029,8 @@
       // Its host-validated investigation event owns that atomic transition.
       // Update small row badges only, preserving note nodes/caret and camera.
       renderPreparation(); updatePreparationRows();
-      if(!selectedProjection()?.technical.identity)document.querySelectorAll('.guide-opinion,.guide-severity,.guide-assessment-inspection').forEach(node=>node.remove());
+      if(!selectedProjection()?.technical.identity)document.querySelectorAll('.guide-opinion,.guide-severity,.guide-assessment-inspection:not(.guide-blocker-inspection)').forEach(node=>node.remove());
+      if(blockerReturn&&!preparationJob(active)?.validationProblems?.some(item=>item.id===blockerReturn.diagnosticId))returnFromBlocker();
       return;
     }
     if (message?.type === 'triage:load') {
@@ -2136,14 +2156,20 @@
       const card = cards.get(message.id); if (card) inspectCard(card);
     }
     else if(message?.type==='triage:blockerFocus'&&message.issueId===active&&message.token===token&&!sourceStale){
+      if(!blockerReturn||message.navigationId!==blockerReturn.navigationId||message.navigationId!==guideNavigation||message.diagnosticId!==blockerReturn.diagnosticId)return;
       const card=cards.get(message.id);if(!card)return;
+      blockerReturn.cardId=card.id;visibleInvestigation=null;
       for(const c of cards.values())c.el.classList.remove('triage-blocker-card');card.el.classList.add('triage-blocker-card');
       guideIntent='explore';renderPreparation();inspectCard(card);checkedLocation=message.source;focusReadable(card);redrawEdges();
-      const row=card.codeEl.querySelector(`[data-source-line="${message.source.line}"]`);if(row)card.codeEl.scrollTop+=row.getBoundingClientRect().top-card.codeEl.getBoundingClientRect().top-32;
-      const back=button('Return to blockers',()=>{card.el.classList.remove('triage-blocker-card');
-        if(blockerReturn){const v=blockerReturn.view;({selectedCard,activeClaim,activeInvestigationClaim,claimFocus,spotlight}=v);checkedLocation=blockerReturn.checkedLocation;show(v.drawerTab);({scale,panX,panY}=v.camera);applyTransform();drawer.scrollTop=v.scrollTop;for(const[id,scroll]of blockerReturn.scrolls){const c=cards.get(id);if(c)c.codeEl.scrollTop=scroll;}redrawEdges();blockerReturn=null;}
-        back.remove();guideIntent='waiting';preparationExpanded=true;renderPreparation();const target=[...preparationSurface.querySelectorAll('[data-blocker-id]')].find(n=>n.dataset.blockerId===message.diagnosticId);target?.scrollIntoView({block:'center'});});
-      back.classList.add('guide-blocker-return');drawer.prepend(back);
+      card.el.style.setProperty('--assessment-card-width',`${Math.max(300,Math.min(960,flowboard.clientWidth-48))}px`);
+      guideReveal(message.source.line);
+      if(Array.from({length:message.source.endLine-message.source.line+1},(_,i)=>i+message.source.line).some(line=>!card.codeEl.querySelector(`[data-source-line="${line}"]`)))
+        drawer.prepend(element('p','triage-warning','The cited original rows are unavailable in this card. Open the exact source in the editor.'),button('Open exact source',()=>send('triage:openReference',{file:message.source.file,line:message.source.line})));
+      const back=button('Return to blockers',returnFromBlocker);
+      back.classList.add('guide-blocker-return');
+      const context=element('section','guide-assessment-inspection guide-blocker-inspection');context.append(back,element('h2','',message.diagnostic?.group||'Source inspection'),
+        element('p','',message.diagnostic?.message||'Inspect the exact referenced source.'),element('p','triage-muted','Source inspection and attributed feedback only · not a checked tutorial.'));
+      drawer.prepend(context);drawer.scrollTop=0;
     }
     else if(message?.type==='triage:assessmentProjection'&&message.issueId===active&&message.token===token&&investigationDraft&&!sourceStale){
       if(!Number.isSafeInteger(message.profileObservation)||message.profileObservation<=profileObservation||

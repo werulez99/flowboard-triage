@@ -37,6 +37,9 @@ function revision(original, candidate, origin) {
 }
 function assertCurrent(draft, schema) {
   const state = draft.reviewCandidate;
+  if(state?.successor){const parent=(draft.revisionPredecessors||[]).find(p=>p.id===state.successor.id);
+    if(!parent||hash(parent.candidate)!==state.successor.parentHash||parent.candidate.state!=='terminal')
+      throw Object.assign(new Error('Private revision lost its immutable terminal predecessor.'),{code:'CANDIDATE_STALE'});}
   const rejected=state?.referenceOrigin&&require('./rejected-proposal').assertCurrent(draft,schema);
   if (!state || state.version !== VERSION || state.contextHash !== identity(draft) ||
       (rejected ? state.referenceBaseHash!==rejected.proposalHash || hash(state.referenceOrigin)!==hash(rejected.origin) || hash(state.referenceBase)!==rejected.proposalHash : state.acceptedBaseHash !== hash(wire(draft, schema))) ||
@@ -62,7 +65,7 @@ function save(draft, candidate, schema, provenance) {
     versionNumber: (prior?.versionNumber || 0) + 1, candidate: proposed, candidateHash: hash(proposed), revisions,
     lineage: [...(prior?.lineage || []), { ...provenance, candidateHash: hash(proposed), revisionHash: hash(revisions) }],
     history: [...(prior?.history || []), ...(prior ? [{ candidate: prior.candidate, candidateHash: prior.candidateHash, verification: prior.verification || null }] : [])],
-    repairCount: prior?.repairCount || 0, verification: null };
+    repairCount: prior?.repairCount || 0, ...(prior?.successor?{successor:prior.successor}:{}), verification: null };
   return draft.reviewCandidate;
 }
 function needsCompletion(draft) {
@@ -86,12 +89,30 @@ function purpose(draft, schema) {
   if (!draft.reviewCandidate) return needsCompletion(draft) ? 'candidate-completion' : null;
   const state = assertCurrent(draft, schema);
   if (state.state === 'seeded') return 'candidate-completion';
+  if (state.state === 'revision-pending') return 'candidate-repair';
   if (state.state === 'repair-requested') {
     if (state.repairCount >= 1) throw new Error('The candidate already used its bounded repair cycle. Retained feedback needs inspection.');
     return 'candidate-repair';
   }
   if (state.state === 'terminal') throw new Error('The candidate review ended with retained blockers; no automatic further request is permitted.');
   return state.repairCount ? 'candidate-reverification' : 'candidate-verification';
+}
+function revise(draft,schema,request) {
+  const state=assertCurrent(draft,schema);
+  if(state.successor?.id===request?.id)return state; // consumed identities never restart
+  const feedback=require('./review-feedback').current(state);
+  if(draft.pendingResponse||state.state!=='terminal'||!feedback||!request?.id||
+    request.candidateHash!==state.candidateHash||request.feedbackHash!==feedback.responseHash||request.feedbackRequestId!==feedback.requestId||
+    typeof request.reason!=='string'||!request.reason.trim()||request.reason.length>2400||
+    (draft.revisionPredecessors||[]).some(p=>p.id===request.id))throw new Error('A current terminal review and concrete, explicit revision request are required.');
+  const parentHash=hash(state);
+  draft.revisionPredecessors=[...(draft.revisionPredecessors||[]),{id:request.id,candidate:structuredClone(state),response:request.archive}];
+  draft.reviewCandidate={...structuredClone(state),state:'revision-pending',successor:{id:request.id,parentHash,
+    feedbackHash:feedback.responseHash,reason:request.reason,at:new Date().toISOString()}};
+  draft.phase='candidate-revision-pending';draft.failureKind=null;draft.failureCode=null;
+  draft.error='Explicit private revision requested. Previous review remains terminal and unaccepted; fresh authoring and verification are required.';
+  delete draft.localPreparation?.preflight;
+  return draft.reviewCandidate;
 }
 function packet(input, draft, schema, selectedPurpose) {
   const state = draft.reviewCandidate && assertCurrent(draft, schema);
@@ -109,7 +130,10 @@ function packet(input, draft, schema, selectedPurpose) {
   // obsolete host errors. Current typed diagnostics are candidateProblems.
   if(rejected)delete result.hostReview;
   if (selectedPurpose.endsWith('verification')) { result.checkOnly = true; result.candidateRevisionTargets = revisionTargets(result.candidateRevisions); }
-  else { result.candidateOnly = true; if (selectedPurpose === 'candidate-repair') result.candidateProblems = state.verification.problems;
+  else { result.candidateOnly = true; if (selectedPurpose === 'candidate-repair') {
+      result.hostReview=require('./review-feedback').current(state);
+      delete result.candidateProblems; // exact problems live once in response
+    }
     if(selectedPurpose==='rejected-proposal-repair')result.candidateProblems=rejected.validationProblems;
     if(selectedPurpose==='rejected-proposal-followup'){
       const f=rejected.followup;
@@ -143,4 +167,4 @@ const instruction = `PRIVATE CANDIDATE LIFECYCLE. earlierDraft is the exact UNCH
 For a checkOnly request: overall kept means the CANDIDATE remains EXACTLY unchanged. Fresh explanationReviews classify each note relative to the ORIGINAL reference (accepted base, or explicitly unaccepted received proposal): unchanged=kept, changed=repaired, new=added, absent=removed. Review every current note AND every old changed/removed note in candidateRevisions, with their original and current sources. Check the reasons and dependent reference changes, all original claim groups, every current causal target and all premises. No approvals are inherited. If any edit is needed return repair with concrete affected IDs; do not rewrite the candidate. An indispensable missing fact stays a finite blocker, not a forced verdict.
 In that same checks array, additionally check EVERY exact target in candidateRevisionTargets. Explain why its exact original-to-candidate change/removal is justified (or reject it), using old/current evidence IDs or supplied documentation. These checks do not replace any current causal target or explanation review. Revision targets are separate from runtime events and never become tutorial steps.
 For candidateOnly: normal instructions demanding fresh inputReviews, explanationReviews and causal checks do NOT apply to this authoring request. Complete the WHOLE explanation across all material claim groups, rule basis, conditions, consequences and counterevidence, or retain exact indispensable blockers. Return only the enforced candidate authoring shape; it supplies no attestations. Keep unaffected content and stable IDs. A candidate-repair request may change only the stated problems and their necessary dependencies. untrustedAuthoring is a rejected earlier proposal, not the current candidate: its edits were NOT applied to earlierDraft. Independently use or reject its material reasoning against source and current diagnostics; never inherit its checks. The complete candidate will receive a separate fresh check.`;
-module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, instruction };
+module.exports = { VERSION, purposes, unchecked, wire, identity, revision, revisionTargets, checkRevisions, hash, assertCurrent, save, needsCompletion, purpose, packet, instruction, revise };

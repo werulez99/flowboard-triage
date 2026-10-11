@@ -4,11 +4,11 @@ const actualEngine=require('../extension/investigation-engine'),fixtureAuthoring
 const engine={...actualEngine,advance:options=>actualEngine.advance({...options,invoke:fixtureAuthoring.invoke(options.invoke)})},provider=require('../extension/semantic-provider'),candidate=require('../extension/review-candidate');
 const format=require('../extension/challenge-format'),policy=require('../extension/guide-policy'),capacity=require('../extension/review-capacity');
 const native=process.env.FLOWBOARD_EXTENSION_PATH;
-async function fixture(t,kind='route',index=0,extra=0) {
+async function fixture(t,kind='route',index=0,extra=0,extraFile='Required.sol') {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'candidate-route-'));
   const folder=kind==='time'?'teaching-preparation/time':`${kind}-preparation`;
   fs.cpSync(path.join(__dirname,`../scripts/fixtures/${folder}/project`),root,{recursive:true});
-  if(extra)fs.writeFileSync(path.join(root,'Required.sol'),'pragma solidity ^0.8.20;\ncontract Required {\n'+Array.from({length:extra},(_,i)=>` function definition${i}() internal pure returns(uint) { return ${i}; }\n`).join('')+'}\n');
+  if(extra){fs.mkdirSync(path.dirname(path.join(root,extraFile)),{recursive:true});fs.writeFileSync(path.join(root,extraFile),'pragma solidity ^0.8.20;\ncontract Required {\n'+Array.from({length:extra},(_,i)=>` function definition${i}() internal pure returns(uint) {\n return ${i};\n }\n`).join('')+'}\n');}
   await require('../extension/report').importReport(path.join(__dirname,`../scripts/fixtures/${folder}/report.md`),root,native,{deferMapping:true});
   const indexed=await require('../extension/runner-adapter').analyze(native,root,{mode:'source'}),catalog=new(require('../extension/source').SourceCatalog)(root,indexed.runner,indexed.result);
   const report=require('../extension/store').readReport(root),issue=report.issues[index],entry=require('../extension/report').parseReport(report.originalReport,{manifest:true}).issues[index];
@@ -288,14 +288,16 @@ test('exact candidate verification rejects an omitted old note range before rese
     // Retain the ID and valid exact header bytes, but omit its old evidence.
     const line=source.line;assert.ok(note.line>line);source.providedRanges=[{line,endLine:line}];source.complete=false;source.code=source.code.split('\n')[0];return require('../extension/packet-context').compact(plain);
   },beforeRequest:()=>{reservations++;},invoke:()=>{calls++;assert.fail('Incomplete source view cannot dispatch');}});
-  assert.equal(reservations,0);assert.equal(calls,0);assert.equal(f.draft.failureCode,'LOCAL_READING_LIMIT');assert.match(f.draft.error,/evidence.*not supplied/);
+  assert.equal(reservations,0);assert.equal(calls,0);assert.equal(f.draft.failureCode,'LOCAL_READING_LIMIT');assert.match(f.draft.error,/(evidence|Required review source).*not supplied/);
 });
-test('new material preparation retains candidate-only source references without pinning unrelated discovery',{skip:!native},async t=>{
-  const f=await fixture(t,'route',0,3);await generation(f);
+for(const extraFile of ['Required.sol','test/Required.t.sol'])test(`new material preparation retains candidate-only source references without pinning unrelated discovery (${extraFile})`,{skip:!native},async t=>{
+  const f=await fixture(t,'route',0,3,extraFile);await generation(f);
   const context=engine.makeContext(f.catalog,f.request);context.restore(f.draft.sources,f.draft);
   const fn=name=>f.catalog.functions.find(item=>item.name===name);
   const sourceId=context.add(fn('definition0'),'Exact source requested for private candidate interpretation.');
   context.add(fn('definition2'),'Unbound optional neighbor.');f.draft.sources=context.units;
+  if(extraFile.startsWith('test/')){const unit=context.units.find(u=>u.id===sourceId);
+    f.draft.localPreparation={contextHash:candidate.identity(f.draft),requirements:[{...unit.source,reason:'Explicitly acquire the test helper before candidate authoring; the later plan replaces this selection.'}]};}
   await engine.advance({...f,invoke:async input=>{
     const plain=require('../extension/packet-context').expand(input),unit=plain.sources.find(u=>u.id===sourceId),value=proposal(input);
     assert.ok(unit);const [line,quote]=unit.code.split('\n')[0].split(' | ');
@@ -304,8 +306,8 @@ test('new material preparation retains candidate-only source references without 
     return{value,audit:{phase:'challenge',outcome:'completed',requestId:'candidate-extra-source'}};
   }});
   assert.equal(f.draft.phase,'candidate-awaiting-verification',f.draft.error);
-  const frozen=structuredClone(f.draft.reviewCandidate),required=fn('definition1'),doc=f.catalog.document('Required.sol');
-  f.draft.localPreparation={contextHash:candidate.identity(f.draft),requirements:[{file:'Required.sol',line:required.startLine,endLine:required.endLine,sourceHash:engine.hash(doc.text),reason:'New exact local definition, independent of original/current evidence retention.'}]};
+  const frozen=structuredClone(f.draft.reviewCandidate),required=fn('definition1'),doc=f.catalog.document(extraFile);
+  f.draft.localPreparation={contextHash:candidate.identity(f.draft),requirements:[{file:extraFile,line:required.startLine,endLine:required.endLine,sourceHash:engine.hash(doc.text),reason:'New exact local definition, independent of original/current evidence retention.'}]};
   await engine.advance({...f,preparationOnly:true,beforeRequest:()=>assert.fail('Local preparation cannot reserve'),invoke:()=>assert.fail('Local preparation cannot dispatch')});
   assert.equal(f.draft.phase,'local-preparation-ready',f.draft.error);
   assert.ok(f.draft.sources.some(u=>u.id===sourceId),'A note introduced only by the candidate must keep its exact supplied source.');
@@ -328,10 +330,13 @@ test('repair history keeps prior checker source dependencies in the next actual 
     return{value,audit:{phase:'challenge',outcome:'completed',requestId:'history-V'}};
   }});
   assert.equal(f.draft.reviewCandidate.state,'repair-requested',f.draft.error);
+  const paid=f.draft.runs.at(-1).retainedResponse;
+  require('../extension/provider-result').retainOriginal(f.root,f.findingId,paid);
   await engine.advance({...f,invoke:async input=>({value:{mode:format.CANDIDATE,updates:[{path:'/evidence/approval-guard/explanation',valueJSON:JSON.stringify('The false approval reverts the internal call and the preceding intermediate writes. No write in this transaction commits.')} ]},audit:{phase:'challenge',outcome:'completed',requestId:'history-R'}})});
   assert.equal(f.draft.reviewCandidate.verification,null);assert.ok(f.draft.reviewCandidate.history[0].verification.response.explanationReviews[0].checkedSourceIds.includes(dependency));
   const required=fn('definition1'),doc=f.catalog.document('Required.sol'),exact=structuredClone(f.draft.reviewCandidate);
   f.draft.localPreparation={contextHash:candidate.identity(f.draft),requirements:[{file:'Required.sol',line:required.startLine,endLine:required.endLine,sourceHash:engine.hash(doc.text),reason:'New material definition; old review dependencies remain independently protected.'}]};
+  f.draft.sources=f.draft.sources.filter(u=>u.id!==dependency); // reproduced historical source-loss, not semantic modification
   await engine.advance({...f,preparationOnly:true,invoke:()=>assert.fail('Local work cannot invoke')});
   assert.equal(f.draft.phase,'local-preparation-ready',f.draft.error);
   assert.ok(f.draft.sources.some(u=>u.id===dependency),'Moving V to history must not discard its source-review obligations.');
@@ -343,6 +348,19 @@ test('repair history keeps prior checker source dependencies in the next actual 
     return{value,audit:{phase:'challenge',outcome:'completed',requestId:'history-V2'}};
   }});
   assert.equal(f.draft.phase,'ready',f.draft.error);
+});
+for(const omitted of [true,false])test(`ordinary V cannot attest an extra source omitted or header-only (${omitted})`,{skip:!native},async t=>{
+  const f=await fixture(t,'route',0,1);await generation(f);
+  const context=engine.makeContext(f.catalog,f.request);context.restore(f.draft.sources,f.draft);
+  const dependency=context.add(f.catalog.functions.find(fn=>fn.name==='definition0'),'Optional source which the controlled checker will claim to have reviewed.');f.draft.sources=context.units;
+  await engine.advance({...f,invoke:async input=>({value:proposal(input),audit:{phase:'challenge',outcome:'completed',requestId:'extra-C'}})});
+  await engine.advance({...f,prepareRequest:input=>{
+    const data=require('../extension/packet-context').expand(input),unit=data.sources.find(s=>s.id===dependency);assert.ok(unit);
+    if(omitted)data.sources=data.sources.filter(s=>s.id!==dependency);
+    else{unit.providedRanges=[{line:unit.line,endLine:unit.line}];unit.code=unit.code.split('\n')[0];unit.complete=false;}
+    return require('../extension/packet-context').compact(data);
+  },invoke:async input=>{const value=verification(input);value.explanationReviews[0].checkedSourceIds.push(dependency);return{value,audit:{phase:'challenge',outcome:'completed',requestId:'extra-V'}};}});
+  assert.equal(policy.gate(f.draft).ready,false);assert.match(f.draft.error,/Explanation check.*not supplied/);assert.ok(f.draft.pendingResponse,'Exact bad response stays recoverable, never certified.');
 });
 test('completed check disagreement alone unlocks repair; absent coverage and timeout do not',{skip:!native},async t=>{
   const f=await fixture(t);await generation(f);

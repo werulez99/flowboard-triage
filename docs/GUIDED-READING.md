@@ -1,4 +1,4 @@
-# Checked finding walkthroughs — 0.19.31
+# Checked finding walkthroughs — 0.19.32
 
 Import a report. The configured provider starts bounded background preparation of every legitimate finding, without a selection event. Each finding becomes readable as soon as its own complete explanation passes the current checks. Other findings continue preparing in the background. Step 1 opens on the existing canvas if that finding is still selected and the researcher has not deliberately started exploring. **Walkthrough** and **Read code** enter the same experience. An unfinished finding has a compact status dock distinguishing running work, capacity wait, paused budget, failed requests and missing material evidence. It does not replace the graph. Read report and Explore code remain available. No prompt, manual annotation, form or human verdict is required.
 
@@ -37,6 +37,38 @@ recheck; transport failure does not create semantic repair permission. Ordinary
 per-finding/report limits still govern attempts; the private evaluator's four
 slots are not a new global product allowance.
 
+Candidate repair receives the exact identity-bound structured verifier response
+once in `hostReview` (`candidate-feedback-v1`), including per-note, premise,
+causal, report and revision reasons, not just its summary problems. Grouped
+`feedbackResponses` record changed/retained/unresolved authoring dispositions;
+they are not checks or semantic approval. The host rejects omissions, duplicate
+dispositions, unknown targets and claimed edits which did not happen. The normal
+fresh verifier still judges the entire argument and original-to-current revisions.
+
+**Revise analysis** explicitly creates a private successor of a terminal negative
+review when current source/premises, owned response/cleanup, phase plan and
+remaining finding/report capacity permit both authoring and fresh verification.
+Its exact predecessor and paid response are archived unchanged. Consumed usage
+and repair counts remain monotonic; repeated clicks/reopen do not restart a cycle.
+One remaining request does not fund an authoring/verification pair. A new prompt
+or numerical slot never resets a terminal record. Unavailable actions explain
+the governing provider, recovery or allowance boundary.
+
+Typed original/current/revision source dependencies share restore and priority
+handling, including candidate-only test sources and still-relevant prior checker
+references. Missing required units can be recovered from owned exact response
+archives after current file/hash checks. Every outgoing packet validates actual
+numbered bytes and ranges; extra returned checked source IDs must also have
+their complete callable body, or explicit bounded context extent, in that packet.
+Historical packets and their narrower attestations are not retroactively changed.
+Unbound discovery neighbors remain optional; the source/byte limits are unchanged.
+
+Negative feedback is labeled unaccepted guidance. Known note targets open exact
+original rows, comments and complete functions, without exposing private causal
+roles or unchecked tutorial annotations. Unbound prose gets no guessed source
+anchor. Return restores the source scroll/selection/camera; late navigation
+responses cannot reclaim focus after Return or a newer selection.
+
 The shared capacity is 64 evidence notes, 128 old/new explanation reviews and a
 separate finite ceiling of 160 non-note revision checks (bounded claims,
 obligations, events, questions and field changes). These are ceilings, not desired
@@ -59,7 +91,9 @@ review can expose a bounded technical result even when a purely pedagogical
 `READING_ORDER` failure prevents a tutorial. Both pre-dispatch boundaries and
 candidate progression use that distinction. Material dispatch, settlement,
 source, explanation and revision failures still withhold affected approval.
-No private candidate prose crosses the webview boundary. Historical blocked V
+No private candidate narrative is exposed as an approved explanation. Attributed
+negative-review feedback has separate, explicitly unaccepted source inspection.
+Historical blocked V
 responses cannot inherit this new independent-assessment meaning through replay.
 
 An admissible assessment's supporting/opposing source actions also work when the

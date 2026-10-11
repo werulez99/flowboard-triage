@@ -1,5 +1,104 @@
 # Bounded fresh quality pilot
 
+## Complete negative-review handoff (0.19.32)
+
+Baseline: `1bbf10a4057f63d5e4c1729d7f3a3531f8a1809f`, 0.19.31.
+The declared case is retained L-66 recovery, not a replacement finding or fresh
+generation. All eight exact latest verifier objections were inspected. The old
+repair packet had only one earlier premise complaint and no `hostReview`;
+the author did not receive and ignore the eight later objections. Complete
+identity-bound feedback now reaches ordinary private authoring once, with
+non-attesting changed/retained/unresolved dispositions and atomic host checks.
+Source preparation does not settle the feedback's interpretation.
+
+The generic restore path recovered all fifteen lost required units from owned
+immutable response archives after current file/hash checks. Candidate-only test
+sources survive restore before prioritization. Typed original/current/revision
+references and relevant prior checker dependencies survive the actual next
+packet. Every returned checked source ID needs its supplied callable body or
+explicit bounded context extent; a catalog ID or header cannot certify omitted
+code. Historical packets/responses are unchanged, not retrospectively repaired.
+
+Ordinary local Recheck produced **412,820 conservative UTF-8 bytes / 64 sources**:
+report 12,417; source objects 185,229; original/current reference representation
+88,318; metadata 65,528; envelope 521; instructions 39,806; enforced schema
+20,873; framing 128. It contains the exact current eight problems, 42 note
+reviews, one premise review and 81 causal/revision checks. The 42 candidate
+notes, four original claim groups and interval premise remain unchanged.
+Preparation took 40.892 seconds, including 11.304 seconds indexing. No bytes
+were sent to a model. On identical historical R data, adding complete earlier
+feedback/accountability changed 376,066 to 408,693 bytes (+32,627); the actual
+current packet above is a different input, not a claimed compression saving.
+
+**No new request was reserved, dispatched or completed; no new candidate,
+assessment or tutorial was accepted.** The terminal predecessor stays terminal.
+The explicit ordinary **Revise analysis** successor is now available only with
+current identities, confirmed cleanup and capacity for authoring plus fresh V.
+L-66 has used 5/6 finding requests (report 17/36): one remaining finding request
+cannot fund that pair. No allowance or approval was reset, no fake premise was
+introduced and no second live case was selected. Genuine external execution and
+economic-scenario facts also remain unresolved; acquired local formulas alone
+do not establish the alleged economic consequence. The full tutorial milestone
+remains unmet. The next prerequisite is a legitimately funded private revision
+and full review of this coherent, complete material packet, retaining those
+unknowns rather than promising Ready.
+
+The source-inspection path now exposes all exact current feedback, with known
+note targets linked and unbound prose left unbound. Original comment/multiline
+rows, actual source scroll, pending/out-of-order navigation and Return are
+covered. Native inspection found and fixed two direct issues: Return's generic
+tab action reset its saved status intent, and editor references excluded indexed
+declaration-only/interface files. Blocker cards reuse the existing assessment
+width/wrapping for the compact viewport; no renderer or tutorial route changed.
+An additional actual-renderer control reproduced removal of the adjacent
+feedback by an unchanged report-progress notification. Current inspection now
+survives that notification, while changed feedback or source invalidation revokes
+its authority and view mode. The red and corrected native captures are retained.
+
+Original installed native 1.2.0, simulated editor I/O, AI-only read-through:
+the real L-66 correction state passed complete feedback/source navigation,
+1440x900 and 801x600 geometry, Return and saved reopen, with zero provider
+callbacks. The exact setter range 582-583 and full 582-589 function were
+accessible beside explicitly unaccepted feedback. This is **not tutorial
+playback**. The fictional long-comment fixture separately covered original
+rows 10-40, a comment-only citation and multiline 34-37, 14px compact code and
+the reachable function tail. No fictional result is counted as real quality.
+Single-sample real source open/Return/reopen: 492.5/102.2/2,416.3 ms;
+fictional equivalent: 401.9/63.2/288.9 ms. Two real group-focus samples:
+53.9/83.1 ms. Different scenes are not a speed comparison or percentile.
+
+Historical accounting remains 17 dispatched / 14 completed / ten admitted
+stages / one checked assessment / zero tutorials for the six-case cohort;
+L-66 remains five requests / 803.147 provider seconds. Incremental provider
+time and usage are zero. CLI-default model, medium effort, two shared slots and
+240-second deadline were not changed; actual historical model identity and
+monetary cost remain unknown. Local development/test time is separate.
+
+The previously failed 204-job control was profiled once with its assertions,
+16 fixture workers and 120-second bound unchanged: 204/204 completed in
+72.588 seconds (408 millisecond scripted callbacks, zero external calls).
+Journal save had 3,270 calls / 49.475 seconds inclusive; JSON serialization
+13.537 seconds and structured cloning 6.709 seconds are overlapping measured
+costs, not additive provider work. CPU was 43.932 user / 11.392 system seconds.
+This identifies expensive local operations but does not isolate the old failure;
+no journal durability or performance policy was changed to obtain a pass.
+The historical 596/597 gate below remains a truthful failed run.
+
+Final supported sequential `npm test`, with original native 1.2.0 on
+WSL/Node 20.20.1: **608/608 passed, zero failed/skipped, 99.014 seconds**.
+The first v46 canonical run was 604/607: three existing test adapters lacked
+the newly used renderer state/coordinator prototype. Those adapters were fixed
+without changing assertions; their focused rerun passed 3/3. A subsequent
+607/607 gate preceded the reproduced report-progress UI correction; final gates
+were rerun for that correction and exact verifier-attempt identity binding.
+All run logs remain private. The explicit successor tests cover funded and
+underfunded pairs, repeated clicks/reopen and stale requests even when response
+bytes match. These are scripted provider/host controls, not a live review.
+Package installation is separate from active Cursor-window observation; no
+working window was reloaded. Paid archives and researcher corrections remain
+unchanged. Model quality, tutorial comprehension and real batch throughput are
+not established by these controls.
+
 ## Retained single-case continuation (0.19.31)
 
 This increment starts at `2bbeeb52af53cb04161b82344a9678ee10904bbd`

@@ -41,6 +41,9 @@ function encode(value, input) {
   }
   for(const target of contract.catalog(plain,full).removals)if(!lookup(after,target))edits.push({op:'remove',target});
   const result={mode:plain.candidateOnly?contract.CANDIDATE:contract.REPAIR,edits,...(!plain.candidateOnly?{...(plain.reportCoverageContract?{reportReview:value.reportReview}:{}),inputReviews:value.inputReviews||[],explanationReviews:value.explanationReviews,checks:value.checks}:{})};
+  if(plain.hostReview?.version===require('../../extension/review-feedback').VERSION)result.feedbackResponses=[{
+    feedbackIds:require('../../extension/review-feedback').entries(plain.hostReview).map(e=>e.id),disposition:'unresolved',
+    reason:'Scripted fixture retains the exact review questions for the subsequent independent fixture check; this is not a semantic attestation.',targets:[]}];
   require('node:assert/strict').equal(format.valid(result,provider.responseSchema(input)),true,'Fixture must use the actual provider-enforced edit schema.');
   return result;
 }

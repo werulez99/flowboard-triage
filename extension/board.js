@@ -226,7 +226,7 @@ class TriageBoard {
     this.assertCurrent(model);
     const draft=investigationEngine.read(this.root,model.id);
     if(!draft||!investigationEngine.compatible(draft,model.catalog,model.request,model.issue))throw new Error('The diagnostic source changed. Reopen the finding.');
-    const diagnostic=guidePolicy.gate(draft).details?.find(d=>d.id===message.diagnosticId);
+    const diagnostic=[...(guidePolicy.gate(draft).details||[]),...require('./review-feedback').diagnostics(draft)].find(d=>d.id===message.diagnosticId);
     const source=diagnostic?.source;if(!source)throw new Error('This current blocker has no unambiguous source location. Inspect its named premise or field.');
     p.sources(this.root,{cards:[source]});
     let fn;try{fn=model.catalog.resolveCard({file:source.file,line:source.line});}catch{
@@ -236,11 +236,15 @@ class TriageBoard {
     if(!this.isActive(scope)||this.models.get(model.id)!==model)return;
     if(document.isDirty)throw new Error('Save changed code before inspecting this source-bound blocker.');
     this.assertCurrent(model);
+    p.sources(this.root,{cards:[source]});
+    const latest=investigationEngine.read(this.root,model.id);
+    if(latest?.revision!==draft.revision)throw new Error('The reviewed diagnostic changed while source was opening. Select its current feedback again.');
     let id=[...model.sourceById].find(([,u])=>u.file===fn.file&&u.startLine===fn.startLine&&u.endLine===fn.endLine)?.[0];
     if(!id){if(model.expandedIds.size>=200)throw new Error('The source-card limit is reached; use the source editor link.');
       id=`finding:${model.id}:diagnostic-${crypto.randomUUID()}`;model.expandedIds.add(id);model.sourceById.set(id,fn);this.native.addFunction(fn,model.catalog.code(fn),null,id);}
     await this.post({type:'triage:hint',...scope,id,hint:model.catalog.hints(fn)});
-    await this.post({type:'triage:blockerFocus',...scope,id,source,diagnosticId:diagnostic.id});
+    await this.post({type:'triage:blockerFocus',...scope,id,source,diagnosticId:diagnostic.id,navigationId:message.navigationId,
+      diagnostic:{message:diagnostic.message||diagnostic.reason,group:diagnostic.group||'Current blocker',target:diagnostic.target}});
   }
   async open(request, catalog, diagnostics, git, issue = null, canPublish = () => true) {
     await this.ready;
@@ -757,12 +761,18 @@ class TriageBoard {
       if(message.token!==this.activeToken)throw new Error('This view is out of date.');
       return this.vscode.commands.executeCommand('workbench.action.openSettings','@id:flowboardTriage.engagementProfile');
     }
-    if ((message.type?.startsWith('triage:investigation')||['triage:repairSavedAnalysis','triage:recheckLocalPreparation'].includes(message.type)) && model) {
+    if ((message.type?.startsWith('triage:investigation')||['triage:repairSavedAnalysis','triage:recheckLocalPreparation','triage:reviseAnalysis'].includes(message.type)) && model) {
       if (message.token !== this.activeToken) throw new Error('This investigation view is out of date.');
       if (message.type === 'triage:investigationFocus') return this.focusInvestigation(model, message);
       if (message.type === 'triage:investigationEvidence') return this.inspectAssessmentEvidence(model,message);
       if (message.type === 'triage:investigationDocumentation') return this.openDocumentation(model, message);
       if (message.type === 'triage:investigationRetry') return this.startInvestigation(model, true);
+      if(message.type==='triage:reviseAnalysis'){
+        if(!this.investigationCurrent(model))return;
+        const report=this.callbacks.reportPreparation?.();if(!report)throw new Error('Open the imported report to request a private revision.');
+        report.continueFinding(model.id,{reviseAnalysis:message.revision})?.catch(error=>this.vscode.window.showErrorMessage(error.message));
+        return this.reportProgress();
+      }
       if(message.type==='triage:repairSavedAnalysis'){
         if(!this.investigationCurrent(model))return;
         const report=this.callbacks.reportPreparation?.();
@@ -831,7 +841,9 @@ class TriageBoard {
     if (message.type === 'triage:openReference') {
       if (!this.vscode.workspace.isTrusted || typeof message.file !== 'string' || message.file.length > 1000 || !Number.isSafeInteger(message.line) || message.line < 1) throw new Error('Invalid source reference.');
       if (model) this.assertCurrent(model);
-      const file = mapFile(this.root, message.file, model?.catalog.functions.map(fn => fn.file) || []);
+      // Declarations/interfaces are legitimate exact source context even when
+      // the native callable index contains no executable function in the file.
+      const file = mapFile(this.root, message.file, model?.catalog.sourceStamps ? [...model.catalog.sourceStamps.keys()] : model?.catalog.functions.map(fn => fn.file) || []);
       if (!file) throw new Error('This citation cannot be resolved unambiguously in the current checkout.');
       const [source] = p.sources(this.root, { cards: [{ file, line: message.line }] });
       const document = await this.vscode.workspace.openTextDocument(this.vscode.Uri.file(source.absolute));
