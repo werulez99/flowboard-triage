@@ -50,7 +50,7 @@ archives belong to superseded/rejected or explicitly retained histories. This
 control does not invent an archive for each normal generation. Its separate
 240-second test timeout does not alter the unchanged 204-job/120-second gate.
 
-### Validation completed here and remaining gates
+### Validation results and execution history
 
 The frozen production implementation passed **50 local tests** in three bounded
 groups; two additional native-host-dependent cases were skipped because that
@@ -169,6 +169,46 @@ source-stale withdrawal still clears the location. The browser assertion keeps
 exact camera, source highlight, text, caret and focus equality and records its
 before/after values. A focused control exercises the actual revocation function
 for manual, generated, changed-source and full-withdrawal cases.
+
+The final runtime [PR run at `db05689`](https://github.com/werulez99/flowboard-triage/actions/runs/38291842579)
+completed successfully on Linux, Windows and macOS. Linux core passed **321
+tests, zero failed, 361 explicitly skipped** in 18.549s. Its full source
+integration passed **717/717, zero failed or skipped**, in 84.346s. Windows
+passed **294 tests, zero failed, 388 explicitly skipped** in 24.376s; macOS
+passed **297 tests, zero failed, 385 explicitly skipped** in 11.116s. Only Linux
+ran the full native-source and browser integration gates.
+
+The 160-finding mixed control passed in **15.818s**: all 160 assessed, zero
+not assessed, zero Ready tutorials, 80 supported, 40 refuted and 40 checked
+insufficient-evidence results. It used exactly 320 scripted G/V callbacks. The
+automatic interval was **13.404s**; the recorded interval through reading,
+no-op retry and fresh-process reopen was **15.736s**, with zero additional
+callbacks on reopen. Original report coverage, current assessment identities,
+actual retained response bytes/receipts, budgets and the frozen run boundary
+remained unchanged. The 204-finding full G/V/publication control passed in
+**16.980s**, retaining its original 120-second limit, 408 scripted callbacks
+and one initial catalog. These host-dependent fixture timings do not establish
+a runtime speedup, real-provider latency or accuracy.
+
+All native browser gates passed: quality, smoke, ordinary and complex workflow,
+usability, walkthrough, route, mixed preparation and checked assessment reading.
+The retained walkthrough/route/mixed/assessment diagnostics contain 18/6/5/4
+check groups respectively, with no browser page errors. Late assessment arrival
+preserves the exact manual camera, line, draft, caret and input focus. An
+assessment with no published tutorial completes automatic triage and retains its
+stopped clock through provider-free reading/reopen; evidence detours and Return
+preserve the original view state in desktop and compact layouts.
+
+Independent visual inspection of the actual native captures at 1440x900 and
+801x600 found no blocking layout defect. Evidence inspection shows the complete
+checked note beside its exact original function/range, with a visible Return
+control; dark and light captures remain readable. The insufficient-evidence
+case retains partial coverage and its inspectable unresolved source. Invalidation
+withdraws generated assessment content while preserving focused human input.
+These are fictional responses in the original renderer with simulated editor
+transport, not live-model judgments or an activated Cursor installation. The
+final documentation correction also describes the existing explicit Codex
+model/reasoning settings accurately; it changes no provider configuration.
 
 The local Node process PID and `/proc` identity disagree. Existing ownership
 checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.
