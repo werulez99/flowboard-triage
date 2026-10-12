@@ -136,6 +136,9 @@ try:
         before = capture()
         # Native history and guide progress describe different locations. The
         # return snapshot must be captured before history mutates the selection.
+        # Guided reading hides the active card's primary exploration action;
+        # leave it through the visible product control before navigating freely.
+        controls.get_by_role('button',name='Explore freely',exact=True).click()
         page.locator('.card').filter(has=page.get_by_text('Demo::increment(uint256)',exact=True)).get_by_role('button',name='Explore function',exact=True).click()
         page.locator('.card').filter(has=page.get_by_text('Demo::_add(uint256)',exact=True)).get_by_role('button',name='Explore function',exact=True).click()
         page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()

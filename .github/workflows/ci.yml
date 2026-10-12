@@ -40,7 +40,7 @@ jobs:
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/native_route_browser.py --output /tmp/flowboard-triage-native-route
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/mixed_preparation_browser.py --output /tmp/flowboard-triage-mixed-preparation
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/checked_guide_browser.py --assessment-check blocked --production-selection --provider none --focused-viewports --output /tmp/flowboard-triage-assessment
-      - name: Retain packages and fictional native assessment captures
+      - name: Retain packages and fictional native browser captures
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -48,5 +48,12 @@ jobs:
           path: |
             dist/*.vsix
             dist/*.zip
+            /tmp/flowboard-triage-native-walkthrough/*.png
+            /tmp/flowboard-triage-native-walkthrough/checks.json
+            /tmp/flowboard-triage-native-route/*.png
+            /tmp/flowboard-triage-native-route/checks.json
+            /tmp/flowboard-triage-mixed-preparation/*.png
+            /tmp/flowboard-triage-mixed-preparation/checks.json
             /tmp/flowboard-triage-assessment/*.png
+            /tmp/flowboard-triage-assessment/checks.json
           if-no-files-found: warn
