@@ -109,8 +109,9 @@ test('160 mixed ordinary findings finish automatic triage with zero Ready tutori
   const count=160,f=await fixture(t,count),calls=new Map();let catalogRequests=0;
   const options={configuration:()=>({provider:'codex',workers:8,providerCapacity:8,requestLimit:0}),
     catalog:async()=>{catalogRequests++;return f.catalog;},
-    invoke:async input=>{calls.set(input.finding.id,[...(calls.get(input.finding.id)||[]),input.phase]);
-      return{value:response(input),audit:{phase:input.phase,outcome:'completed',provider:'scripted-assessment-batch',teardown:{confirmed:true}}};}};
+    invoke:async(input,options)=>{calls.set(input.finding.id,[...(calls.get(input.finding.id)||[]),input.phase]);
+      assert.ok(options.requestId,'The fixture carries the exact coordinator reservation into the terminal receipt.');
+      return{value:response(input),audit:{requestId:options.requestId,phase:input.phase,outcome:'completed',provider:'scripted-assessment-batch',teardown:{confirmed:true}}};}};
   const coordinator=new ReportPreparation(f.root,options);
   t.after(async()=>{coordinator.dispose();await coordinator.loop;});
   const started=performance.now();await coordinator.ensure();const status=coordinator.status();

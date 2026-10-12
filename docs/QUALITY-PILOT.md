@@ -63,14 +63,32 @@ created the 0.19.39 companion VSIX, installation ZIP and public source ZIP with
 the hash-verified original Flowboard 1.2.0 archive. These are local build
 artifacts; no editor installation or activation is claimed.
 
-The **160 mixed coordinator control, full canonical suite, unchanged
-204-job/120-second gate and native browser harness remain unverified on .39**.
-Their assertions and deadlines were retained; no test-only ownership bypass or
-extended product deadline was introduced. A local commit and reviewable branch
-were prepared, but automatic approval review rejected the push to
-`werulez99/flowboard-triage` because it required explicit destination-specific
-publication authorization. No remote branch, PR or new CI run was created.
-Compatible CI is prepared and awaits that authorization.
+After the user explicitly authorized publication to
+`werulez99/flowboard-triage`, branch `improve/automatic-triage-completion` and
+[draft PR #1](https://github.com/werulez99/flowboard-triage/pull/1) were created.
+The initial remote commit `95b7f084f56bc3eeb773b74e2a77aedd559267f9` has exactly
+the reviewed local source tree `110402a3e9ddf69ef769e38dced00c8f22edf523`.
+An earlier publication attempt was withheld for that specific authorization;
+it is no longer a delivery blocker. No merge or editor activation is implied.
+
+The first [Linux CI job](https://github.com/werulez99/flowboard-triage/actions/runs/38285025933/job/114931217883)
+passed its core run (319 passed, 359 native-dependent skips), then ran all native
+source integration cases: **709/713 passed, four failed, zero skipped**, in
+118.088s. The unchanged 204-job/120-second gate passed in **27.663s**, using
+204 G + 204 V scripted callbacks and one catalog. The 160 mixed cohort reached
+the required 160 assessed / zero Ready / 80 supported / 40 refuted / 40
+insufficient-evidence result before failing its exact receipt lookup; the
+scripted invocation omitted the host request ID from its audit. That partial
+run is not a passed 160-finding persistence/reopen gate.
+
+The other Linux failures identified a real transient publication regression
+when saving a nonsemantic human verdict/note, plus two expectations predating
+the new completion and archived-attempt contract. The first Windows job had
+two existing real-process fixture expectation failures; macOS had two
+temporary-path identity fixture failures. These failed runs remain recorded;
+the pull-request-triggered duplicate is the same source, not independent
+quality evidence. Corrected full-suite and browser results are recorded below
+when available. No ownership bypass or extended product deadline is permitted.
 
 The local Node process PID and `/proc` identity disagree. Existing ownership
 checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.

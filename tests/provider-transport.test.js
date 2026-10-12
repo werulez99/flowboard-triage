@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
-const { EventEmitter } = require('node:events'), { PassThrough } = require('node:stream'), { spawn } = require('node:child_process');
+const { EventEmitter, once } = require('node:events'), { PassThrough, Writable } = require('node:stream'), { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const provider = require('../extension/semantic-provider'), slots = require('../extension/provider-slots'), health = require('../extension/provider-health');
 const text = '// café source; \u0431\u044a\u043b\u0433\u0430\u0440\u0441\u043a\u0438; 🧪; 日本語';
@@ -54,6 +54,13 @@ function fakeProcess({ stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), code 
   };
 }
 function directory(t) { const result = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-provider-test-')); t.after(() => fs.rmSync(result, { recursive: true, force: true })); return result; }
+async function closeFixture(child, cwd) {
+  // Test cleanup targets only the ChildProcess this fixture actually created.
+  if (child && child.exitCode === null && !child.signalCode) {
+    const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+  }
+  if (cwd) fs.rmSync(cwd, { recursive: true, force: true });
+}
 test('normal exit requires the final result and usage from the same completed turn',async()=>{
   const final=value=>({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}),end={type:'turn.completed',usage},start={type:'turn.started'};
   const run=rows=>provider.runCodex(input,{timeoutMs:1000,spawn:fakeProcess({stdout:Buffer.from(rows.map(JSON.stringify).join('\n'))})});
@@ -294,11 +301,38 @@ test('completed child-pipe write has a receipt, not a remote acknowledgment', as
   assert.equal(result.audit.inputWrite.completedBytes,result.audit.stdinBytes);
   assert.equal(result.audit.inputWrite.remoteAcknowledged,false); assert.equal(result.audit.inputWrite.errorAt,null);
 });
-test('a real live child closing stdin fails finitely and records shared transport health', {timeout:10000}, async t => {
-  const root=directory(t); let terminal=0;
+test('a controlled Writable input failure retains exact pipe receipts and shared transport health', {timeout:10000}, async t => {
+  const root=directory(t);let terminal=0,receipt;
+  await assert.rejects(provider.runCodex(input,{timeoutMs:5000,terminationGraceMs:30,terminationSettleMs:100,
+    spawn:(...args)=>{
+      const child=fakeProcess({hanging:true})(...args);
+      child.stdin=new Writable({write(chunk,encoding,callback){callback(Object.assign(Error('private write failure'),{code:'EPIPE'}));}});
+      queueMicrotask(()=>child.emit('spawn'));return child;
+    }
+  }).catch(error=>{terminal++;receipt=error.audit;throw error;}),error=>{
+    const audit=error.audit;assert.equal(audit.failureKind,'input-write');
+    assert.equal(audit.inputWrite.completedAt,null);assert.equal(audit.inputWrite.completedBytes,null);
+    assert.ok(audit.inputWrite.startedAt&&audit.inputWrite.errorAt);assert.equal(audit.inputWrite.errorCode,'EPIPE');
+    assert.equal(audit.inputWrite.remoteAcknowledged,false);assert.equal(audit.teardown.triggerKind,'input-write');
+    assert.equal(audit.teardown.confirmed,true);assert.equal(audit.teardown.strategy,'controlled-process-fixture');
+    assert.equal(audit.hostAcceptedAt,null);assert.ok(audit.durationMs<4000);
+    assert.ok(!JSON.stringify(audit).includes('private write failure'));return true;
+  });
+  await health.record('codex',receipt,{directory:root});
+  assert.equal(terminal,1);assert.equal(health.status('codex',{directory:root}).failures[0].kind,'input-write');
+});
+// Node 24 libuv win/fs.c fs__close intentionally leaves descriptors 0–2 open.
+// process.stdin.destroy() closes its duplicate handle (win/pipe.c uv_pipe_open),
+// also leaving original fd0 open. This native peer-close primitive is POSIX-only;
+// the controlled Writable above covers input failure on every platform.
+test('a real live child closing stdin fails finitely and records shared transport health', {
+  timeout:10000,skip:process.platform==='win32'?'Windows libuv preserves fd0; destroying stdin only closes its duplicate handle.':false
+}, async t => {
+  const root=directory(t); let terminal=0,child,cwd;
+  t.after(()=>closeFixture(child,cwd));
   await assert.rejects(provider.runCodex({...input,metadata:'x'.repeat(190000)}, {timeoutMs:5000,terminationGraceMs:30,terminationSettleMs:100,
     spawn:(exe,args,settings)=>{
-      const child=spawn(process.execPath,['-e',"require('fs').closeSync(0);process.stderr.write('input closed\\n');setInterval(()=>{},1000)"],settings);
+      cwd=settings.cwd;child=spawn(process.execPath,['-e',"require('fs').closeSync(0);process.stderr.write('input closed\\n');setInterval(()=>{},1000)"],settings);
       const end=child.stdin.end.bind(child.stdin),closed=new Promise(resolve=>child.stderr.once('data',resolve));
       child.stdin.end=(...values)=>{closed.then(()=>end(...values));return child.stdin;};return child;
     }
@@ -309,15 +343,45 @@ test('a real live child closing stdin fails finitely and records shared transpor
   });
   assert.equal(terminal,1);assert.equal(health.status('codex',{directory:root}).failures[0].kind,'input-write');
 });
-test('a secondary input error after cancellation retains one cancellation and owned cleanup', {timeout:10000}, async () => {
-  const controller=new AbortController();let child,terminal=0;
+test('a secondary input error after cancellation retains one cancellation and owned cleanup or quarantine', {timeout:10000}, async t => {
+  const controller=new AbortController(),windows=process.platform==='win32',root=directory(t);
+  const release=windows?await slots.acquire('codex',null,{directory:root}):null;
+  let child,cwd,terminal=0;
+  t.after(()=>closeFixture(child,cwd));t.after(()=>release?.());release?.markDispatching();
   await assert.rejects(provider.runCodex(input,{signal:controller.signal,timeoutMs:5000,terminationGraceMs:30,
-    spawn:(exe,args,settings)=>(child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],settings)),
+    spawn:(exe,args,settings)=>{cwd=settings.cwd;return(child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],settings));},
+    onProcessStart:release?.attachProcess,
     onProgress:event=>{if(event.event==='started'){controller.abort();child.stdin.emit('error',Object.assign(Error('private pipe error'),{code:'EPIPE'}));}}
-  }).catch(error=>{terminal++;throw error;}),error=>{
-    assert.equal(error.audit.failureKind,'cancelled');assert.equal(error.audit.inputWrite.secondary,true);assert.equal(error.audit.teardown.confirmed,true);
-    assert.ok(!JSON.stringify(error.audit).includes('private pipe error'));return true;
-  });assert.equal(terminal,1);
+  }).catch(error=>{
+    terminal++;
+    if(release&&error.audit?.teardown?.confirmed!==true)release.quarantine(error.audit?.teardown);
+    release?.();throw error;
+  }),error=>{
+    const audit=error.audit;
+    assert.equal(audit.inputWrite.secondary,true);assert.equal(audit.inputWrite.errorCode,'EPIPE');assert.ok(audit.inputWrite.errorAt);
+    assert.equal(audit.inputWrite.remoteAcknowledged,false);assert.equal(audit.cancellationReason,'investigation-context-changed');
+    assert.equal(audit.teardown.triggerKind,'cancelled');assert.equal(audit.teardown.streamsClosed,true);
+    assert.ok(audit.processExitedAt);assert.ok(child.exitCode!==null||child.signalCode);
+    assert.ok(child.stdin.destroyed&&child.stdout.destroyed&&child.stderr.destroyed);
+    assert.equal(audit.hostAcceptedAt,null);assert.ok(audit.durationMs<5000);
+    if(windows){
+      assert.equal(error.code,'PROVIDER_TEARDOWN_UNCONFIRMED');assert.equal(audit.failureKind,'teardown');
+      assert.equal(audit.primaryFailureKind,'cancelled');assert.equal(audit.teardown.confirmed,false);
+      assert.equal(audit.teardown.quarantined,true);assert.equal(audit.teardown.strategy,'direct-process');
+      assert.equal(audit.teardown.processGroup,null);assert.ok(fs.existsSync(cwd),'Unconfirmed cleanup retains its temporary directory.');
+    }else{
+      assert.equal(error.code,'INVESTIGATION_SUPERSEDED');assert.equal(audit.failureKind,'cancelled');assert.equal(audit.teardown.confirmed,true);
+      assert.equal(fs.existsSync(cwd),false);
+    }
+    assert.ok(!JSON.stringify(audit).includes('private pipe error'));return true;
+  });
+  if(windows){
+    const file=path.join(root,'codex-0.json'),before=fs.readFileSync(file,'utf8'),entry=JSON.parse(before);
+    assert.equal(entry.quarantine.pid,child.pid);assert.equal(entry.quarantine.strategy,'direct-process');assert.equal(entry.quarantine.streamsClosed,true);
+    await assert.rejects(slots.acquire('codex',null,{directory:root,timeoutMs:100}),{code:'PROVIDER_TEARDOWN_UNCONFIRMED'});
+    assert.equal(fs.readFileSync(file,'utf8'),before,'Retry cannot release or replace unverified ownership.');
+  }
+  await new Promise(setImmediate);assert.equal(terminal,1);
 });
 test('stderr chronology retains late diagnostics beyond startup noise and bounded split UTF-8 fragments', async () => {
   const notice=JSON.stringify({type:'item.completed',item:{type:'error',message:'Code Mode is unavailable because code-mode host is disabled.'}})+'\n';

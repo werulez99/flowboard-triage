@@ -394,7 +394,9 @@ class ReportPreparation {
         ...(config.batchDeadlineMs > 0 ? { stopPolicy: 'explicit-user-v1', deadlineAt: new Date(Date.parse(report.importedAt) + config.batchDeadlineMs).toISOString() } : {}) } } : old.batch ? { batch: old.batch } : {}) };
     if(!old)this.batchAttemptActive=true;
     this.batchWasStopped=!!old&&['paused','cancelled','completed','incomplete'].includes(old.mode);
-    this.accepted.clear(); // Rebuild current publication beside assessment seals below.
+    // Keep compatible reading available while the catalog is acquired. Known
+    // changes already withhold their finding; reconciliation below replaces or
+    // withdraws each cached publication against its canonical record.
     if (this.state.batch?.deadlineAt && !this.deadlineEnabled()) {
       this.state.batch.historicalStop ||= { deadlineAt: this.state.batch.deadlineAt, outcome: this.state.batch.outcome, finishedAt: this.state.batch.finishedAt || null };
       if (this.state.reason?.startsWith('Preparation deadline reached;')) this.state.reason = 'The historical automatic time limit no longer stops review. Work remains paused; explicitly continue an eligible finding within its existing allowance.';
@@ -431,28 +433,46 @@ class ReportPreparation {
       if (job.dirtyPaused && !this.options.dirty?.(entry.id)) { job.state = 'queued'; delete job.dirtyPaused; delete job.reason; }
       if (['running', 'waiting-for-provider-capacity'].includes(job.state)) { job.state = 'queued'; job.interruptedAt = now(); job.reason = 'The previous host stopped. Resume from the last valid checkpoint.'; }
     }
+    const hasSavedRecords=fs.existsSync(path.join(this.root,'.flowboard/investigations'));
+    if(!hasSavedRecords){
+      // This definitive absence must withdraw warm publications before either
+      // the disabled-provider or expired-run early return below.
+      this.accepted.clear();
+      for(const job of Object.values(this.state.jobs)){
+        if(job.publishable||job.requests>0||Object.hasOwn(job,'assessmentProjection')||job.detailReferences?.assessmentProjection)
+          this.recordFailure(job,new Error('The canonical investigation directory is missing.'));
+        else automatic.clear(job);
+      }
+    }
     this.save();
     if (this.expired()) {
       this.expire();
       // Expiry forbids fresh work, not reading already paid compatible guides.
       // A new host must still rebuild their current-source publication map.
-      if (!fs.existsSync(path.join(this.root, '.flowboard/investigations'))) return;
+      if (!hasSavedRecords) return;
     }
     this.armDeadline();
     // Disabled providers must not make ordinary import eagerly index code.
     // Existing private/accepted artifacts still take the local revalidation
     // path below, including migration while report work is paused.
-    if (!['codex', 'claude'].includes(config.provider) && !fs.existsSync(path.join(this.root, '.flowboard/investigations'))) {
-      this.state.mode = 'paused'; this.state.reason = 'Choose an authenticated provider to prepare walkthroughs. The report and code remain available.'; this.save(); return;
+    if (!['codex', 'claude'].includes(config.provider) && !hasSavedRecords) {
+      this.state.mode = 'paused'; this.state.reason = 'Choose an authenticated provider to assess this report. The report and code remain available.'; this.save(); return;
     }
     const epoch = this.epoch;
     this.indexAbort = new AbortController();
     const catalog = await this.validatedCatalog(this.indexAbort.signal);
     if (this.expired()) this.expire();
     if (epoch !== this.epoch || this.disposed) return;
-    const currentReport = store.readReport(this.root);
-    if (currentReport.reportHash !== report.reportHash || entries.some(entry => !currentReport.issues.some(item => item.id === entry.id)))
-      throw new Error('The report changed during preparation setup. No selected continuation was admitted; reopen the current report.');
+    try {
+      const currentReport = store.readReport(this.root);
+      if (currentReport.reportHash !== report.reportHash || entries.some(entry => !currentReport.issues.some(item => item.id === entry.id)))
+        throw new Error('The report changed during preparation setup. No selected continuation was admitted; reopen the current report.');
+    } catch (error) {
+      // A detected changed or unreadable report cannot retain warm approval
+      // merely because its canonical records have not been revisited yet.
+      for(const job of Object.values(this.state.jobs))this.recordFailure(job,error);
+      throw error;
+    }
     // Recheck the complete manifest before reuse, including working-tree
     // changes, imported report text, local documentation and configuration.
     for (const entry of entries) {
@@ -612,7 +632,7 @@ class ReportPreparation {
     if(this.triageComplete()&&!this.pendingFindings.size){this.state.mode='completed';this.state.reason='';this.finishBatch();this.save();return;}
     if (['paused', 'cancelled'].includes(this.state.mode) && !retry && !this.localEligible.size) return;
     if (!['codex', 'claude'].includes(config.provider)) {
-      this.state.mode = 'paused'; this.state.reason = 'Choose an authenticated provider to prepare unfinished findings. Checked walkthroughs and original code remain available.'; this.save(); return;
+      this.state.mode = 'paused'; this.state.reason = 'Choose an authenticated provider to assess unfinished findings. Checked assessments and original code remain available.'; this.save(); return;
     }
     if (!['paused', 'cancelled'].includes(this.state.mode)) this.state.mode = 'running';
     this.save();

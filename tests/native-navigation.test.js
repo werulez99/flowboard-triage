@@ -85,7 +85,7 @@ test('guidance revocation removes blocker view mode and pending navigation autho
  assert.equal(context.blockerReturn,null);assert.notEqual(context.guideNavigation,'pending');assert.ok(removed.includes('triage-blocker-card'));assert.equal(context.checkedLocation,null);
 });
 test('source editor inspection resolves indexed declaration-only files without relaxing path or view ownership',async t=>{
- const fs=require('node:fs'),path=require('node:path'),root=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'flowboard-declaration-'));
+ const fs=require('node:fs'),path=require('node:path'),root=fs.realpathSync(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'flowboard-declaration-')));
  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const file=path.join(root,'IRules.sol');fs.writeFileSync(file,'interface IRules {\n // Documented context, not executable proof.\n function limit() external view returns(uint);\n}\n');
  const model={catalog:{functions:[],sourceStamps:new Map([[file,{}]])},request:{}},opened=[];
