@@ -19,7 +19,7 @@ test('scoped task keeps every semantic byte and strict schema; ordinary task rem
   assert.equal(require('../extension/challenge-format').valid(result,provider.responseSchema(input)),false);
 });
 test('one untrusted note is pre-hash input, tied to report/source/premise/base, never accepted evidence',t=>{
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'provisional-note-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'provisional-note-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const note={version:1,status:notes.STATUS,requestId:'diagnostic-only',responseHash:'a'.repeat(64),fingerprints:notes.fingerprints(input),targetIds:['obligation:o'],proposal:{claim:'Incorrect fixture: a false condition passes'}};
   const attached=notes.attach(input,note);assert.equal(input.provisionalWorkNotes,undefined);
   const original=provider.requestMetrics(input),m=provider.requestMetrics(attached);

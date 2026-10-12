@@ -179,7 +179,7 @@ try:
             if args.teaching_case:
                 page.wait_for_function('selector=>document.querySelector(selector+" .triage-preparation-badge")?.dataset.state==="ready"',arg=finding_row,timeout=60000)
             assert page.locator(finding_row+' .triage-preparation-badge').get_attribute('data-state') == 'ready'
-            assert page.locator(finding_row+' .triage-preparation-badge').inner_text().endswith('Ready')
+            assert page.locator(finding_row+' .triage-preparation-badge').inner_text().endswith(('Assessment complete','Walkthrough ready'))
             assert page.locator(finding_row+' .triage-ready-action').is_visible()
             page.get_by_label('Finding queue filter').select_option('preparation:ready')
             assert page.locator('[data-finding-id]:visible').count() == 1
@@ -344,18 +344,43 @@ try:
             a=state['exposedInvestigation']['assessmentProjection']
             assert a['technical']['result']=='supported' and not draft['publication']['ready']
             assert len(state['providerCalls'])==2
+            progress=state['reportPreparation']
+            assert progress['triageComplete'] and progress['mode']=='completed' and progress['assessed']==1 and progress['notAssessed']==0,progress
+            assert progress['ready']==0 and not progress['published'] and progress['jobs'][0]['assessmentCompleted'],progress
+            assert progress['assessmentCounts']['supported']==1,progress['assessmentCounts']
+            frozen={key:progress['batch'][key] for key in ['startedAt','finishedAt','elapsedMs']}
+            assert frozen['finishedAt'] and frozen['elapsedMs'] is not None,frozen
+            result['automaticCompletion']={'assessed':1,'notAssessed':0,'readyTutorials':0,'timing':frozen}
+            result['checks'].append('Ordinary full G/V admits the current supported assessment, completes automatic triage and freezes its elapsed time with zero Ready tutorials.')
             calls=len(state['providerCalls']);samples=[]
             for width,height in [(1440,900),(801,600)]:
                 page.set_viewport_size({'width':width,'height':height})
                 page.wait_for_timeout(150)
+                pane=page.locator('.guide-preparation')
+                pane.evaluate('n=>n.scrollTop=0')
+                assert '1 of 1 assessed · 0 not assessed' in pane.locator('.guide-status-row').inner_text()
+                reason=pane.locator('.guide-technical-reason')
+                assert reason.text_content()==a['technical']['why'] and not reason.evaluate('n=>!!n.closest("details")')
+                assert pane.locator('.guide-technical-coverage').text_content()
+                assert pane.evaluate('''n=>{
+                  const result=n.querySelector('.guide-technical-result'),why=n.querySelector('.guide-technical-reason'),evidence=n.querySelector('.guide-assessment-actions'),unknowns=n.querySelector('.guide-assessment-unknowns');
+                  return !!result&&!!why&&!!evidence&&!!unknowns&&!!(result.compareDocumentPosition(why)&Node.DOCUMENT_POSITION_FOLLOWING)&&!!(why.compareDocumentPosition(evidence)&Node.DOCUMENT_POSITION_FOLLOWING)&&!!(evidence.compareDocumentPosition(unknowns)&Node.DOCUMENT_POSITION_FOLLOWING);
+                }'''),'The checked outcome, complete why, evidence and uncertainty must be ordered directly, before revision work.'
+                for unknown in a['technical']['remaining']:
+                    assert unknown in pane.locator('.guide-assessment-unknowns').inner_text()
+                for stance in ['supports','contradicts']:
+                    entry=next(e for e in a['technical']['evidence'] if e['stance']==stance)
+                    assert entry['note'] in pane.locator('.guide-assessment-actions [data-stance='+json.dumps(stance)+']').inner_text()
+                assert 'Optional walkthrough: unavailable' in pane.inner_text()
+                assert reason.evaluate('''n=>{const p=n.closest('.guide-preparation').getBoundingClientRect(),r=n.getBoundingClientRect();return r.top>=p.top&&r.bottom<=p.bottom;}'''),'The checked why is readable in the initial assessment viewport.'
                 page.screenshot(path=str(out/f'assessment-{width}.png'))
                 for stance in ['Supporting','Opposing']:
-                    before=page.evaluate('()=>({scale,panX,panY})')
-                    start=time.monotonic()
                     actions=page.locator('.guide-assessment-actions')
                     action=actions.get_by_role('button',name=stance+' evidence',exact=False).first
                     assert 'undefined' not in action.inner_text()
-                    action.click()
+                    action.scroll_into_view_if_needed();action.focus()
+                    before=page.evaluate('()=>({scale,panX,panY,selected:document.querySelector(".triage-selected-source")?.dataset.id||null,scroll:document.querySelector(".guide-preparation").scrollTop})')
+                    start=time.monotonic();page.keyboard.press('Enter')
                     page.wait_for_selector('.guide-assessment-inspection:visible')
                     page.wait_for_function('()=>document.querySelector(".triage-claim-line")')
                     focus=page.evaluate('()=>window.hostMessages.filter(m=>m.type==="triage:assessmentFocus").at(-1)')
@@ -375,11 +400,14 @@ try:
                         page.evaluate('document.body.classList.remove("vscode-light")')
                     start=time.monotonic();page.get_by_role('button',name='Return to assessment',exact=True).click()
                     page.wait_for_selector('.guide-assessment-actions:visible')
-                    assert page.evaluate('()=>({scale,panX,panY})')==before
+                    assert page.evaluate('()=>({scale,panX,panY,selected:document.querySelector(".triage-selected-source")?.dataset.id||null,scroll:document.querySelector(".guide-preparation").scrollTop})')==before
+                    assert page.evaluate('id=>document.activeElement?.dataset.assessmentEvidenceId===id',focus['entry']['id'])
+                    page.evaluate('m=>window.dispatchEvent(new MessageEvent("message",{data:m}))',focus)
+                    assert not page.locator('.triage-assessment-card').count(),'A delayed source focus reply after Return cannot reopen the detour.'
                     samples.append({'viewport':[width,height],'stance':stance,'openMs':opened,'returnMs':(time.monotonic()-start)*1000,'geometry':geometry})
                     assert len(request('/state')['providerCalls'])==calls
             result['evidenceInteractions']=samples
-            result['checks'].append('Blocked tutorial: supporting/opposing checked evidence opens exact full native functions and Return restores camera at desktop/compact sizes; zero new callbacks.')
+            result['checks'].append('The complete checked why, supporting/opposing notes and exact uncertainty are directly readable; keyboard evidence/Return restores camera, selection, scroll and focus at desktop/compact sizes, rejects late replies and makes zero new callbacks.')
             request('/action',{'name':'local-playback'})
             page.evaluate('window.closing=true;clearInterval(window.timer)');started=time.monotonic()
             request('/action',{'name':'reopen'});page.reload();page.wait_for_selector(finding_row);page.locator(finding_row).click()
@@ -387,6 +415,9 @@ try:
             result['blockedReopenMs']=(time.monotonic()-started)*1000
             assert request('/state')['exposedInvestigation']['assessmentProjection']['technical']['identity']==a['technical']['identity']
             assert len(request('/state')['providerCalls'])==calls
+            reopened=request('/state')['reportPreparation']
+            assert reopened['triageComplete'] and reopened['assessed']==1 and reopened['ready']==0,reopened
+            assert {key:reopened['batch'][key] for key in frozen}==frozen,'Manual reading and saved reopen cannot extend or restart the completed automatic clock.'
             result['checks'].append('Compatible blocked-assessment reopen uses provider none and preserves the exact checked identity, with zero new callbacks.')
             # Preserve a real human input node through immediate revocation and
             # a delayed old mapping. This is simulated editor message delivery.
@@ -899,6 +930,9 @@ try:
                     assert page.get_by_role('button', name='Continue this finding', exact=True).count() == 0
                     assert 'bounded candidate repair cycle is finished' in status_text
                 if selected_job.get('missingInputs') and not correction:
+                    # The admitted reasoning is primary. The exact material
+                    # request stays reachable below it, without hiding it.
+                    page.locator('.guide-current-requirement').scroll_into_view_if_needed()
                     assert page.locator('.guide-current-requirement').evaluate('''node=>{
                       const box=node.getBoundingClientRect(),pane=node.closest('.guide-preparation').getBoundingClientRect();
                       return box.top>=Math.max(0,pane.top)&&box.bottom<=Math.min(innerHeight,pane.bottom)&&box.left>=pane.left&&box.right<=pane.right;

@@ -1,5 +1,262 @@
 # Bounded fresh quality pilot
 
+## Automatic technical completion and assessment reading (0.19.39)
+
+Baseline: `6ff22d84e9f3ad75e3effeac25d23668ab920998`, 0.19.38. This increment
+separates automatic completion from optional tutorial publication throughout
+coordinator, planner and native progress. It uses **zero configured-provider
+requests**. The earlier private case results and measurements below remain
+historical; the private protocol checkout and retained investigations were not
+available in this execution environment.
+
+### Product behavior and controls
+
+A current canonically admitted supported, refuted or insufficient-evidence
+assessment completes its technical review, including checked partial coverage.
+Every original finding stays in the denominator. Readable predecessor evidence
+does not complete a pending successor. Missing/corrupt non-Ready investigations,
+changed source/report and material observations withdraw current completion;
+incidental setup failures do not invalidate an unchanged admitted assessment.
+Operational failures are not counted as semantic inconclusive results.
+
+Generic retry reconciles canonical records before allocating and skips current
+assessments. Explicit eligible revisions, owed verification, exact phase/purpose
+ceilings and sibling obligations remain. Ordinary progress reads do not reread
+every canonical investigation. Automatic run duration freezes at its completion
+or stop; later work archives the original attempt. Revalidation can withdraw
+current coverage without rewriting a historical completed run. Missing legacy
+stop times remain unknown. The forecast now reports phase demand, effective
+configured concurrency, dependency depth and a stated request-wave lower bound;
+it no longer assumes 60 seconds per request or presents 20/30-minute scenarios.
+
+The native result panel directly shows technical outcome, coverage, checked why,
+supporting/opposing notes and exact uncertainty. Optional walkthrough counts are
+secondary. Evidence Return restores disclosure state and opener focus as well
+as source camera/selection/scroll. Existing full-guide Next/Previous and proof
+gates remain. Scope is explicitly not established by severity mapping.
+
+The new mixed control imports 160 fictional findings through ordinary source
+analysis, enforced response schema, full G/V admission and report coordination.
+It contains 40 supported-complete, 40 refuted-complete, 40 checked
+insufficient-evidence/partial and 40 supported-partial cases. Required assertions
+are **160 assessed, 80 supported / 40 refuted / 40 insufficient-evidence, zero
+Ready tutorials, 320 scripted callbacks and zero remaining planned requests**.
+It checks every original report paragraph/disposition, substantive review,
+G/V request receipt, frozen boundary and unchanged allocation. Canonical
+arguments and the actual retained final-response checkpoints must remain
+byte-identical through reading, retry and a fresh OS-process reopen with zero
+further callbacks. Ordinary G/V retains one last response per finding; immutable
+archives belong to superseded/rejected or explicitly retained histories. This
+control does not invent an archive for each normal generation. Its separate
+240-second test timeout does not alter the unchanged 204-job/120-second gate.
+
+### Validation results and execution history
+
+The frozen production implementation passed **50 local tests** in three bounded
+groups; two additional native-host-dependent cases were skipped because that
+group ran without the upstream host environment:
+
+| Local group | Result | Evidence boundary |
+| --- | --- | --- |
+| Four ordinary engine G/V variants, completion helper, lifecycle timing and planner | 10/10 passed, zero skipped | All four full source/schema/review admissions, exact partial uncertainty, real helper binding and zero remaining planner requests; pure coordinator timing/currentness controls |
+| Packet context, saved acquisition/resume and public release | 17/17 passed, zero skipped | Pinned upstream source adapter, unchanged response contract, exact helper retention and public package allowlist |
+| Native presentation and provider argument/settings | 23 passed, 2 native-host cases skipped | UI contract controls and scripted child transport; no browser capture or live provider |
+
+JavaScript/Python syntax checks and `git diff --check` passed. `npm run package`
+created the 0.19.39 companion VSIX, installation ZIP and public source ZIP with
+the hash-verified original Flowboard 1.2.0 archive. These are local build
+artifacts; no editor installation or activation is claimed.
+
+After the user explicitly authorized publication to
+`werulez99/flowboard-triage`, branch `improve/automatic-triage-completion` and
+[draft PR #1](https://github.com/werulez99/flowboard-triage/pull/1) were created.
+The initial remote commit `95b7f084f56bc3eeb773b74e2a77aedd559267f9` has exactly
+the reviewed local source tree `110402a3e9ddf69ef769e38dced00c8f22edf523`.
+An earlier publication attempt was withheld for that specific authorization;
+it is no longer a delivery blocker. No merge or editor activation is implied.
+
+The first [Linux CI job](https://github.com/werulez99/flowboard-triage/actions/runs/38285025933/job/114931217883)
+passed its core run (319 passed, 359 native-dependent skips), then ran all native
+source integration cases: **709/713 passed, four failed, zero skipped**, in
+118.088s. The unchanged 204-job/120-second gate passed in **27.663s**, using
+204 G + 204 V scripted callbacks and one catalog. The 160 mixed cohort reached
+the required 160 assessed / zero Ready / 80 supported / 40 refuted / 40
+insufficient-evidence result before failing its exact receipt lookup; the
+scripted invocation omitted the host request ID from its audit. That partial
+run is not a passed 160-finding persistence/reopen gate.
+
+The other Linux failures identified a real transient publication regression
+when saving a nonsemantic human verdict/note, plus two expectations predating
+the new completion and archived-attempt contract. The first Windows job had
+two existing real-process fixture expectation failures; macOS had two
+temporary-path identity fixture failures. These failed runs remain recorded;
+the pull-request-triggered duplicate is the same source, not independent
+quality evidence. Subsequent results are recorded below. No ownership bypass or
+extended product deadline was used.
+
+The next [PR CI run](https://github.com/werulez99/flowboard-triage/actions/runs/38286320051)
+at `49fe7c4558b0b1a0af18a3fc028b7c42708cc1ca` passed **715/716** full Linux
+integration tests, zero skipped, in 123.058s. The human-note regression and
+missing-directory / changed-report / unreadable-report controls all passed;
+the unchanged 204 gate passed in **28.436s**. The remaining 160-case failure
+was its incorrect assumption that ordinary G/V creates an immutable archive
+for every response. Its exact reservation lookup now passed. The correction
+validates each actual retained response and its receipt/context rather than
+changing production storage to satisfy a fixture assumption. At that commit,
+the whole read/retry/reopen gate still lacked a completed passing run.
+
+Windows passed **293 tests, zero failed, 388 explicitly skipped** (681 total)
+in 28.547s, including controlled pipe-error health persistence and real-child
+cancellation with unconfirmed descendant cleanup, retained quarantine and
+blocked capacity reacquisition. POSIX confirmed-cleanup assertions remain;
+the native fd0-close test alone names its Windows primitive limitation, with
+an all-platform controlled Writable counterpart. macOS passed 294 tests with
+two remaining canonical temporary-path fixture failures and 385 skips. Its
+exact-root approval fixtures are normalized locally; production approval and
+source-path guards remain unchanged. Browser checks had not yet run because
+Linux integration stopped at the 160-case fixture assertion.
+
+The [PR run at `f412607`](https://github.com/werulez99/flowboard-triage/actions/runs/38286968956)
+then passed the complete Linux source suite: **716/716, zero failed or skipped**,
+in 126.867s. Its core suite passed 320 tests with 361 native-dependent skips in
+23.004s. The 160 mixed control completed all persistence and fresh-process checks
+in **27.020s**, with 160 assessed, zero Ready tutorials and exactly 320 scripted
+G/V requests. Its automatic interval was **22.542s**; reading, no-op retry and
+fresh-process reopen retained all records and receipts, with **zero reopen
+provider callbacks**. The initial run acquired one catalog; the diagnostic's
+three catalog acquisitions include two later ensure/retry operations. The
+unchanged 204-job gate passed in **29.080s**, below its original 120-second bound.
+
+Windows passed **293/681, zero failed, 388 explicitly skipped** in 27.811s;
+macOS passed **296/681, zero failed, 385 explicitly skipped** in 11.388s. Only
+Linux ran the complete native-source suite. These scripted measurements establish
+orchestration and retained-state behavior, not model accuracy, real-provider
+throughput, or a few-hour guarantee for a real 150-200-finding report.
+
+The subsequent native browser step exposed a harness interaction error in
+`native_walkthrough_browser.py`: guided reading intentionally hides the active
+card's primary Explore function action, but the fixture attempted that action
+directly. The correction uses the visible Explore freely control before ordinary
+card navigation. Exact history, checked-range, camera and Resume assertions remain
+unchanged. Native smoke, ordinary/complex workflow and usability checks had passed
+before that failure; the later route, mixed-preparation and assessment checks had
+not run. CI now retains fictional native captures and diagnostics from those
+harnesses, including captures produced before a later failure.
+
+The [next PR run at `7c3076a`](https://github.com/werulez99/flowboard-triage/actions/runs/38288097326)
+also passed all 716 Linux source tests (126.141s); the 160 control passed in
+26.307s and the 204 control in 29.107s. Windows and macOS were green. Native
+history then restored the exact saved step, source lines and camera successfully,
+but the next manual-note action targeted a hidden explanation-list link. The
+retained actual native capture shows its visible code-gutter Note marker. Both
+controls use the same production `openNote` handler. The fixture now enters
+through that accessible marker while staying in guided mode, preserving the
+original evidence detour, retry, stale-callback and Return assertions.
+
+The [PR run at `13c260f`](https://github.com/werulez99/flowboard-triage/actions/runs/38288935729)
+passed all 716 Linux source tests (124.850s), including the 160 control in
+26.272s and the unchanged 204 control in 28.128s. The native browser passed the
+visible-marker, evidence-retry, stale-response and Return controls, then exposed
+a real preservation defect: an incoming assessment revoked the exact manual
+code-note highlight while the researcher was typing. Generated-guidance
+revocation had cleared the manual source location as well.
+
+The bounded correction retains only an explicitly owned manual note anchor on
+the same current source, file, hash and single line. A resumed generated step
+at a coincidentally matching saved note line cannot use that exception. Generated
+assessment/blocker inspection and pending navigation still revoke; full or
+source-stale withdrawal still clears the location. The browser assertion keeps
+exact camera, source highlight, text, caret and focus equality and records its
+before/after values. A focused control exercises the actual revocation function
+for manual, generated, changed-source and full-withdrawal cases.
+
+The final runtime [PR run at `db05689`](https://github.com/werulez99/flowboard-triage/actions/runs/38291842579)
+completed successfully on Linux, Windows and macOS. Linux core passed **321
+tests, zero failed, 361 explicitly skipped** in 18.549s. Its full source
+integration passed **717/717, zero failed or skipped**, in 84.346s. Windows
+passed **294 tests, zero failed, 388 explicitly skipped** in 24.376s; macOS
+passed **297 tests, zero failed, 385 explicitly skipped** in 11.116s. Only Linux
+ran the full native-source and browser integration gates.
+
+The 160-finding mixed control passed in **15.818s**: all 160 assessed, zero
+not assessed, zero Ready tutorials, 80 supported, 40 refuted and 40 checked
+insufficient-evidence results. It used exactly 320 scripted G/V callbacks. The
+automatic interval was **13.404s**; the recorded interval through reading,
+no-op retry and fresh-process reopen was **15.736s**, with zero additional
+callbacks on reopen. Original report coverage, current assessment identities,
+actual retained response bytes/receipts, budgets and the frozen run boundary
+remained unchanged. The 204-finding full G/V/publication control passed in
+**16.980s**, retaining its original 120-second limit, 408 scripted callbacks
+and one initial catalog. These host-dependent fixture timings do not establish
+a runtime speedup, real-provider latency or accuracy.
+
+All native browser gates passed: quality, smoke, ordinary and complex workflow,
+usability, walkthrough, route, mixed preparation and checked assessment reading.
+The retained walkthrough/route/mixed/assessment diagnostics contain 18/6/5/4
+check groups respectively, with no browser page errors. Late assessment arrival
+preserves the exact manual camera, line, draft, caret and input focus. An
+assessment with no published tutorial completes automatic triage and retains its
+stopped clock through provider-free reading/reopen; evidence detours and Return
+preserve the original view state in desktop and compact layouts.
+
+Independent visual inspection of the actual native captures at 1440x900 and
+801x600 found no blocking layout defect. Evidence inspection shows the complete
+checked note beside its exact original function/range, with a visible Return
+control; dark and light captures remain readable. The insufficient-evidence
+case retains partial coverage and its inspectable unresolved source. Invalidation
+withdraws generated assessment content while preserving focused human input.
+These are fictional responses in the original renderer with simulated editor
+transport, not live-model judgments or an activated Cursor installation. The
+final documentation correction also describes the existing explicit Codex
+model/reasoning settings accurately; it changes no provider configuration.
+
+The local Node process PID and `/proc` identity disagree. Existing ownership
+checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.
+Those guards were retained. Chromium installation also failed on its downloaded
+archive; no local native-browser success is claimed. Baseline .38 CI run
+`38185402143` already failed its provider-settings argument test because the test
+implicitly required an installed Codex CLI. This increment isolates that test's
+CLI discovery while retaining its real settings resolution and argument/audit
+assertions. Production provider validation is unchanged. Baseline Windows also
+had two transport-cleanup expectation failures; any remaining CI failure must be
+compared with that baseline rather than silently excluded.
+
+### Private evidence and the next bounded pilot
+
+No new L-142/L-184/L-113 retention or native content verification is claimed.
+Recorded state remains L-142 7/7, L-184 3/6, shared 10/12 and L-113 12/12;
+these figures were not treated as permission. No configured-provider settings,
+health state or private paid records were changed. Actual editor activation of
+0.19.39 requires the user's running Cursor/WSL host and remains unobserved here.
+
+Actual retained L-142 R/V and L-184 request packets were unavailable, so their
+byte attribution and a reproduction of the L-184 `Context::_msgSender` omission
+remain outstanding. Existing fictional acquisition/resume and packet-context
+controls pass, including retained exact helper definitions after display-cache
+eviction. They do not reproduce the private omission. No speculative compression
+or source-closure production change was made, and no timeout cause is inferred.
+
+The next real-provider candidate proposal is **L-184 at protocol revision
+`5a451abf4867bb22ff28e2c8c5046ab2aeec8aa6`**, after locally restoring its exact
+investigation/request identity, canonical report, phase eligibility and material
+`Context::_msgSender` closure. Its investigation revision and current eligible
+operation cannot be verified from this checkout, so the proposal is not yet
+execution-ready. If authoring plus full verification is then eligible, propose
+only that pair, maximum two requests, using the existing model/effort/capacity
+and normal deadlines with no automatic repair, extra retry or sibling work.
+Verify those actual settings before requesting that bounded authorization; do
+not infer them from historic CLI records or a numerical ledger remainder.
+
+Stop on invalid source/identity, unavailable required local context, failed
+ownership/cleanup, phase-budget refusal, or the first failed/unadmitted stage.
+Measure import/resume-to-current-assessment wall time, stage request/response
+boundaries, outcome and original-report coverage, exact evidence and remaining
+unknowns. Record tutorial availability separately and verify provider-free
+reading afterward. L-142 needs applicable V4 alias/event-rule evidence before a
+useful new semantic revision; its spent R/V pair is not renewed. L-113 remains a
+retained reading check. A bounded pilot cannot establish general 200-finding
+accuracy or completion within a few hours.
+
 ## Local gate recovery and retained reading (0.19.38)
 
 Baseline: `b4185f8c26183db9da305350698141aa44644d34`, 0.19.37. This is a

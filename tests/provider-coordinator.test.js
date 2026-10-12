@@ -37,7 +37,7 @@ async function until(check, message) {
   assert.ok(check(), typeof message === 'function' ? message() : message);
 }
 async function fixture(t, count = 1, callback) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-provider-coordinator-')), root = path.join(base, 'project'), directory = path.join(base, 'provider');
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-provider-coordinator-'))), root = path.join(base, 'project'), directory = path.join(base, 'provider');
   fs.mkdirSync(path.join(root, 'src'), { recursive: true }); fs.writeFileSync(path.join(root, 'src/Guard.sol'), code); fs.writeFileSync(path.join(root, 'report.md'), report(count));
   await importReport(path.join(root, 'report.md'), root, native, { deferMapping: true });
   const indexed = await analyze(native, root, { mode: 'source' }), catalog = new SourceCatalog(root, indexed.runner, indexed.result), calls = [];

@@ -37,6 +37,10 @@ try:
             return json.load(response)
     def job(state, identity):
         return next(item for item in state['reportPreparation']['jobs'] if item['id']==identity)
+    def completed_unknown(state, identity):
+        item=job(state,identity)
+        technical=(item.get('assessmentProjection') or {}).get('technical') or {}
+        return item.get('assessmentCompleted') is True and item['state']=='completed' and not item['publishable'] and technical.get('result')=='insufficient-evidence' and technical.get('coverage')=='partial'
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, executable_path=os.environ.get('FLOWBOARD_CHROMIUM_PATH'))
         page = browser.new_page(viewport={'width':1440,'height':900}, reduced_motion='reduce')
@@ -75,7 +79,7 @@ try:
             page.wait_for_timeout(80)
         page.goto(host['origin'])
         page.wait_for_function('()=>window.hostMessages.some(m=>m.type==="triage:library")')
-        state=wait(lambda state: (job(state,'I-2')['state']=='failed' if args.local_retry else state.get('mixedHeld')) and job(state,'I-1')['publishable'] and job(state,'I-3')['state']=='blocked' and job(state,'I-4')['state']=='failed')
+        state=wait(lambda state: (job(state,'I-2')['state']=='failed' if args.local_retry else state.get('mixedHeld')) and job(state,'I-1')['publishable'] and completed_unknown(state,'I-3') and job(state,'I-4')['state']=='failed')
         assert state['reportPreparation']['total']==4 and not state['reportPreparation']['published']
         assert len(state['library'])==4
         if args.local_retry:
@@ -127,11 +131,11 @@ try:
             low=readable['at']-(published['monotonicMs']+sync['end']-sync['host'])
             high=readable['at']-(published['monotonicMs']+sync['start']-sync['host'])
             assert after['token']==selected_token and after['activeId']=='I-2'
-            assert job(after,'I-2')['publishable'] and job(after,'I-3')['state']=='blocked'
+            assert job(after,'I-2')['publishable'] and completed_unknown(after,'I-3')
             assert len(after['providerCalls'])==used and not after['errors'] and not errors
             result.update({'publicationToExactReadableMsBounds':[low,high],'clockCalibrationRoundTripMs':sync['end']-sync['start'],
                 'hostPublication':published,'browserReadable':readable,'externalProviderRequests':0,'controlledRequests':used,'pageErrors':errors,'hostErrors':after['errors']})
-            result['checks'].append('Selected B publishes through the real coordinator and reaches its exact first native step without reselection; C remains blocked. The timestamp precedes diagnostics; separate monotonic clocks use a measured offset interval.')
+            result['checks'].append('Selected B publishes through the real coordinator and reaches its exact first native step without reselection; C retains its completed insufficient-evidence assessment with no walkthrough. The timestamp precedes diagnostics; separate monotonic clocks use a measured offset interval.')
             page.screenshot(path=str(output/'selected-publication.png'))
             stop_polling(); browser.close()
             print(json.dumps(result,indent=2))
@@ -151,7 +155,7 @@ try:
         assert 'This invocation reverts.' in page.locator('.guide-values').inner_text()
         assert 'The transaction reverts;' not in page.locator('.guide-values').inner_text(), 'A rolled-back call must not assert that an outer caller cannot catch its failure.'
         page.screenshot(path=str(output/'a-ready-while-b-running.png'))
-        result['checks'].append('The intact report has A accepted, B held in challenge, C externally blocked, D failed. A opens a checked native source refutation immediately.')
+        result['checks'].append('The intact report has A accepted, B held in challenge, C assessed with an unknown external receiver and no walkthrough, D failed. A opens a checked native source refutation immediately.')
         controls=page.locator('.guide-controls')
         original=position()
         page.locator('.guide-active-card .triage-line-number').first.click()
@@ -184,10 +188,10 @@ try:
             open_finding('I-2')
             page.locator('#triage-bar').get_by_role('button',name='Findings',exact=True).click()
             assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').get_attribute('data-state')=='ready'
-            assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').inner_text().endswith('Ready')
+            assert page.locator('[data-finding-id="I-2"] .triage-preparation-badge').inner_text().endswith('Assessment complete')
             page.evaluate('status=>window.dispatchEvent(new MessageEvent("message",{data:{type:"triage:reportPreparation",report:status,reportObservation:999999}}))',old_status)
             assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
-            assert '2 tutorials ready' in page.locator('.triage-preparation-counts').inner_text()
+            assert 'Optional walkthroughs: 2 ready' in page.locator('.triage-preparation-counts').inner_text()
             page.get_by_label('Finding queue filter').select_option('preparation:ready')
             assert page.locator('[data-finding-id="I-2"]').is_visible() and not page.locator('[data-finding-id="I-3"]').is_visible()
             assert len(request('/state')['providerCalls'])==used
@@ -214,9 +218,9 @@ try:
                 # Idle coordinator -> brand new panel. No selection or later
                 # progress is allowed to repair this initial list observation.
                 assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').get_attribute('data-state') == 'ready'
-                assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').inner_text().endswith('Ready')
+                assert page.locator('[data-finding-id="I-1"] .triage-preparation-badge').inner_text().endswith('Assessment complete')
                 assert page.locator('[data-finding-id="I-2"] .triage-ready-action').is_visible()
-                assert '2 tutorials ready' in page.locator('.triage-preparation-counts').inner_text()
+                assert 'Optional walkthroughs: 2 ready' in page.locator('.triage-preparation-counts').inner_text()
                 assert 'supplied remote receiver' in page.locator('[data-finding-id="I-3"]').inner_text()
                 page.get_by_label('Finding queue filter').select_option('preparation:ready')
                 assert page.locator('[data-finding-id="I-1"]').is_visible()
@@ -242,7 +246,7 @@ try:
         # and native source action, not an injected assessment.
         open_finding('I-3',ready=False);state=request('/state');partial=state['exposedInvestigation']['assessmentProjection']['technical']
         assert partial['result']=='insufficient-evidence' and partial['coverage']=='partial',partial
-        assert not job(state,'I-3')['publishable'] and not page.locator('.guide-annotation').count()
+        assert completed_unknown(state,'I-3') and not page.locator('.guide-annotation').count()
         result['unresolvedAssessment']={'technical':partial,'viewports':[],'extraProviderCallbacks':0,'inspection':'Original source via explicitly attributed material-evidence blocker; no decisive note is approved for this withheld claim.'}
         used=len(state['providerCalls'])
         for width,height in [(1440,900),(801,600)]:
@@ -268,7 +272,7 @@ try:
             assert page.evaluate('()=>({scale,panX,panY,scroll:document.querySelector(".guide-preparation").scrollTop})')==before
             assert len(request('/state')['providerCalls'])==used
             result['unresolvedAssessment']['viewports'].append({'size':[width,height],'sourceLines':[13,14,15],'citedLines':[14],'returnRestored':True})
-        result['checks'].append('I-3 remains a current insufficient-evidence partial assessment, not Ready: the exact unknown implementation is visible, full original remoteFinish source and line14 inspection/Return work in both viewports with zero requests.')
+        result['checks'].append('I-3 has a completed current insufficient-evidence partial assessment with no Ready walkthrough: the exact unknown implementation is visible, full original remoteFinish source and line14 inspection/Return work in both viewports with zero requests.')
         result.update({'productionExtension':host['productionExtension'],'productionVersion':host['productionVersion'],
             'firstReadyOpenMs':first_readable_ms,'releaseToAcceptedObservedMs':accepted_observed_ms,
             'controlledRequests':len(state['providerCalls']),'externalProviderRequests':0,

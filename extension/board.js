@@ -699,6 +699,11 @@ class TriageBoard {
       const stillCurrent=require('./technical-assessment').current(draft);
       draft.phase = stillCurrent&&draft.publication?.ready?'ready':'experiment-recorded'; draft.revision++;
       if (this.callbacks.investigationPersistence !== false) investigationEngine.write(this.root, draft);
+      // The new observation is already canonical. Withdraw only this finding
+      // before publishing it, so a concurrent report status cannot present
+      // the old assessment as current until the later ensure/review boundary.
+      // Setup failures with no changed property observation keep their seal.
+      if(!stillCurrent)this.callbacks.reportPreparation?.()?.invalidate('New regression observations require substantive interpretation.',{findingId:model.id});
       await this.publishInvestigation(model, draft);
     } finally { model.experimentJob = null; }
     if(require('./technical-assessment').current(draft))return draft;

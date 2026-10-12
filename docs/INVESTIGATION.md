@@ -1,4 +1,14 @@
-# Source investigation runtime — 0.19.38
+# Source investigation runtime — 0.19.39
+
+`automatic-triage.js` derives current automatic completion from canonically
+revalidated technical admission. Its process-local seal is rebuilt by existing
+coordinator reconciliation; serialized summaries cannot grant completion.
+`report-preparation.js`, `batch-plan.js` and the native UI consume that same
+definition. Non-Ready assessments receive source/report/canonical invalidation,
+while ordinary status polling remains a projection read. Tutorial publication
+is still governed by the full guide policy. Stopped run timing remains historical
+when later source changes withdraw current assessment coverage; actual new work
+archives that attempt before starting its next boundary.
 
 The engine persists an investigation before publishing its checkpoint projection.
 The report coordinator no longer writes a duplicate journal solely for that

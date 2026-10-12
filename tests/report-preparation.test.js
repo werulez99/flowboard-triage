@@ -59,7 +59,7 @@ test('ordinary 204-finding library/load/progress/review-save messages load only 
   post:async message=>{messages.push(message);if(message.type==='triage:load')board.renderWaiters.get(message.token)?.resolve();return true;}});
  let start=performance.now();await board.showLibrary();timings.push({scene:'library',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.at(-1)))});
  assert.equal(detailLoads,0);assert.equal(messages.at(-1).reportPreparation.jobs.filter(j=>j.reviewReasoning).length,0);
- assert.equal(messages.at(-1).reportPreparation.assessmentAvailable,204);assert.equal(messages.at(-1).reportPreparation.notAssessed,0);
+ assert.equal(messages.at(-1).reportPreparation.assessmentAvailable,204);assert.equal(messages.at(-1).reportPreparation.assessed,0);assert.equal(messages.at(-1).reportPreparation.notAssessed,204,'Transport projections alone cannot establish canonical completion.');
  const {report,entries}=reconcile(f.root),entry=entries.at(-1),request=f.runner.request(entry,f.getCatalog(),report),issue=store.readIssue(f.root,entry.id);
  store.writeDraft(f.root,entry.id,request);
  start=performance.now();await board.open(request,f.getCatalog(),{mode:'source'},p.gitState(f.root),issue);timings.push({scene:'selected-load',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.findLast(m=>m.type==='triage:load')))});
@@ -67,7 +67,7 @@ test('ordinary 204-finding library/load/progress/review-save messages load only 
  assert.equal(messages.at(-1).reportPreparation.jobs.at(-1).reviewReasoning.length,42);
  start=performance.now();await board.reportProgress();timings.push({scene:'progress',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.findLast(m=>m.type==='triage:reportPreparation')))});assert.equal(detailLoads,2);
  await board.reportProgress(f.runner.status(undefined,null));const selectedProgress=messages.findLast(m=>m.type==='triage:reportPreparation').report;
- assert.equal(selectedProgress.jobs.filter(j=>j.reviewReasoning).length,1);assert.equal(selectedProgress.assessmentAvailable,204);assert.equal(selectedProgress.notAssessed,0);assert.equal(detailLoads,2);
+ assert.equal(selectedProgress.jobs.filter(j=>j.reviewReasoning).length,1);assert.equal(selectedProgress.assessmentAvailable,204);assert.equal(selectedProgress.assessed,0);assert.equal(selectedProgress.notAssessed,204);assert.equal(detailLoads,2);
  start=performance.now();await board.receive({type:'triage:save',issueId:entry.id,token:board.activeToken,editVersion:1,patch:{summary:'Preserve the researcher’s own text.'}});
  timings.push({scene:'review-save',ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(messages.findLast(m=>m.type==='triage:reviewSaved')))});assert.equal(detailLoads,2);
  assert.equal(store.readDraft(f.root,entry.id).finding.summary,'Preserve the researcher’s own text.');
@@ -150,7 +150,7 @@ function response(input) {
   };
 }
 async function fixture(t, count = 3, invoke, report = reportText(count), source = code, extraFiles={}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-report-jobs-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-report-jobs-')));
   fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/Gate.sol'), source); fs.writeFileSync(path.join(root, 'report.md'), report);
   for(const [file,text]of Object.entries(extraFiles)){fs.mkdirSync(path.dirname(path.join(root,file)),{recursive:true});fs.writeFileSync(path.join(root,file),text);}
   await importReport(path.join(root, 'report.md'), root, native, { deferMapping: true });
@@ -170,9 +170,11 @@ for(const outcome of ['timeout','completed','setup-failure'])test(`supported reg
  const oldReview=structuredClone(draft.technicalReview),projections=[],{TriageBoard}=require('../extension/board'),issue=require('../extension/store').readIssue(f.root,'I-1');
  const {report,entries}=reconcile(f.root),entry=entries.find(i=>i.id==='I-1');
  const model={id:'I-1',investigationDraft:draft,catalog:f.getCatalog(),request:f.runner.request(entry,f.getCatalog(),report),issue:f.runner.issue(entry)};
- const board=Object.assign(Object.create(TriageBoard.prototype),{root:f.root,callbacks:{},investigationCurrent:()=>true,assertCurrent:()=>f.getCatalog().assertFresh(),
+ const board=Object.assign(Object.create(TriageBoard.prototype),{root:f.root,callbacks:{reportPreparation:()=>f.runner},investigationCurrent:()=>true,assertCurrent:()=>f.getCatalog().assertFresh(),
   vscode:{window:{showWarningMessage:async()=> 'Run existing regression'}},
-  publishInvestigation:async(m,d)=>{m.investigationDraft=d;projections.push(policy.expose(d).assessmentProjection);},startInvestigation:async()=>f.runner.continueFinding('I-1')});
+  publishInvestigation:async(m,d)=>{m.investigationDraft=d;projections.push(policy.expose(d).assessmentProjection);
+    if(d.experiments.length)assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').assessmentCompleted,outcome==='setup-failure','The persisted observation invalidates completion before its first native publish; incidental setup does not.');
+  },startInvestigation:async()=>f.runner.continueFinding('I-1')});
  const experiment=require('../extension/experiment');
  t.mock.method(experiment,'run',async(u,options)=>({id:'observed',sourceId:u.id,source:u.source,claimId:options.claimId,origin:'executed-observation',outcome:outcome==='setup-failure'?'setup-failure':'passed',interpretation:'Controlled existing assertion result, not proof of a finding.',tests:[outcome==='setup-failure'?{name:'setUp()',status:'Failure'}:{name:'testGate()',status:'Success'}],command:['forge',...experiment.command(u)],limits:['Fictional controlled setup']}));
  f.options.invoke=async input=>{f.calls.push([input.finding.id,input.phase,input.checkOnly]);assert.equal(input.experiments.at(-1).id,'observed');assert.equal(input.checkOnly,true);
@@ -244,6 +246,7 @@ for(const left of [0,1,2])test(`accepted partial assessment has one explicit pri
     if(revising){
       const saved=engine.read(f.root,'I-1'),projected=policy.expose(saved);
       assert.equal(projected.assessmentProjection.technical.result,'insufficient-evidence');assert.equal(projected.assessmentProjection.artifact.retained,true);
+      assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').assessmentCompleted,false,'The readable predecessor cannot complete its successor.');
       assert.equal(projected.reviewCandidate,undefined);assert.equal(projected.revisionPredecessors,undefined);assert.deepEqual(projected.evidence,[]);
       if(input.candidateOnly){seenAuthoring=true;assert.equal(input.hostReview,null);assert.equal(input.revisionRequest.kind,'accepted-partial');
         assert.deepEqual(input.revisionRequest.targets,['/property']);value=candidatePatch(response({...input,checkOnly:false}));}
@@ -254,6 +257,8 @@ for(const left of [0,1,2])test(`accepted partial assessment has one explicit pri
   };
   await f.runner.ensure();const before=engine.read(f.root,'I-1'),candidates=require('../extension/review-candidate'),job=f.runner.state.jobs['I-1'];
   assert.equal(before.reviewCandidate,undefined);assert.equal(policy.expose(before).assessmentProjection.technical.result,'insufficient-evidence');
+  assert.equal(f.runner.status().assessed,2);assert.equal(f.runner.status().triageComplete,true);assert.equal(f.runner.status().ready,0);
+  const originalBoundary=structuredClone(f.runner.state.batch);
   if(left===2)assert.ok(before.candidateHistory.at(-1).revisions.changes.some(c=>c.path==='/evidence/guard'),'Accepted revision keeps the true original, not the latest accepted note, as its review reference.');
   const base=candidates.acceptedRevision(before,require('../extension/semantic-provider').schema),calls=f.calls.length,used=job.requests,sibling=structuredClone(f.runner.state.jobs['I-2']);
   const revision={...base,id:'accepted-partial-revision',targets:['/property'],reason:'Reconcile the reported caller entitlement with the exact guard and retain or resolve that scoped property question.'};
@@ -274,6 +279,8 @@ for(const left of [0,1,2])test(`accepted partial assessment has one explicit pri
   }else await Promise.all([f.runner.continueFinding('I-1',{reviseAnalysis:revision}),f.runner.continueFinding('I-1',{reviseAnalysis:revision})]);
   const after=engine.read(f.root,'I-1');assert.equal(f.calls.length,calls+2,after.error);assert.ok(seenAuthoring&&seenCheck,after.error);
   assert.ok(f.runner.artifact('I-1'),after.error);assert.equal(after.reviewCandidate,undefined);assert.equal(f.runner.state.jobs['I-1'].requests,used+2);
+  assert.equal(f.runner.status().assessed,2);assert.equal(f.runner.status().triageComplete,true);
+  assert.ok(f.runner.state.batch.previousAttempts.some(a=>a.startedAt===originalBoundary.startedAt&&a.finishedAt===originalBoundary.finishedAt&&a.outcome===originalBoundary.outcome),'Explicit revision preserves the original stopped attempt.');
   const retained=after.revisionPredecessors.find(p=>p.id===revision.id);assert.deepEqual(retained.accepted,before);assert.deepEqual(after.corrections,before.corrections);
   assert.equal(f.runner.state.jobs['I-2'].requestLimit,sibling.requestLimit);assert.equal(f.runner.state.jobs['I-2'].requests,sibling.requests);
   await f.runner.continueFinding('I-1',{reviseAnalysis:revision});assert.equal(f.calls.length,calls+2);
@@ -338,6 +345,7 @@ test('terminal correction of an accepted partial successor preserves its immutab
       const saved=engine.read(f.root,'I-1'),projected=policy.expose(saved);
       assert.equal(projected.assessmentProjection.technical.identity,original.technicalReview.identity);
       assert.equal(projected.assessmentProjection.technical.result,'insufficient-evidence');assert.equal(projected.assessmentProjection.artifact.retained,true);
+      assert.equal(f.runner.status().jobs.find(j=>j.id==='I-1').assessmentCompleted,false,'The readable predecessor cannot complete its successor.');
       assert.equal(projected.reviewCandidate,undefined);assert.equal(projected.revisionPredecessors,undefined);
       if(input.candidateOnly){value=partialResponse({...input,checkOnly:false});value.evidence[0].explanation+=` Private correction proposal ${revision}.`;value=candidatePatch(value);}
       else {value=checkedCandidate(input);value.result='repair';value.problems=['The proposed entitlement still needs a source-grounded reconciliation with the reported condition.'];}
@@ -850,6 +858,12 @@ test('compact new journal jobs retain canonical audits and revalidate before res
   f.runner.dispose();await f.runner.loop;f.runner=new ReportPreparation(f.root,f.options);await f.runner.ensure();
   assert.equal(f.calls.length,calls);assert.equal(f.runner.artifact('I-1'),null);assert.ok(f.runner.artifact('I-2'));assert.equal(f.runner.status().ready,1);
   assert.deepEqual(f.runner.state.resources,receipts);
+  const stopped=structuredClone(f.runner.status().batch);
+  fs.rmSync(path.join(f.root,'.flowboard/investigations'),{recursive:true});await f.runner.ensure();
+  const missing=f.runner.status();
+  assert.equal(missing.ready,0);assert.equal(missing.assessed,0);assert.equal(missing.notAssessed,2);assert.equal(missing.assessmentAvailable,0);assert.equal(missing.triageComplete,false);
+  assert.ok(missing.jobs.every(job=>job.state==='failed'&&!job.publishable),'Losing the entire canonical directory withdraws warm accepted artifacts before the provider-none early return.');
+  assert.equal(f.calls.length,calls);assert.deepEqual(f.runner.state.resources,receipts);assert.deepEqual(missing.batch,stopped);
   t.diagnostic(JSON.stringify({scene:'two scripted completed findings',compactJournalBytes:compactBytes,duplicateProjectionEquivalentBytes:repeatedBytes,externalProviderRequests:0,scriptedProviderCallbacks:calls,limits:'Exact serialized byte comparison, not a timing or inference benchmark.'}));
 });
 test('crash after durable generation checkpoint restores owed verification before cold sibling admission',{skip:!native},async t=>{
@@ -940,10 +954,15 @@ test('a final paid response recovers after historical default expiry in a disabl
   assert.ok(accepted.runs.some(run => run.phase === 'challenge' && run.reusedResponse));
   assert.equal(accepted.pendingResponse, undefined);
   const restored = p.readWorkspaceJson(f.root, '.flowboard/report-preparation.json', 8 * 1024 * 1024);
-  assert.equal(restored.batch.startedAt, before.batch.startedAt); assert.equal(restored.batch.historicalStop.deadlineAt, before.batch.deadlineAt);
+  const historical = restored.batch.previousAttempts.at(-1);
+  assert.equal(historical.startedAt, before.batch.startedAt); assert.equal(historical.finishedAt, before.batch.finishedAt);
+  assert.equal(historical.outcome, before.batch.outcome); assert.equal(historical.historicalStop.deadlineAt, before.batch.deadlineAt);
+  assert.notEqual(restored.batch.startedAt, before.batch.startedAt, 'Actual local response recovery starts its own automatic attempt without including idle time.');
+  assert.ok(restored.batch.finishedAt); assert.equal(restored.batch.outcome, 'incomplete', 'Unpaid sibling work remains unfinished.');
   assert.deepEqual(restored.resources, before.resources, 'Unpaid recovery does not rewrite receipts/accounting.');
   const again = JSON.parse(run('restore').stdout);
   assert.deepEqual(again.calls, []); assert.deepEqual(again.readable, ['I-1']); assert.equal(again.status.requestLimit, 2);
+  assert.deepEqual(again.status.batch, state.status.batch, 'Subsequent reading cannot reopen the completed local recovery attempt.');
 });
 test('local recovery cannot publish stale code, damaged responses or a generation missing its challenge', { skip: !native }, async t => {
   for (const scenario of ['stale-code', 'damaged-response', 'missing-challenge']) await t.test(scenario, async t => {
@@ -1005,7 +1024,8 @@ test('a durable substantively checked model finishes host validation locally wit
   const result = JSON.parse(child.stdout);
   assert.deepEqual(result.calls, []); assert.deepEqual(result.readable, ['I-1']);
   assert.equal(result.status.requests, 2); assert.equal(result.status.requestLimit, 2);
-  assert.equal(result.status.mode, 'paused');
+  assert.equal(result.status.mode, 'completed'); assert.equal(result.status.triageComplete, true); assert.equal(result.status.assessed, 1);
+  assert.equal(result.status.batch.finishedAt, ledger.batch.finishedAt, 'Pure canonical revalidation preserves the earlier automatic stop.');
   assert.equal(engine.read(f.root, 'I-1').causal.summary, summary);
 });
 test('a live health lock cannot discard a completed generation, consume a phantom receipt, or require regeneration', { skip: !native }, async t => {
@@ -1212,6 +1232,26 @@ test('a missed finding-input watcher cannot reuse a completed aggregate after a 
   assert.equal(f.runner.published(b), false, 'The old B explanation has a different expected behavior input.');
   assert.equal(f.calls.length, 4);
   assert.equal(require('../extension/store').readDraft(f.root, 'I-2').finding.status, 'invalid', 'Human judgment is preserved, not replaced by preparation state.');
+});
+for(const change of ['changed','unreadable'])test(`a ${change} report during catalog acquisition withdraws warm approval without watcher delivery`,{skip:!native},async t=>{
+  const f=await fixture(t,1);await f.runner.ensure();
+  const draft=engine.read(f.root,'I-1'),file=path.join(f.root,'.flowboard/investigations/I-1.json'),canonical=fs.readFileSync(file,'utf8');
+  const ledger=structuredClone(f.runner.state.resources),stopped=structuredClone(f.runner.status().batch),acquire=f.options.catalog,calls=f.calls.length;
+  assert.ok(f.runner.published(draft));f.options.configuration=()=>({provider:'none'});
+  f.options.catalog=async signal=>{
+    const catalog=await acquire(signal);
+    if(change==='changed'){
+      const reportFile=path.join(f.root,'report.md');fs.writeFileSync(reportFile,reportText(1).replace('### I-1:','### I-1: Revised allegation:'));
+      await importReport(reportFile,f.root,native,{deferMapping:true});
+    }else fs.writeFileSync(path.join(f.root,'.flowboard/report.json'),'{ interrupted report index');
+    return catalog;
+  };
+  await f.runner.ensure();const state=f.runner.status();
+  assert.equal(f.runner.published(draft),false);assert.equal(f.runner.artifact('I-1'),null);
+  assert.equal(state.ready,0);assert.equal(state.assessed,0);assert.equal(state.assessmentAvailable,0);assert.equal(state.notAssessed,1);assert.equal(state.triageComplete,false);
+  assert.equal(state.jobs[0].state,'failed');if(change==='changed')assert.match(state.jobs[0].reason,/report changed during preparation setup/);
+  assert.equal(f.calls.length,calls);assert.deepEqual(f.runner.state.resources,ledger);assert.deepEqual(state.batch,stopped);
+  assert.equal(fs.readFileSync(file,'utf8'),canonical,'Detected input failure withholds publication without rewriting the previously checked argument.');
 });
 test('a full saved native canvas opens, removal frees a slot, and the checked guide recovers without AI', { skip: !native }, async t => {
   const source = code.replace('\n}\n', '\n    function unrelated() external pure { }\n}\n');
@@ -1604,7 +1644,9 @@ test('historical expiry does not auto-resume a paused job but explicit local con
   f.options.configuration = () => ({ provider: 'codex', requestLimit: 6 }); await f.runner.ensure();
   assert.equal(f.calls.length, 0); assert.equal(f.runner.state.mode, 'paused');
   await f.runner.continueFinding('I-1'); assert.equal(f.calls.length, 2); assert.equal(f.runner.status().ready, 1);
-  assert.equal(f.runner.state.batch.startedAt, startedAt);
+  assert.notEqual(f.runner.state.batch.startedAt, startedAt);
+  assert.equal(f.runner.state.batch.previousAttempts.at(-1).startedAt,startedAt);
+  assert.equal(f.runner.state.batch.previousAttempts.at(-1).finishedAt,undefined,'The historical stop time remains unknown.');
 });
 for(const extraAuthoring of [false,true])test(`scoped runner preserves spent R and same V with explicit follow-up=${extraAuthoring}`,{skip:!native},async t=>{
   const f=await fixture(t,1, input=>{const value=response(input);value.inputReviews=[];delete value.walkthrough.steps;value.claims[0].evidence.push('absent-note');return value;});

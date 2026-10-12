@@ -105,7 +105,7 @@ try:
                       'reportContext':{'project':'controlled-project','reportHash':'controlled-report'}}
         emit(initial_list)
         assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').get_attribute('data-state')=='ready'
-        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').inner_text().endswith('Ready')
+        assert page.locator('[data-finding-id="I-01"] .triage-preparation-badge').inner_text()=='Walkthrough ready'
         assert page.locator('[data-finding-id="I-03"] .triage-preparation-badge').inner_text()=='Blocked'
         assert page.locator('[data-finding-id="I-04"] .triage-preparation-badge').inner_text()=='Paused'
         assert page.locator('[data-finding-id="I-01"] .triage-ready-action').is_visible()
@@ -136,6 +136,9 @@ try:
         before = capture()
         # Native history and guide progress describe different locations. The
         # return snapshot must be captured before history mutates the selection.
+        # Guided reading hides the active card's primary exploration action;
+        # leave it through the visible product control before navigating freely.
+        controls.get_by_role('button',name='Explore freely',exact=True).click()
         page.locator('.card').filter(has=page.get_by_text('Demo::increment(uint256)',exact=True)).get_by_role('button',name='Explore function',exact=True).click()
         page.locator('.card').filter(has=page.get_by_text('Demo::_add(uint256)',exact=True)).get_by_role('button',name='Explore function',exact=True).click()
         page.locator('#triage-bar').get_by_role('button',name='Walkthrough',exact=True).click()
@@ -149,7 +152,9 @@ try:
             assert capture()==guided_b, 'History must pause before changing the active guide source or checked lines.'
             result['checks'].append('Native history detours capture the guide before changing cards; Resume restores its exact original step/range/camera.')
         load()
-        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        # The visible code marker and the collapsed inline note link use the
+        # same anchored detour. Use the marker while guided reading is active.
+        page.locator('.guide-active-card').get_by_role('button',name='Read note at src/Demo.sol:8',exact=True).click()
         page.locator('.guide-annotation').get_by_role('button',name='src/Demo.sol:8 · Open in editor',exact=True).click()
         inspection=page.evaluate('window.sent.findLast(m=>m.type==="triage:inspectEvidence")')
         if not args.baseline:
@@ -180,7 +185,7 @@ try:
             assert field.evaluate('node=>[node.selectionStart,node.selectionEnd]')==[5,15]
             result['checks'].append('Late manual evidence responses cannot retarget a subsequent step or rebuild a later note editor, text or caret.')
         load()
-        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        page.locator('.guide-active-card').get_by_role('button',name='Read note at src/Demo.sol:8',exact=True).click()
         page.locator('#triage-bar').get_by_text('More',exact=True).click()
         page.locator('.triage-more-menu').get_by_role('button',name='Edit review',exact=True).click()
         result['observed']['noteEditLayout']=page.evaluate('document.body.classList.contains("guide-note-editing")')
@@ -244,7 +249,7 @@ try:
         load()
         if not args.baseline:
             assert page.evaluate('()=>[...CSS.highlights.get("flowboard-call-occurrence")].map(range=>range.toString())') == ['_add(amount)']
-        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        page.locator('.guide-active-card').get_by_role('button',name='Read note at src/Demo.sol:8',exact=True).click()
         result['observed']['noteNavigation'] = capture()
         result['observed']['noteDetourVisible'] = controls.get_by_role('button', name='Return to step', exact=True).count() == 1
         if not args.baseline:
@@ -284,10 +289,16 @@ try:
             field = page.locator('#triage-evidence-note'); field.fill('Do not replace this draft when preparation finishes.')
             field.evaluate('node=>node.setSelectionRange(4,11)')
             position = capture()
+            def manual_edit_state():
+                return {'view':capture(),'text':field.input_value(),
+                        'selection':field.evaluate('node=>[node.selectionStart,node.selectionEnd]'),
+                        'focused':field.evaluate('node=>document.activeElement===node')}
+            arrival_before = manual_edit_state()
             emit({'type':'triage:investigation','issueId':'I-01','token':base['token'],'draft':base['investigationDraft']})
+            result['observed']['manualReadinessArrival'] = {'before':arrival_before,'after':manual_edit_state()}
             assert page.locator('.guide-annotation').count()==0, 'An accepted result must not steal an explicitly selected note editor.'
-            assert capture()==position and field.input_value()=='Do not replace this draft when preparation finishes.'
-            assert field.evaluate('node=>[node.selectionStart,node.selectionEnd]')==[4,11]
+            assert capture()==position and field.input_value()=='Do not replace this draft when preparation finishes.', result['observed']['manualReadinessArrival']
+            assert field.evaluate('node=>document.activeElement===node && node.selectionStart===4 && node.selectionEnd===11'), result['observed']['manualReadinessArrival']
             result['checks'].append('Late selected-finding readiness does not replace deliberate exploration or an unfinished manual note.')
             load()
             mixed = {'mode':'running','published':False,'ready':1,'total':4,'counts':{'completed':1,'running':1,'blocked':1,'failed':1},'active':[{'id':'I-02','stage':'challenge'}],
