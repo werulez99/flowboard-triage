@@ -55,5 +55,5 @@ jobs:
             /tmp/flowboard-triage-mixed-preparation/*.png
             /tmp/flowboard-triage-mixed-preparation/checks.json
             /tmp/flowboard-triage-assessment/*.png
-            /tmp/flowboard-triage-assessment/checks.json
+            /tmp/flowboard-triage-assessment/result.json
           if-no-files-found: warn

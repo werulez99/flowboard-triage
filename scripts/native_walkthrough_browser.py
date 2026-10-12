@@ -152,7 +152,9 @@ try:
             assert capture()==guided_b, 'History must pause before changing the active guide source or checked lines.'
             result['checks'].append('Native history detours capture the guide before changing cards; Resume restores its exact original step/range/camera.')
         load()
-        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        # The visible code marker and the collapsed inline note link use the
+        # same anchored detour. Use the marker while guided reading is active.
+        page.locator('.guide-active-card').get_by_role('button',name='Read note at src/Demo.sol:8',exact=True).click()
         page.locator('.guide-annotation').get_by_role('button',name='src/Demo.sol:8 · Open in editor',exact=True).click()
         inspection=page.evaluate('window.sent.findLast(m=>m.type==="triage:inspectEvidence")')
         if not args.baseline:
@@ -183,7 +185,7 @@ try:
             assert field.evaluate('node=>[node.selectionStart,node.selectionEnd]')==[5,15]
             result['checks'].append('Late manual evidence responses cannot retarget a subsequent step or rebuild a later note editor, text or caret.')
         load()
-        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        page.locator('.guide-active-card').get_by_role('button',name='Read note at src/Demo.sol:8',exact=True).click()
         page.locator('#triage-bar').get_by_text('More',exact=True).click()
         page.locator('.triage-more-menu').get_by_role('button',name='Edit review',exact=True).click()
         result['observed']['noteEditLayout']=page.evaluate('document.body.classList.contains("guide-note-editing")')
@@ -247,7 +249,7 @@ try:
         load()
         if not args.baseline:
             assert page.evaluate('()=>[...CSS.highlights.get("flowboard-call-occurrence")].map(range=>range.toString())') == ['_add(amount)']
-        page.locator('.guide-active-card .triage-note-links button').filter(has_text='L8').click()
+        page.locator('.guide-active-card').get_by_role('button',name='Read note at src/Demo.sol:8',exact=True).click()
         result['observed']['noteNavigation'] = capture()
         result['observed']['noteDetourVisible'] = controls.get_by_role('button', name='Return to step', exact=True).count() == 1
         if not args.baseline:

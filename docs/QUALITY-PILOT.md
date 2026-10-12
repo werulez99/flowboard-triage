@@ -91,8 +91,8 @@ the new completion and archived-attempt contract. The first Windows job had
 two existing real-process fixture expectation failures; macOS had two
 temporary-path identity fixture failures. These failed runs remain recorded;
 the pull-request-triggered duplicate is the same source, not independent
-quality evidence. Corrected full-suite and browser results are recorded below
-when available. No ownership bypass or extended product deadline is permitted.
+quality evidence. Subsequent results are recorded below. No ownership bypass or
+extended product deadline was used.
 
 The next [PR CI run](https://github.com/werulez99/flowboard-triage/actions/runs/38286320051)
 at `49fe7c4558b0b1a0af18a3fc028b7c42708cc1ca` passed **715/716** full Linux
@@ -102,8 +102,8 @@ the unchanged 204 gate passed in **28.436s**. The remaining 160-case failure
 was its incorrect assumption that ordinary G/V creates an immutable archive
 for every response. Its exact reservation lookup now passed. The correction
 validates each actual retained response and its receipt/context rather than
-changing production storage to satisfy a fixture assumption. The whole
-read/retry/reopen gate still requires a completed passing run.
+changing production storage to satisfy a fixture assumption. At that commit,
+the whole read/retry/reopen gate still lacked a completed passing run.
 
 Windows passed **293 tests, zero failed, 388 explicitly skipped** (681 total)
 in 28.547s, including controlled pipe-error health persistence and real-child
@@ -115,6 +115,43 @@ two remaining canonical temporary-path fixture failures and 385 skips. Its
 exact-root approval fixtures are normalized locally; production approval and
 source-path guards remain unchanged. Browser checks had not yet run because
 Linux integration stopped at the 160-case fixture assertion.
+
+The [PR run at `f412607`](https://github.com/werulez99/flowboard-triage/actions/runs/38286968956)
+then passed the complete Linux source suite: **716/716, zero failed or skipped**,
+in 126.867s. Its core suite passed 320 tests with 361 native-dependent skips in
+23.004s. The 160 mixed control completed all persistence and fresh-process checks
+in **27.020s**, with 160 assessed, zero Ready tutorials and exactly 320 scripted
+G/V requests. Its automatic interval was **22.542s**; reading, no-op retry and
+fresh-process reopen retained all records and receipts, with **zero reopen
+provider callbacks**. The initial run acquired one catalog; the diagnostic's
+three catalog acquisitions include two later ensure/retry operations. The
+unchanged 204-job gate passed in **29.080s**, below its original 120-second bound.
+
+Windows passed **293/681, zero failed, 388 explicitly skipped** in 27.811s;
+macOS passed **296/681, zero failed, 385 explicitly skipped** in 11.388s. Only
+Linux ran the complete native-source suite. These scripted measurements establish
+orchestration and retained-state behavior, not model accuracy, real-provider
+throughput, or a few-hour guarantee for a real 150-200-finding report.
+
+The subsequent native browser step exposed a harness interaction error in
+`native_walkthrough_browser.py`: guided reading intentionally hides the active
+card's primary Explore function action, but the fixture attempted that action
+directly. The correction uses the visible Explore freely control before ordinary
+card navigation. Exact history, checked-range, camera and Resume assertions remain
+unchanged. Native smoke, ordinary/complex workflow and usability checks had passed
+before that failure; the later route, mixed-preparation and assessment checks had
+not run. CI now retains fictional native captures and diagnostics from those
+harnesses, including captures produced before a later failure.
+
+The [next PR run at `7c3076a`](https://github.com/werulez99/flowboard-triage/actions/runs/38288097326)
+also passed all 716 Linux source tests (126.141s); the 160 control passed in
+26.307s and the 204 control in 29.107s. Windows and macOS were green. Native
+history then restored the exact saved step, source lines and camera successfully,
+but the next manual-note action targeted a hidden explanation-list link. The
+retained actual native capture shows its visible code-gutter Note marker. Both
+controls use the same production `openNote` handler. The fixture now enters
+through that accessible marker while staying in guided mode, preserving the
+original evidence detour, retry, stale-callback and Return assertions.
 
 The local Node process PID and `/proc` identity disagree. Existing ownership
 checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.
