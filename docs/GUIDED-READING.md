@@ -1,4 +1,27 @@
-# Checked finding walkthroughs — 0.19.38
+# Checked finding walkthroughs — 0.19.39
+
+## Automatic assessment completion and optional reading
+
+The report's primary progress is current technical assessments: valid, invalid,
+checked inconclusive, and not assessed. Checked partial coverage may complete a
+finding while preserving every unresolved original allegation. Operational
+failure, missing verification and a pending successor remain not assessed. A
+retained predecessor can still be read, but does not complete that successor.
+
+**Read assessment** directly exposes the checked reason, coverage, supporting
+and opposing notes, exact source actions and all remaining uncertainties. Source
+detours and Return preserve reading position, camera, selection and keyboard
+focus. Full tutorial Ready, Next/Previous and the researcher's saved decision
+retain their own contracts. Severity mapping does not establish engagement scope.
+
+Automatic completion no longer depends on tutorial availability. Generic report
+retry does not reopen or renew already assessed findings. Explicit eligible
+revisions remain possible through their exact authoring/verification admission.
+Elapsed time freezes at the automatic stop; reading and compatible reopen add no
+provider calls or time. Older missing stop boundaries are displayed as unknown.
+The forecast presents phase demand, configured capacity and dependency depth;
+the few-hour product target is not a measured real-provider ETA. See the
+[0.19.39 pilot record](QUALITY-PILOT.md) for executable controls and limits.
 
 Investigation checkpoints remain synchronously durable in each finding's saved
 record. Their progress callback updates the report view without also rewriting

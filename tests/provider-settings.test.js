@@ -21,9 +21,12 @@ test('model preferences validate tokens, retain default and cannot expand accoun
  assert.notEqual(health.identity('codex'),health.identity('codex',{model:'explicit-model'}));
  assert.equal(settings.explicit({reasoningEffort:'medium'}),false);
 });
-test('actual adapter uses explicit safe argument arrays and separates requested from unobserved model',async()=>{
- // Installed CLI --help is local, nonbillable. The only request child below is
- // the existing transport fixture, not a remote provider.
+test('actual adapter uses explicit safe argument arrays and separates requested from unobserved model',async t=>{
+ // This transport control checks argument construction and audit attribution.
+ // Keep the real token/effort resolver, while isolating installed-CLI capability
+ // discovery: CI must not require an authenticated or installed Codex binary.
+ // The only request child is the existing transport fixture.
+ t.mock.method(settings,'validate',options=>settings.resolve(options));
  const config={model:'fixture-model',reasoningEffort:'high'},input={phase:'generate',finding:{title:'fictional-transport-check'},sources:[],providerConfiguration:config};let args;
  const result=await provider.runCodex(input,{...config,spawn(executable,argv,options){args=argv;return spawn(process.execPath,[path.join(__dirname,'fixtures/provider-cli.js'),'codex'],options);}});
  assert.equal(args[args.indexOf('--model')+1],config.model);assert.ok(args.includes('model_reasoning_effort="high"'));assert.ok(args.includes('--ignore-user-config'));

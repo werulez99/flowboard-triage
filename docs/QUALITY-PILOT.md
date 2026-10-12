@@ -1,5 +1,124 @@
 # Bounded fresh quality pilot
 
+## Automatic technical completion and assessment reading (0.19.39)
+
+Baseline: `6ff22d84e9f3ad75e3effeac25d23668ab920998`, 0.19.38. This increment
+separates automatic completion from optional tutorial publication throughout
+coordinator, planner and native progress. It uses **zero configured-provider
+requests**. The earlier private case results and measurements below remain
+historical; the private protocol checkout and retained investigations were not
+available in this execution environment.
+
+### Product behavior and controls
+
+A current canonically admitted supported, refuted or insufficient-evidence
+assessment completes its technical review, including checked partial coverage.
+Every original finding stays in the denominator. Readable predecessor evidence
+does not complete a pending successor. Missing/corrupt non-Ready investigations,
+changed source/report and material observations withdraw current completion;
+incidental setup failures do not invalidate an unchanged admitted assessment.
+Operational failures are not counted as semantic inconclusive results.
+
+Generic retry reconciles canonical records before allocating and skips current
+assessments. Explicit eligible revisions, owed verification, exact phase/purpose
+ceilings and sibling obligations remain. Ordinary progress reads do not reread
+every canonical investigation. Automatic run duration freezes at its completion
+or stop; later work archives the original attempt. Revalidation can withdraw
+current coverage without rewriting a historical completed run. Missing legacy
+stop times remain unknown. The forecast now reports phase demand, effective
+configured concurrency, dependency depth and a stated request-wave lower bound;
+it no longer assumes 60 seconds per request or presents 20/30-minute scenarios.
+
+The native result panel directly shows technical outcome, coverage, checked why,
+supporting/opposing notes and exact uncertainty. Optional walkthrough counts are
+secondary. Evidence Return restores disclosure state and opener focus as well
+as source camera/selection/scroll. Existing full-guide Next/Previous and proof
+gates remain. Scope is explicitly not established by severity mapping.
+
+The new mixed control imports 160 fictional findings through ordinary source
+analysis, enforced response schema, full G/V admission and report coordination.
+It contains 40 supported-complete, 40 refuted-complete, 40 checked
+insufficient-evidence/partial and 40 supported-partial cases. Required assertions
+are **160 assessed, 80 supported / 40 refuted / 40 insufficient-evidence, zero
+Ready tutorials, 320 scripted callbacks and zero remaining planned requests**.
+It checks every original report paragraph/disposition, substantive review,
+request receipt, frozen boundary, unchanged allocation and immutable response,
+then reopens in a fresh OS process with zero further callbacks. Its separate
+240-second test timeout does not alter the unchanged 204-job/120-second gate.
+
+### Validation completed here and remaining gates
+
+The frozen production implementation passed **50 local tests** in three bounded
+groups; two additional native-host-dependent cases were skipped because that
+group ran without the upstream host environment:
+
+| Local group | Result | Evidence boundary |
+| --- | --- | --- |
+| Four ordinary engine G/V variants, completion helper, lifecycle timing and planner | 10/10 passed, zero skipped | All four full source/schema/review admissions, exact partial uncertainty, real helper binding and zero remaining planner requests; pure coordinator timing/currentness controls |
+| Packet context, saved acquisition/resume and public release | 17/17 passed, zero skipped | Pinned upstream source adapter, unchanged response contract, exact helper retention and public package allowlist |
+| Native presentation and provider argument/settings | 23 passed, 2 native-host cases skipped | UI contract controls and scripted child transport; no browser capture or live provider |
+
+JavaScript/Python syntax checks and `git diff --check` passed. `npm run package`
+created the 0.19.39 companion VSIX, installation ZIP and public source ZIP with
+the hash-verified original Flowboard 1.2.0 archive. These are local build
+artifacts; no editor installation or activation is claimed.
+
+The **160 mixed coordinator control, full canonical suite, unchanged
+204-job/120-second gate and native browser harness remain unverified on .39**.
+Their assertions and deadlines were retained; no test-only ownership bypass or
+extended product deadline was introduced. A local commit and reviewable branch
+were prepared, but automatic approval review rejected the push to
+`werulez99/flowboard-triage` because it required explicit destination-specific
+publication authorization. No remote branch, PR or new CI run was created.
+Compatible CI is prepared and awaits that authorization.
+
+The local Node process PID and `/proc` identity disagree. Existing ownership
+checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.
+Those guards were retained. Chromium installation also failed on its downloaded
+archive; no local native-browser success is claimed. Baseline .38 CI run
+`38185402143` already failed its provider-settings argument test because the test
+implicitly required an installed Codex CLI. This increment isolates that test's
+CLI discovery while retaining its real settings resolution and argument/audit
+assertions. Production provider validation is unchanged. Baseline Windows also
+had two transport-cleanup expectation failures; any remaining CI failure must be
+compared with that baseline rather than silently excluded.
+
+### Private evidence and the next bounded pilot
+
+No new L-142/L-184/L-113 retention or native content verification is claimed.
+Recorded state remains L-142 7/7, L-184 3/6, shared 10/12 and L-113 12/12;
+these figures were not treated as permission. No configured-provider settings,
+health state or private paid records were changed. Actual editor activation of
+0.19.39 requires the user's running Cursor/WSL host and remains unobserved here.
+
+Actual retained L-142 R/V and L-184 request packets were unavailable, so their
+byte attribution and a reproduction of the L-184 `Context::_msgSender` omission
+remain outstanding. Existing fictional acquisition/resume and packet-context
+controls pass, including retained exact helper definitions after display-cache
+eviction. They do not reproduce the private omission. No speculative compression
+or source-closure production change was made, and no timeout cause is inferred.
+
+The next real-provider candidate proposal is **L-184 at protocol revision
+`5a451abf4867bb22ff28e2c8c5046ab2aeec8aa6`**, after locally restoring its exact
+investigation/request identity, canonical report, phase eligibility and material
+`Context::_msgSender` closure. Its investigation revision and current eligible
+operation cannot be verified from this checkout, so the proposal is not yet
+execution-ready. If authoring plus full verification is then eligible, propose
+only that pair, maximum two requests, using the existing model/effort/capacity
+and normal deadlines with no automatic repair, extra retry or sibling work.
+Verify those actual settings before requesting that bounded authorization; do
+not infer them from historic CLI records or a numerical ledger remainder.
+
+Stop on invalid source/identity, unavailable required local context, failed
+ownership/cleanup, phase-budget refusal, or the first failed/unadmitted stage.
+Measure import/resume-to-current-assessment wall time, stage request/response
+boundaries, outcome and original-report coverage, exact evidence and remaining
+unknowns. Record tutorial availability separately and verify provider-free
+reading afterward. L-142 needs applicable V4 alias/event-rule evidence before a
+useful new semantic revision; its spent R/V pair is not renewed. L-113 remains a
+retained reading check. A bounded pilot cannot establish general 200-finding
+accuracy or completion within a few hours.
+
 ## Local gate recovery and retained reading (0.19.38)
 
 Baseline: `b4185f8c26183db9da305350698141aa44644d34`, 0.19.37. This is a

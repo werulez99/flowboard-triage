@@ -549,6 +549,7 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .guide-preparation { position:fixed; top:64px; right:12px; width:min(650px, calc(100vw - 24px)); max-height:160px; overflow:auto; padding:12px; box-sizing:border-box; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; z-index:1000; font:14px/1.5 var(--vscode-font-family,system-ui,sans-serif); color:var(--fg); }
 .guide-preparation.retained-rejection:not(.expanded) { max-height:min(270px,42vh); }
 .guide-preparation.verification-completed:not(.expanded) { max-height:min(440px,60vh); }
+.guide-preparation.assessment-available:not(.expanded) { max-height:min(520px,65vh); }
 .guide-blocker-groups { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
 .guide-blocker-group { margin:20px 0; scroll-margin:12px; }
 .guide-blocker-group h4 { font-size:16px; margin:12px 0; }
@@ -563,8 +564,18 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 .triage-blocker-card .card-code { overflow:auto; min-height:100px; flex:1 1 auto; }
 .guide-preparation.expanded { max-height:calc(100vh - 88px); resize:vertical; }
 .guide-preparing:not(.guide-open) #flowboard { top:236px; }
-.guide-assessment-actions { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+.guide-assessment-actions { display:grid; gap:12px; margin:16px 0; }
 .guide-assessment-actions button { text-align:left; white-space:normal; }
+.guide-technical-coverage { margin:6px 0 12px; font-size:13px; font-weight:600; color:var(--triage-muted); }
+.guide-assessment-heading,.guide-checked-evidence h3,.guide-assessment-unknowns h3 { font-size:14px; margin:12px 0 8px; }
+.guide-technical-reason { margin:8px 0 16px; line-height:1.6; }
+.guide-checked-evidence { padding:0 0 0 12px; border-left:3px solid var(--border); }
+.guide-checked-evidence[data-stance="supports"] { border-left-color:var(--triage-support); }
+.guide-checked-evidence[data-stance="contradicts"] { border-left-color:var(--triage-counter); }
+.guide-checked-evidence .guide-evidence-statement { color:var(--triage-muted); font-size:12px; }
+.guide-checked-evidence p { margin:8px 0; }
+.guide-assessment-unknowns { border-top:1px solid var(--border); padding-top:4px; }
+.guide-optional-tutorial { margin:16px 0 8px; font-size:12px; }
 .guide-assessment-inspection { padding:12px; margin:10px 0; border-left:3px solid var(--accent); background:var(--bg); color:var(--fg); }
 .guide-assessment-inspection p { line-height:1.5; overflow-wrap:anywhere; }
 .guide-assessment-inspection h2 { font-size:17px; line-height:1.4; overflow-wrap:anywhere; }
@@ -576,7 +587,7 @@ button:focus-visible,summary:focus-visible,.card-meta:focus-visible { outline:2p
 :is(.triage-assessment-card,.triage-blocker-card) .triage-card-inspect { display:none; }
 :is(.triage-assessment-card,.triage-blocker-card) .card-code { min-height:100px; flex:1 1 auto; overflow:auto; font-size:14px; }
 :is(.triage-assessment-card,.triage-blocker-card) .card-code,:is(.triage-assessment-card,.triage-blocker-card) .code-line { white-space:pre-wrap; overflow-wrap:anywhere; width:auto; }
-.guide-status-row { display:flex; gap:8px; align-items:center; }
+.guide-status-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .guide-status-row > strong { flex:1; min-width:0; }
 .guide-status-row button { flex-shrink:0; }
 .guide-status-context,.guide-status-reason { margin:8px 0 0; font-size:12px; color:var(--triage-muted); }
@@ -702,6 +713,7 @@ body { --guide-side-width:410px; --guide-bottom-height:0px; --guide-controls-bot
 body.guide-note-editing.triage-drawer-open #flowboard { left:var(--triage-drawer-width); right:0; }
 .triage-list .triage-preparation-badge { display:inline-block; margin:8px 8px 0 0; padding:2px 6px; border:1px solid var(--border); border-radius:4px; font-size:12px; }
 .triage-preparation-badge[data-state="ready"] { color:var(--triage-support); }
+.triage-preparation-badge[data-state="assessed"] { border-color:var(--triage-control); }
 .triage-list .triage-ready-action { display:inline-block; margin-top:8px; color:var(--triage-link); text-decoration:underline; font-size:12px; }
 .triage-list .triage-ready-action[hidden],.triage-list button[hidden],.triage-list .triage-job-reason[hidden] { display:none; }
 .triage-job-reason { margin-top:8px; }

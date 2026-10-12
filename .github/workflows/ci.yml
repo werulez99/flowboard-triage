@@ -39,3 +39,14 @@ jobs:
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/native_walkthrough_browser.py --output /tmp/flowboard-triage-native-walkthrough
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/native_route_browser.py --output /tmp/flowboard-triage-native-route
           FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/mixed_preparation_browser.py --output /tmp/flowboard-triage-mixed-preparation
+          FLOWBOARD_EXTENSION_PATH="$PWD/upstream-fixture/extension" browser-test-env/bin/python scripts/checked_guide_browser.py --assessment-check blocked --production-selection --provider none --focused-viewports --output /tmp/flowboard-triage-assessment
+      - name: Retain packages and fictional native assessment captures
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flowboard-triage-linux-${{ github.sha }}
+          path: |
+            dist/*.vsix
+            dist/*.zip
+            /tmp/flowboard-triage-assessment/*.png
+          if-no-files-found: warn

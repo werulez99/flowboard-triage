@@ -6,6 +6,7 @@ const fs = require('node:fs'), path = require('node:path'), crypto = require('no
 const p = require('./protocol'), store = require('./store'), reports = require('./report');
 const engine = require('./investigation-engine'), policy = require('./guide-policy');
 const batch = require('./batch-plan');
+const automatic = require('./automatic-triage');
 const journal=require('./report-journal');
 const FILE = '.flowboard/report-preparation.json';
 const LOCK = '.flowboard/report-preparation.lock.json';
@@ -96,6 +97,7 @@ class ReportPreparation {
         change: structuredClone(change), reservationId: this.tasks.has(id) ? job.lastReservation?.id || null : null };
       if(job.correctionHold){job.correctionHistory ||= [];job.correctionHistory.push(job.correctionHold);}
       this.pendingFindings.delete(id); this.admitting.delete(id); this.localEligible.delete(id); this.accepted.delete(id);
+      automatic.clear(job);
       delete job.assessmentProjection;
       Object.assign(job, { correctionHold: intent, state: 'paused', publishable: false, accepted: null, digest: null,
         reason: 'Researcher correction saved as an intent. Only this finding is held while its owned work settles.' });
@@ -189,29 +191,36 @@ class ReportPreparation {
     // finding (or diagnostic/export caller) reads immutable detail records.
     const projected=jobs.map(job=>{
       const {id,state,stage,reason,outcome,publishedAt,failureKind,currentAttempt,verificationCompletion,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,localRecheckAvailable,revisionAction,nextOperation}=job;
+      const dirty=!!this.options.dirty?.(id);if(dirty)automatic.clear(job);
       const selected=fullDetails||selectedId===id,details={};
       if(selected)for(const key of journal.fields)details[key]=journal.detail(job,key).value;
-      const detailProblems=journal.problems(job),assessmentProjection=mapped(selected?details.assessmentProjection:journal.assessmentSummary(job));
+      const detailProblems=journal.problems(job),assessmentProjection=dirty?undefined:mapped(selected?details.assessmentProjection:journal.assessmentSummary(job));
       const assessmentAvailable=!!assessmentProjection?.technical?.identity&&['supported','refuted','insufficient-evidence'].includes(assessmentProjection.technical.result);
-      const digest=this.artifact(id),assessmentState=assessmentAvailable?'available':detailProblems.some(p=>p.requiredForAssessment)?'unavailable':'not-assessed';
+      const digest=this.artifact(id),assessmentState=assessmentAvailable?'available':dirty||detailProblems.some(p=>p.requiredForAssessment)?'unavailable':'not-assessed';
       return{id,state,stage,reason,outcome,publishedAt,failureKind,currentAttempt,verificationCompletion,hasPrivateCandidate,privateCandidateState,retainedRejection,repairAvailable,
         localRecheckAvailable:localRecheckAvailable||!!detailProblems.length,revisionAction,
         nextOperation:selected?nextOperation:nextOperation&&{kind:nextOperation.kind,phase:nextOperation.phase,phases:nextOperation.phases,reason:nextOperation.reason},continueAction:this.continuationEligibility(job),
-        ...details,assessmentProjection,assessmentAvailable,assessmentState,detailProblems,publishable:!!digest,digest};
+        ...details,assessmentProjection,assessmentAvailable,assessmentCompleted:automatic.complete(job)&&!dirty,assessmentState,detailProblems,publishable:!!digest,digest,
+        ...(dirty?{state:'paused',reason:'Relevant unsaved edits paused this finding. Save them before resuming.'}:{})};
     });
-    const assessmentCounts={};for(const job of projected)if(job.assessmentAvailable){const result=job.assessmentProjection.technical.result;assessmentCounts[result]=(assessmentCounts[result]||0)+1;}
+    const assessmentCounts={},availableAssessmentCounts={};for(const job of projected){
+      if(job.assessmentAvailable){const result=job.assessmentProjection.technical.result;availableAssessmentCounts[result]=(availableAssessmentCounts[result]||0)+1;}
+      if(job.assessmentCompleted){const result=automatic.record(this.state.jobs[job.id]).result;assessmentCounts[result]=(assessmentCounts[result]||0)+1;}
+    }
     const available=projected.filter(job=>job.assessmentAvailable).length;
+    const assessed=projected.filter(job=>job.assessmentCompleted).length;
     const projectedById=new Map(projected.map(job=>[job.id,job])),config=this.options.configuration?.()||{};
     const plan=batch.plan(jobs,this.state.resources,config.workers,config.providerCapacity,job=>{
       const observed=projectedById.get(job.id);return job.nextOperation?.kind==='revision'?observed.revisionAction:observed.continueAction;
     });
     return { version: VERSION, reportName: this.state.reportName, reportHash: this.state.reportHash, project: this.state.project,
       total: jobs.length, ready: jobs.filter(job => this.artifact(job.id)).length, counts, ambiguities: this.state.ambiguities.length,
-      assessmentAvailable:available,notAssessed:jobs.length-available,assessmentCounts,selectedId:selectedId||null,detailMode:fullDetails?'full':'selected',
+      assessmentAvailable:available,assessed,notAssessed:jobs.length-assessed,assessmentCounts,availableAssessmentCounts,
+      triageComplete:jobs.length>0&&!this.state.ambiguities.length&&assessed===jobs.length,selectedId:selectedId||null,detailMode:fullDetails?'full':'selected',
       published: !!this.state.publication, mode: this.admissionStatus?.mode || this.state.mode, reason: this.admissionStatus?.reason || this.state.reason || '', startedAt: this.state.startedAt,
       admission: this.admissionStatus?.admission || null,
       requests: this.state.resources.requests, requestLimit: this.state.resources.limit, costUSD: this.state.resources.costUSD,
-      batch: this.state.batch ? { ...this.state.batch, elapsedMs: Date.now() - Date.parse(this.state.batch.startedAt) } : null,
+      batch: this.batchStatus(),
       plan,
       concurrency: { ...this.state.concurrency, dispatched: this.dispatched.size, workers: this.tasks.size,
         waiting: jobs.filter(job => job.state === 'waiting-for-provider-capacity').length },
@@ -228,6 +237,35 @@ class ReportPreparation {
     // Retain this legacy aggregate for metrics, not as a reading gate.
     this.state.publication = complete ? { id: this.state.publication?.id || crypto.randomUUID(), identity: this.state.identity,
       at: this.state.publication?.at || now(), artifacts: Object.fromEntries(jobs.map(job => [job.id, this.accepted.get(job.id).digest])) } : null;
+  }
+  triageComplete() {
+    const jobs=Object.values(this.state?.jobs||{});
+    return jobs.length>0&&!this.state.ambiguities?.length&&jobs.every(job=>automatic.complete(job)&&!this.options.dirty?.(job.id));
+  }
+  batchStatus() {
+    const value=this.state?.batch;if(!value)return null;
+    const start=Date.parse(value.startedAt),end=Date.parse(value.finishedAt);
+    // Historical stopped attempts without a recorded boundary stay unknown.
+    // A status poll or later human reading must not manufacture review time.
+    const elapsedMs=Number.isFinite(start)&&(Number.isFinite(end)||this.batchAttemptActive)?Math.max(0,(Number.isFinite(end)?end:Date.now())-start):null;
+    return {...value,elapsedMs};
+  }
+  beginBatchAttempt() {
+    const value=this.state?.batch;if(!value||this.batchAttemptActive)return;
+    if(value.finishedAt||this.batchWasStopped||['paused','cancelled','completed','incomplete'].includes(this.state.mode)||['completed','incomplete','deadline-exceeded'].includes(value.outcome)){
+      const {previousAttempts,...previous}=value;
+      this.state.batch={startedAt:now(),outcome:'pending',previousAttempts:[...(previousAttempts||[]),previous],
+        ...(value.stopPolicy?{stopPolicy:value.stopPolicy,deadlineAt:value.deadlineAt}:{})};
+    }
+    this.batchWasStopped=false;
+    this.batchAttemptActive=true;
+  }
+  finishBatch() {
+    const value=this.state?.batch;if(!value)return;
+    if(!this.batchAttemptActive)return; // Current coverage does not rewrite a historical stopped attempt.
+    if(value.outcome!=='deadline-exceeded')value.outcome=this.triageComplete()?'completed':'incomplete';
+    value.finishedAt ||= now();
+    this.batchAttemptActive=false;
   }
   accept(entry, draft, job, evaluated=null) {
     if (job.correctionHold) return;
@@ -247,12 +285,14 @@ class ReportPreparation {
   }
   artifact(id) { return this.state?.jobs[id]?.correctionHold || this.options.dirty?.(id) ? null : this.accepted.get(id)?.digest || null; }
   recordFailure(job, error) {
+    automatic.clear(job);
     delete job.assessmentProjection;
     this.accepted.delete(job.id);
-    Object.assign(job, { state: 'failed', publishable: false, accepted: null, digest: null,
+    Object.assign(job, { state: 'failed', publishable: false, accepted: null, digest: null, outcome:null,
       stage: 'saved-record', reason: `Cannot restore this finding's saved record: ${error.message} Original files were preserved. Inspect or recover this finding's local record, then retry.`, finishedAt: now() });
   }
   withholdDirty(job) {
+    automatic.clear(job);
     delete job.assessmentProjection;
     this.accepted.delete(job.id);
     Object.assign(job, { state: 'paused', publishable: false, dirtyPaused: true,
@@ -268,8 +308,8 @@ class ReportPreparation {
       // A missed content change or unavailable index cannot retain a ready
       // badge on reopening. This is source validation, not provider failure.
       this.accepted.clear();
-      for (const job of Object.values(this.state?.jobs || {})) if (job.publishable) {
-        delete job.assessmentProjection;job.publishable = false; job.state = 'stale'; job.reason = error.message;
+      for (const job of Object.values(this.state?.jobs || {})) {
+        automatic.clear(job);delete job.assessmentProjection;job.publishable = false;job.accepted=null;job.digest=null;job.outcome=null;job.state = 'stale'; job.reason = error.message;
       }
       throw error;
     }
@@ -309,6 +349,12 @@ class ReportPreparation {
       this.options.log?.(`Report preparation stopped: ${error.message}`);
     }).finally(() => {
       clearTimeout(this.deadlineTimer); this.deadlineTimer = null;
+      // Includes stopped setup, cancellation and host shutdown. The worker
+      // promises have settled before this boundary; reading does not renew it.
+      if(this.state&&this.ownsLock()){
+        this.finishBatch();
+        try{this.save();}catch(error){this.options.log?.(`Could not record automatic run boundary: ${error.message}`);}
+      }
       // Setup may stop before admission. Consume only the intents this run
       // attempted, not a genuinely new action received while it was awaiting.
       for (const [id, intent] of attempted) if (this.pendingFindings.get(id) === intent) this.pendingFindings.delete(id);
@@ -320,17 +366,16 @@ class ReportPreparation {
   async run(retry) {
     this.lock();
     this.admissionStatus = null; this.notifyStatus();
-    const { report, entries, reconciliation } = reconcile(this.root);
-    const project = hash(fs.realpathSync(this.root)), identity = hash([VERSION, policy.POLICY, project, report.reportHash, entries.map(item => [item.id, item.title, item.body])]);
-    if (!retry && !this.pendingFindings.size && this.state?.publication && this.state.mode === 'completed' && this.state.identity === identity && !this.options.dirty?.()) {
-      this.indexAbort = new AbortController(); const reuseEpoch = this.epoch;
-      const catalog = await this.validatedCatalog(this.indexAbort.signal);
-      const generation = require('./workspace-snapshot').validate(catalog);
-      const loaded = new Map(report.issues.map(issue => [issue.id, issue.request]));
-      const sameInputs = entries.every(entry => !this.options.dirty?.(entry.id) && this.accepted.get(entry.id)?.sourceSnapshot.reportHash ===
-        engine.findingInputHash(loaded.get(entry.id) || this.request(entry, catalog, report), this.issue(entry)));
-      if (reuseEpoch === this.epoch && generation.key === this.reconciledKey && sameInputs) return this.status();
+    let reconciled;
+    try{reconciled=reconcile(this.root);}catch(error){
+      for(const job of Object.values(this.state?.jobs||{})){automatic.clear(job);this.accepted.delete(job.id);delete job.assessmentProjection;job.publishable=false;job.outcome=null;}
+      throw error;
     }
+    const { report, entries, reconciliation } = reconciled;
+    const project = hash(fs.realpathSync(this.root)), identity = hash([VERSION, policy.POLICY, project, report.reportHash, entries.map(item => [item.id, item.title, item.body])]);
+    // Reopen reconciles canonical records once, including non-Ready reviews.
+    // A same-source generation cannot prove that a saved record still exists.
+    // Ordinary status polls remain projection-only and never take this path.
     let old;
     try { old = journal.read(this.root,FILE); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     this.savedJournalHash = old ? hash(old) : null;
@@ -347,6 +392,9 @@ class ReportPreparation {
         allowanceMode: config.requestLimit > 0 ? 'explicit' : 'automatic', costUSD: null },
       ...(!sameProject ? { batch: { startedAt: report.importedAt, outcome: 'pending',
         ...(config.batchDeadlineMs > 0 ? { stopPolicy: 'explicit-user-v1', deadlineAt: new Date(Date.parse(report.importedAt) + config.batchDeadlineMs).toISOString() } : {}) } } : old.batch ? { batch: old.batch } : {}) };
+    if(!old)this.batchAttemptActive=true;
+    this.batchWasStopped=!!old&&['paused','cancelled','completed','incomplete'].includes(old.mode);
+    this.accepted.clear(); // Rebuild current publication beside assessment seals below.
     if (this.state.batch?.deadlineAt && !this.deadlineEnabled()) {
       this.state.batch.historicalStop ||= { deadlineAt: this.state.batch.deadlineAt, outcome: this.state.batch.outcome, finishedAt: this.state.batch.finishedAt || null };
       if (this.state.reason?.startsWith('Preparation deadline reached;')) this.state.reason = 'The historical automatic time limit no longer stops review. Work remains paused; explicitly continue an eligible finding within its existing allowance.';
@@ -376,17 +424,13 @@ class ReportPreparation {
     for (const entry of entries) {
       const job = this.state.jobs[entry.id] ||= { id: entry.id, state: 'queued', attempt: 0, requests: 0, publishable: false, outcome: null };
       if (job.findingHash && job.findingHash !== entryHash(entry)) {
-        Object.assign(job, { state: 'queued', publishable: false, accepted: null, digest: null, outcome: null }); this.accepted.delete(entry.id);
+        automatic.clear(job);delete job.assessmentProjection;Object.assign(job, { state: 'queued', publishable: false, accepted: null, digest: null, outcome: null }); this.accepted.delete(entry.id);
       }
       job.findingHash = entryHash(entry);
       job.requestLimit ||= config.findingRequestLimit || 6;
       if (job.dirtyPaused && !this.options.dirty?.(entry.id)) { job.state = 'queued'; delete job.dirtyPaused; delete job.reason; }
       if (['running', 'waiting-for-provider-capacity'].includes(job.state)) { job.state = 'queued'; job.interruptedAt = now(); job.reason = 'The previous host stopped. Resume from the last valid checkpoint.'; }
-      if (retry && !job.publishable) { job.state = 'queued'; job.requestLimit = job.requests + (config.findingRequestLimit || 6); delete job.reason; }
     }
-    if (retry) { this.state.mode = 'running'; this.state.reason = ''; this.state.resources.limit = Math.max(this.state.resources.limit, this.state.resources.requests + Math.max(1, config.requestLimit || entries.filter(entry => !this.state.jobs[entry.id].publishable).length * (config.findingRequestLimit || 6))); }
-    if (retry && ['codex', 'claude'].includes(config.provider) && (!this.options.invoke || this.options.invoke.isProviderTransport))
-      await require('./provider-health').reset(config.provider, { ...this.options.providerResources, executable: config.executable,model:config.model,reasoningEffort:config.reasoningEffort });
     this.save();
     if (this.expired()) {
       this.expire();
@@ -420,11 +464,18 @@ class ReportPreparation {
       if (this.options.dirty?.(entry.id)) { this.withholdDirty(job); continue; }
       try {
       const saved = engine.read(this.root, entry.id);
-      if (!saved) { this.accepted.delete(entry.id); if (job.publishable) job.state = 'queued'; job.publishable = false; job.accepted = null; continue; }
+      if (!saved) {
+        const expected=job.publishable||job.requests>0||Object.hasOwn(job,'assessmentProjection')||job.detailReferences?.assessmentProjection;
+        if(expected)this.recordFailure(job,new Error('The canonical investigation record is missing.'));
+        else{automatic.clear(job);this.accepted.delete(entry.id);delete job.assessmentProjection;job.publishable=false;job.accepted=null;job.digest=null;}
+        continue;
+      }
       job.checkpoint = saved.checkpoint || null;
+      job.revision=saved.revision;
       const request = this.request(entry, catalog, report);
       if (!engine.revalidate(saved, catalog, request, this.issue(entry))) {
-        delete job.assessmentProjection;job.state = 'queued'; job.publishable = false; job.outcome = null; job.accepted = null; this.accepted.delete(entry.id);
+        automatic.clear(job);delete job.assessmentProjection;job.state = 'queued'; job.publishable = false; job.outcome = null; job.accepted = null;this.accepted.delete(entry.id);
+        continue;
       } else if (saved.failureCode === 'LOCAL_GATE_WITHDRAWN') {
         Object.assign(job, { state: 'blocked', stage: 'challenge', publishable: false, accepted: null, reason: saved.error });
         this.accepted.delete(entry.id);
@@ -446,6 +497,18 @@ class ReportPreparation {
       await new Promise(resolve => setImmediate(resolve));
     }
     this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
+    // Generic retry renews only genuinely unfinished canonical work. A
+    // tutorial blocker is not permission to reopen or top up an assessment.
+    if(retry){
+      const unfinished=entries.filter(entry=>!automatic.complete(this.state.jobs[entry.id]));
+      if(unfinished.length){
+        for(const entry of unfinished){const job=this.state.jobs[entry.id];job.state='queued';job.requestLimit=job.requests+(config.findingRequestLimit||6);delete job.reason;}
+        this.state.mode='running';this.state.reason='';
+        this.state.resources.limit=Math.max(this.state.resources.limit,this.state.resources.requests+Math.max(1,config.requestLimit||unfinished.length*(config.findingRequestLimit||6)));
+        if(['codex','claude'].includes(config.provider)&&(!this.options.invoke||this.options.invoke.isProviderTransport))
+          await require('./provider-health').reset(config.provider,{...this.options.providerResources,executable:config.executable,model:config.model,reasoningEffort:config.reasoningEffort});
+      }
+    }
     this.save();
     const admitPending = async () => {
       const admitted = [];
@@ -454,11 +517,15 @@ class ReportPreparation {
         const entry = entries.find(item => item.id === id), job = this.state.jobs[id];
         if (!entry || !job) { this.options.log?.('Selected continuation was discarded because its finding left the report.'); continue; }
         if (job.publishable || this.tasks.has(id)) continue;
+        if(automatic.complete(job)&&!intent.reviseAnalysis&&!intent.recheckLocalPreparation&&!intent.repairSavedAnalysis)continue;
         if (job.correctionHold && job.correctionHold.state!=='applied') { job.reason='Saved correction is still held. Settle or reconcile it before continuing.';this.save();continue; }
         if(intent.reviseAnalysis){
           const draft=engine.read(this.root,id),eligibility=this.revisionEligibility(job,draft);
           if(!eligibility.available){job.reason=eligibility.reason;this.recoveryStatus(job,draft);this.save();continue;}
-          engine.beginCandidateRevision({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry),revision:intent.reviseAnalysis});
+          automatic.clear(job);this.beginBatchAttempt();
+          try{engine.beginCandidateRevision({root:this.root,draft,catalog,request:this.request(entry,catalog,report),issue:this.issue(entry),revision:intent.reviseAnalysis});}
+          catch(error){const saved=engine.read(this.root,id);if(saved&&engine.revalidate(saved,catalog,this.request(entry,catalog,report),this.issue(entry)))this.recoveryStatus(job,saved);throw error;}
+          this.recoveryStatus(job,draft);
           // Explicit selected allocation, not a refund or report-wide resume.
           // Exact revision identity was checked before changing the ceiling.
           this.allocateRevision(job,draft,eligibility);
@@ -536,12 +603,13 @@ class ReportPreparation {
         // by already authorized shared capacity. Sibling limits never change.
         if (job.requests >= job.requestLimit) job.requestLimit = job.requests + Math.min(available, config.findingRequestLimit || 6);
         if(job.correctionHold) { job.correctionHistory ||= [];job.correctionHistory.push(job.correctionHold);delete job.correctionHold; }
-        job.state = 'queued'; job.reason = ''; job.providerFailures = 0;
+        automatic.clear(job);this.beginBatchAttempt();job.state = 'queued'; job.reason = ''; job.providerFailures = 0;
         this.localEligible.add(id); admitted.push(entry); this.save();
       }
       return admitted;
     };
     await admitPending();
+    if(this.triageComplete()&&!this.pendingFindings.size){this.state.mode='completed';this.state.reason='';this.finishBatch();this.save();return;}
     if (['paused', 'cancelled'].includes(this.state.mode) && !retry && !this.localEligible.size) return;
     if (!['codex', 'claude'].includes(config.provider)) {
       this.state.mode = 'paused'; this.state.reason = 'Choose an authenticated provider to prepare unfinished findings. Checked walkthroughs and original code remain available.'; this.save(); return;
@@ -550,7 +618,7 @@ class ReportPreparation {
     this.save();
     const priority = (this.options.firstFinding || '').split(',').filter(Boolean);
     const ordered = priority.length ? [...priority.flatMap(id => entries.filter(entry => entry.id === id)), ...entries.filter(entry => !priority.includes(entry.id))] : entries;
-    const allowed = id => !this.state.jobs[id]?.correctionHold && (this.state.mode === 'running' || this.localEligible.has(id));
+    const allowed = id => !this.state.jobs[id]?.correctionHold && !automatic.complete(this.state.jobs[id]) && (this.state.mode === 'running' || this.localEligible.has(id));
     const queue = ordered.filter(entry => allowed(entry.id) && ['queued', 'retry-scheduled'].includes(this.state.jobs[entry.id].state));
     this.state.plan = batch.plan(queue.map(entry => this.state.jobs[entry.id]), this.state.resources, concurrency, config.providerCapacity);
     if (!old && this.state.resources.allowanceMode === 'automatic') this.state.resources.limit = this.state.plan.maximumRequests;
@@ -613,19 +681,24 @@ class ReportPreparation {
     if (crashed) throw crashed.reason; // do not release the report lock while another worker lives
     if (epoch !== this.epoch || this.disposed) return;
     const jobs = Object.values(this.state.jobs);
-    if (jobs.length && !this.state.ambiguities.length && jobs.every(job => job.publishable && job.state === 'completed')) {
-      require('./workspace-snapshot').validate(catalog, { force: true });
-      if (store.readReport(this.root).reportHash !== this.state.reportHash) throw new Error('The report changed before publication.');
+    if (this.triageComplete()) {
+      try{
+        require('./workspace-snapshot').validate(catalog, { force: true });
+        if(store.readReport(this.root).reportHash!==this.state.reportHash)throw new Error('The report changed before automatic triage completed.');
+      }catch(error){for(const job of jobs)this.recordFailure(job,error);throw error;}
       for (const entry of entries) {
         try {
           const draft = engine.read(this.root, entry.id);
-          if (!checked(draft) || !engine.sameSnapshot(draft.snapshot, engine.snapshot(catalog, this.request(entry, catalog, report), this.issue(entry)))) throw new Error(`The saved ${entry.id} explanation changed before publication.`);
+          if(!draft||!engine.revalidate(draft,catalog,this.request(entry,catalog,report),this.issue(entry)))throw new Error(`The saved ${entry.id} assessment changed before automatic completion.`);
+          const evaluated=policy.evaluate(draft);
+          this.recoveryStatus(this.state.jobs[entry.id],draft,evaluated);
+          if(!automatic.complete(this.state.jobs[entry.id]))throw new Error(`The saved ${entry.id} assessment needs current substantive review.`);
         } catch (error) { this.recordFailure(this.state.jobs[entry.id], error); }
       }
       this.reconciledKey = require('./workspace-snapshot').validate(catalog).key;
     }
-    if (this.state.mode === 'running') this.state.mode = this.state.publication ? 'completed' : 'incomplete';
-    if (this.state.batch && !this.expired()) Object.assign(this.state.batch, { outcome: this.state.publication ? 'completed' : 'incomplete', finishedAt: now() });
+    if (this.state.mode === 'running') this.state.mode = this.triageComplete() ? 'completed' : 'incomplete';
+    this.finishBatch();
     this.localEligible.clear();
     this.save();
   }
@@ -650,8 +723,8 @@ class ReportPreparation {
   expire() {
     if (!this.expired() || this.disposed || this.state.batch.outcome === 'completed') return;
     this.state.batch.outcome = 'deadline-exceeded'; this.state.batch.finishedAt ||= now();
-    this.state.batch.unfinished = Object.values(this.state.jobs).filter(job => !job.publishable).map(job => job.id);
-    this.state.mode = 'paused'; this.state.reason = `Preparation deadline reached; ${this.state.batch.unfinished.length} findings lack an accepted walkthrough. Completed guides and paid checkpoints are retained. This run did not meet its acceptance window.`;
+    this.state.batch.unfinished = Object.values(this.state.jobs).filter(job => !automatic.complete(job)).map(job => job.id);
+    this.state.mode = 'paused'; this.state.reason = `Preparation deadline reached; ${this.state.batch.unfinished.length} findings lack a current completed technical assessment. Checked results and paid checkpoints are retained. This run did not meet its acceptance window.`;
     this.controlRevision++; this.pendingFindings.clear(); this.localEligible.clear();
     this.indexAbort?.abort(); for (const task of this.tasks.values()) task.abort.abort();
     for (const job of Object.values(this.state.jobs)) if (['queued', 'retry-scheduled', 'waiting-for-provider-capacity'].includes(job.state)) { job.state = 'paused'; job.reason = this.state.reason; }
@@ -697,6 +770,11 @@ class ReportPreparation {
       this.accepted.delete(entry.id); this.recoveryStatus(job, draft); this.save(); return;
     }
     if (checked(draft)) { engine.validateCurrent(catalog, draft); this.accept(entry, draft, job); this.save(); return; }
+    const existing=policy.evaluate(draft);
+    if(!preparationOnly&&automatic.current(draft,existing)){
+      engine.validateCurrent(catalog,draft);this.recoveryStatus(job,draft,existing);this.save();return;
+    }
+    automatic.clear(job);this.beginBatchAttempt();
     let settled;const abort = new AbortController(); this.active = { abort, id: entry.id, settled:new Promise(resolve=>settled=resolve) }; this.tasks.set(entry.id, this.active);
     const attemptId = crypto.randomUUID();
     Object.assign(job, { state: 'running', stage: preparationOnly?'preparing-local-context':draft.checkpoint?.stage || 'locating-code', progress: null,
@@ -794,8 +872,8 @@ class ReportPreparation {
       if (!current()) return;
       // One synchronous evaluation of this exact terminal revision. No cache
       // survives mutation, currentness validation or a subsequent response.
-      const evaluated=policy.evaluate(draft),ready=evaluated.checked;
-      Object.assign(job, { state: ready ? 'completed' : draft.yielded ? 'queued' : draft.failureKind === 'provider' || draft.failureKind === 'validation' || draft.failureKind === 'structural' ? 'failed' : ['report-budget', 'finding-budget', 'paused', 'provider-health'].includes(draft.failureKind) ? 'paused' : draft.failureKind === 'capacity' ? 'retry-scheduled' : 'blocked',
+      const evaluated=policy.evaluate(draft),ready=evaluated.checked,assessed=automatic.current(draft,evaluated);
+      Object.assign(job, { state: assessed ? 'completed' : draft.yielded ? 'queued' : draft.failureKind === 'provider' || draft.failureKind === 'validation' || draft.failureKind === 'structural' ? 'failed' : ['report-budget', 'finding-budget', 'paused', 'provider-health'].includes(draft.failureKind) ? 'paused' : draft.failureKind === 'capacity' ? 'retry-scheduled' : 'blocked',
         outcome: evaluated.assessment.technical.result,assessmentProjection:evaluated.assessment, reason: draft.error || 'The explanation still needs material evidence.',
         publishable: ready, digest: ready ? evaluated.digest : null, checkpoint: draft.checkpoint || null,
         finishedAt: now(), elapsedMs: Date.now() - Date.parse(job.startedAt) });
@@ -808,7 +886,7 @@ class ReportPreparation {
       }
       const diagnostic = draft.runs.at(-1)?.diagnostics?.lastReportedError;
       const nonRetryable = ['authentication', 'authorization', 'request-format', 'context-limit', 'model-unavailable'].includes(diagnostic?.category) || diagnostic?.code === 'insufficient_quota';
-      if (draft.failureKind === 'provider' && !nonRetryable && (job.providerFailures = (job.providerFailures || 0) + 1) < 2 && job.requests < job.requestLimit && this.state.mode === 'running') {
+      if (!assessed && draft.failureKind === 'provider' && !nonRetryable && (job.providerFailures = (job.providerFailures || 0) + 1) < 2 && job.requests < job.requestLimit && this.state.mode === 'running') {
         job.state = 'retry-scheduled';
         if (['rate-limit', 'provider-unavailable'].includes(diagnostic?.category)) job.retryAfter = new Date(Date.now() + 1000).toISOString();
       }
@@ -819,7 +897,7 @@ class ReportPreparation {
         for (const pending of Object.values(this.state.jobs)) if (['queued', 'retry-scheduled'].includes(pending.state)) { pending.state = 'paused'; pending.reason = draft.error; }
         this.save();
       }
-    } catch (error) { if (current()) { Object.assign(job, { state: 'failed', outcome: 'inconclusive', reason: error.message, finishedAt: now() }); this.save(); } }
+    } catch (error) { if (current()) { automatic.clear(job);Object.assign(job, { state: 'failed', outcome: 'not-assessed', reason: error.message, finishedAt: now() }); this.save(); } }
     finally {
       // No silent return (dirty input, abort or late response) may orphan a job.
       if (owns() && ['running', 'waiting-for-provider-capacity'].includes(job.state)) {
@@ -850,7 +928,7 @@ class ReportPreparation {
     if(this.options.phaseRemaining?.(job.id)===false||plan&&!plan.includes(phase))return blocked('The applicable phase plan does not permit the next request.');
     if(job.privateCandidateState==='terminal')return blocked('Use an explicit revision of the terminal review, not Continue.');
     if(job.awaitingRejectedRepair)return blocked('The received repair was rejected. Use Repair saved analysis when its authoring/verification pair is available; local replay cannot edit the response.');
-    if(job.publishable||job.correctionHold||job.failureKind==='storage'||job.retainedRejection||['running','waiting-for-provider-capacity'].includes(job.state))return blocked('This finding is already available, active, or needs its specific recovery action.');
+    if(automatic.complete(job)||job.publishable||job.correctionHold||job.failureKind==='storage'||job.retainedRejection||['running','waiting-for-provider-capacity'].includes(job.state))return blocked('This finding is already assessed, active, or needs its specific recovery action.');
     if(job.privateCandidateState==='revision-pending')return this.revisionEligibility(job,engine.read(this.root,job.id),true);
     if(job.privateCandidateState==='repair-requested')return this.candidateRepairEligibility(job,engine.read(this.root,job.id),job.nextOperation?.identity);
     if(job.nextOperation?.kind==='verify')return this.operationEligibility(job,job.nextOperation);
@@ -949,6 +1027,14 @@ class ReportPreparation {
     const verified=(draft.candidateHistory||[]).findLast(item=>item.verification&&item.candidateHash===draft.candidateVerification?.candidateHash);
     job.verificationCompletion=rejectedCheck?{requestId:rejectedCheck.requestId,result:'repair',at:rejectedCheck.at,published:false}:verified?{requestId:verified.verification.requestId,result:verified.verification.result,at:verified.verification.at,published:draft.publication?.ready===true,checkingIncomplete:job.nextOperation.kind==='verify'}:
       require('./technical-assessment').current(draft)?{requestId:draft.technicalReview.requestId,result:draft.technicalReview.result,published:draft.publication?.ready===true}:null;
+    job.revision=draft.revision;
+    if(automatic.bind(job,draft,evaluated)){
+      job.state='completed';job.stage=evaluated.checked?'ready':'assessed';
+      job.outcome=evaluated.assessment.technical.result;
+      // The tutorial may retain genuine material uncertainty. Its separate
+      // projection keeps those limits visible without making triage unfinished.
+      job.reason=evaluated.checked?'':evaluated.assessment.technical.label;
+    }else if(job.state==='completed'){job.state='blocked';job.reason=job.assessmentProjection.technical.why||job.nextOperation.reason;}
     const proposals=[...(draft.rejectedProposalHistory||[]),...(draft.rejectedProposal?[draft.rejectedProposal]:[])];
     job.rejectionHistory=proposals.flatMap(proposal=>[
       {requestId:proposal.origin.requestId,label:'Original received proposal rejection',validationProblems:proposal.validationProblems||[]},
@@ -1000,6 +1086,7 @@ class ReportPreparation {
       this.tasks.get(id)?.abort.abort();
       this.pendingFindings.delete(id); this.admitting.delete(id); this.localEligible.delete(id);
       this.accepted.delete(id);
+      automatic.clear(job);
       delete job.assessmentProjection;
       Object.assign(job, { attemptId: crypto.randomUUID(), publishable: false, accepted: null, digest: null,
         state: 'queued', reason });
@@ -1029,8 +1116,8 @@ class ReportPreparation {
       } catch { /* An unreadable/unsaved manifest must be reconciled first. */ }
     }
     for (const job of Object.values(this.state.jobs)) {
-      if (affected && !affected.has(job.id) && this.accepted.has(job.id)) continue;
-      this.accepted.delete(job.id);delete job.assessmentProjection; job.publishable = false; job.state = 'queued';
+      if (affected && !affected.has(job.id) && (this.accepted.has(job.id)||automatic.complete(job))) continue;
+      automatic.clear(job);this.accepted.delete(job.id);delete job.assessmentProjection; job.publishable = false; job.outcome=null;job.state = 'queued';
     }
     this.save();
   }

@@ -199,6 +199,21 @@ test('actual preparation renderer retains selected job reason and shows current 
   assert.match(refused, /Finding request allowance exhausted/);
   assert.doesNotMatch(refused, /Make room|Free the requested card slots|missing function card/,
     'A stale capacity hint must not cover the current unpublished analysis state.');
+  context.reportPreparation.plan={eligible:1,estimatedRequests:1,maximumRequests:1,remainingAllowance:1,effectiveConcurrency:2,dependencyDepth:1,requestWavesLowerBound:1,
+    phases:{verificationOnly:1,authoringAndVerification:0},timing:{basis:'Real-provider ETA is not measured.',target:'A practical few-hour target.',assumptions:'Configured slots; no comparable provider timing.'}};
+  context.reportPreparation.batch={startedAt:null,finishedAt:null,outcome:'incomplete',elapsedMs:null};
+  vm.runInNewContext('renderPreparation()',context);
+  const unknownTiming=flat(surface).map(n=>n.text).join('\n');
+  assert.match(unknownTiming,/Elapsed: unknown for this saved run/);assert.doesNotMatch(unknownTiming,/Elapsed: 0 seconds/);
+  assert.match(unknownTiming,/1 verification-only findings.*2 configured effective slots/);
+  assert.match(unknownTiming,/Remaining serial phase depth: 1.*not an ETA/);
+  assert.doesNotMatch(unknownTiming,/60 active seconds|20\/30 minutes/);
+  context.reportPreparation.triageComplete=true;context.reportPreparation.mode='completed';context.reportPreparation.assessed=2;context.reportPreparation.notAssessed=0;
+  context.reportPreparation.batch={startedAt:'2026-10-12T00:00:00Z',finishedAt:'2026-10-12T00:02:03Z',outcome:'completed',elapsedMs:123000};
+  vm.runInNewContext('renderPreparation()',context);
+  const completed=flat(surface).map(n=>n.text).join('\n');
+  assert.match(completed,/Automatic triage complete/);assert.match(completed,/2 of 2 assessed · 0 not assessed/);assert.match(completed,/Elapsed: 123 seconds/);
+  assert.ok(!flat(surface).some(n=>n.text==='Resume entire report'),'A complete automatic report does not present a generic retry for unfinished teaching.');
 });
 test('accepted-partial revision form sends exact host identity and preserves focused corrective work across progress',()=>{
   const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),vm=require('node:vm');
@@ -212,7 +227,7 @@ test('accepted-partial revision form sends exact host identity and preserves foc
     querySelector(selector){return this.querySelectorAll(selector)[0]||null;},focus(){context.document.activeElement=this;}});
   const surface=node('div'),sent=[],action={available:true,kind:'accepted-partial',assessmentIdentity:'reviewed-A',reviewRequestId:'paid-V',candidateHash:'argument-A',contextHash:'context-A',sourceHash:'sources-A',
     targets:[{path:'/property',label:'Collection entitlement'},{path:'/questions/q1',label:'Exact remaining recipient capability'}],reason:'Private revision needs authoring and fresh verification; accepted predecessor remains readable.'};
-  const job={id:'A',state:'blocked',publishable:false,revisionAction:action,continueAction:{available:false,reason:'Choose a concrete revision target.'},assessmentProjection:{technical:{identity:'reviewed-A',result:'insufficient-evidence',coverage:'partial',label:'Insufficient evidence for the complete allegation',why:'The collection entitlement remains unresolved.'}}};
+  const job={id:'A',state:'completed',assessmentCompleted:true,publishable:false,revisionAction:action,continueAction:{available:false,reason:'Choose a concrete revision target.'},assessmentProjection:{technical:{identity:'reviewed-A',result:'insufficient-evidence',coverage:'partial',label:'Insufficient evidence for the complete allegation',why:'The collection entitlement remains unresolved.'}}};
   context={active:'A',reportPreparation:{project:'P',reportHash:'R',mode:'incomplete',ready:0,total:1,requests:2,requestLimit:6,jobs:[job],active:[],stopped:[]},
     element:node,button:(label,fn)=>({...node('button','',label),action:fn}),preparationLabel:s=>s,
     report:'',guideAvailability:null,guideIntent:'waiting',preparing:null,preparationState:null,investigationDraft:null,sourceStale:false,preparationExpanded:false,blockerReturn:null,
@@ -233,34 +248,44 @@ test('accepted-partial revision form sends exact host identity and preserves foc
   job.verificationCompletion={result:'kept',published:false,checkingIncomplete:false};
   job.missingInputs=[{text:'Which source-grounded collection entitlement applies to the stated recipient condition?'}];
   job.assessmentProjection.technical.why='The complete checked explanation remains available without replacing its meaning. '.repeat(20);
+  job.assessmentProjection.technical.remaining=['Which entitlement rule applies?','Which deployment recipient is configured?'];
+  job.assessmentProjection.technical.evidence=[{id:'counter',claimId:'claim',claimTitle:'The recipient can always collect.',stance:'contradicts',sourceName:'Fictional::collect',source:{file:'src/Fictional.sol',line:12},note:'The checked guard limits collection to the configured recipient.'}];
   vm.runInNewContext('renderPreparation()',context);
-  const requirement=surface.querySelector('.guide-current-requirement'),checked=surface.querySelector('.guide-checked-reason');
-  assert.equal(requirement.text,'Still required: '+job.missingInputs[0].text);
-  assert.ok(surface.children.indexOf(requirement)<surface.children.indexOf(checked),'The missing material fact precedes verbose reasoning in the collapsed native dock.');
-  assert.ok(surface.children.findIndex(n=>n.text===job.revisionAction.reason)<surface.children.indexOf(checked),'The host-bound next-action constraint is visible before optional detailed reasoning.');
-  assert.equal(flat(checked).find(n=>n.cls==='guide-technical-reason').text,job.assessmentProjection.technical.why,'The exact checked explanation remains intact in its named disclosure.');
-  assert.equal(checked.open,false,'Long reasoning is initially collapsed, not clipped or truncated.');
+  const requirement=surface.querySelector('.guide-current-requirement'),checked=surface.querySelector('.guide-technical-reason'),evidence=surface.querySelector('.guide-assessment-actions'),unknowns=surface.querySelector('.guide-assessment-unknowns');
+  assert.equal(requirement.text,'Possible revision: '+job.missingInputs[0].text);
+  assert.ok(surface.children.indexOf(checked)<surface.children.indexOf(evidence)&&surface.children.indexOf(evidence)<surface.children.indexOf(unknowns)&&surface.children.indexOf(unknowns)<surface.children.indexOf(requirement),'The checked result explains its evidence and unknowns before optional revision work.');
+  assert.equal(checked.text,job.assessmentProjection.technical.why,'The complete exact checked reason is directly rendered.');
+  assert.equal(surface.querySelector('.guide-checked-reason'),null,'A material uncertainty cannot hide the admitted explanation in a disclosure.');
+  assert.match(surface.querySelector('.guide-technical-coverage').text,/Partial coverage/);
+  assert.ok(flat(evidence).some(n=>n.text===job.assessmentProjection.technical.evidence[0].note));
+  for(const question of job.assessmentProjection.technical.remaining)assert.ok(flat(unknowns).some(n=>n.text===question),'Every exact checked uncertainty is directly available.');
   assert.equal(flat(surface).filter(n=>n.text===job.revisionAction.reason).length,1,'The next-action reason is not repeated.');
-  checked.open=true;vm.runInNewContext('renderPreparation()',context);
-  assert.equal(surface.querySelector('.guide-checked-reason').open,true,'Background progress preserves the reader’s open reasoning disclosure.');
+  vm.runInNewContext('renderPreparation()',context);
+  assert.equal(surface.querySelector('.guide-technical-reason').text,checked.text,'Background progress preserves the direct checked explanation without changing its text.');
 });
-test('ordinary finding rows and filters distinguish a useful assessment from a Ready tutorial or operational failure',()=>{
+test('ordinary finding rows and filters distinguish current completion, readable predecessor, tutorial and operational failure',()=>{
   const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8'),vm=require('node:vm');
   const definitions=source.slice(source.indexOf('  const preparationJob'),source.indexOf('  function readAssessment'));
-  const jobs=[{id:'ready',publishable:true,state:'completed',assessmentAvailable:true,assessmentProjection:{technical:{identity:'r',result:'supported',label:'Defect established',why:'Checked consequence.'}}},
-    {id:'partial',publishable:false,state:'blocked',assessmentAvailable:true,assessmentProjection:{technical:{identity:'p',result:'insufficient-evidence',label:'Insufficient evidence',why:'A precise property fact is unavailable.',remaining:['Which collection entitlement applies?']}}},
-    {id:'timeout',publishable:false,state:'failed',failureKind:'provider',assessmentAvailable:false,reason:'The received response has no usable claim/evidence structure.',assessmentProjection:{technical:{result:'not-assessed',why:'No current checked assessment is available.'}}}];
+  const jobs=[{id:'ready',publishable:true,state:'completed',assessmentCompleted:true,assessmentAvailable:true,assessmentProjection:{technical:{identity:'r',result:'supported',label:'Defect established',why:'Checked consequence.'}}},
+    {id:'partial',publishable:false,state:'completed',assessmentCompleted:true,assessmentAvailable:true,assessmentProjection:{technical:{identity:'p',result:'insufficient-evidence',label:'Insufficient evidence',why:'A precise property fact is unavailable.',remaining:['Which collection entitlement applies?']}}},
+    {id:'timeout',publishable:false,state:'failed',failureKind:'provider',assessmentCompleted:false,assessmentAvailable:false,reason:'The received response has no usable claim/evidence structure.',assessmentProjection:{technical:{result:'not-assessed',why:'No current checked assessment is available.'}}},
+    {id:'retained',publishable:false,state:'blocked',assessmentCompleted:false,assessmentAvailable:true,assessmentProjection:{artifact:{retained:true},technical:{identity:'old',result:'supported',label:'Defect established',why:'Earlier checked consequence.',revisionStatus:'Accepted predecessor; private revision pending'}}}];
   const rows=jobs.map(job=>({dataset:{findingId:job.id},hidden:false,parts:{'.triage-preparation-badge':{dataset:{}},'.triage-ready-action':{},'.triage-job-reason':{}},querySelector(selector){return this.parts[selector];}})),counts={};
-  const context={active:'partial',sourceStale:false,queueMode:'all',investigationDraft:null,reportPreparation:{jobs},preparationLabel:s=>s,
+  const context={active:'partial',sourceStale:false,queueMode:'all',investigationDraft:null,reportPreparation:{jobs,assessmentCounts:{supported:1,'insufficient-evidence':1}},preparationLabel:s=>s,
     drawer:{querySelectorAll:()=>rows,querySelector:()=>counts}};
   vm.runInNewContext(definitions+'\nupdatePreparationRows();',context);
   assert.equal(rows[0].parts['.triage-ready-action'].textContent,'Start walkthrough');assert.equal(rows[1].parts['.triage-ready-action'].textContent,'Read assessment');assert.equal(rows[1].parts['.triage-ready-action'].hidden,false);
-  assert.match(rows[1].parts['.triage-preparation-badge'].textContent,/Insufficient evidence.*Checked assessment/);assert.equal(rows[2].parts['.triage-ready-action'].hidden,true);
+  assert.match(rows[1].parts['.triage-preparation-badge'].textContent,/Insufficient evidence.*Assessment complete/);assert.equal(rows[2].parts['.triage-ready-action'].hidden,true);
+  assert.match(rows[3].parts['.triage-preparation-badge'].textContent,/current review unfinished/);assert.equal(rows[3].parts['.triage-ready-action'].hidden,false);
   assert.match(rows[2].parts['.triage-job-reason'].textContent,/no usable claim\/evidence structure/,'A generic unavailable projection must not hide the actionable operational/contract failure.');
-  assert.match(counts.textContent,/2 assessments available · 1 not assessed · 1 tutorials ready/);
-  context.queueMode='assessment:available';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,false,true]);
-  context.queueMode='assessment:not-assessed';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[true,true,false]);
-  context.queueMode='preparation:ready';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,true,true]);
+  assert.match(counts.textContent,/2 of 4 assessed · 2 not assessed/);assert.match(counts.textContent,/1 additional saved assessments readable · Optional walkthroughs: 1 ready/);
+  assert.match(counts.textContent,/Valid: 1 · Invalid: 0 · Inconclusive: 1/,'Only canonical current completion counts belong in automatic outcome totals.');
+  context.queueMode='assessment:completed';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,false,true,true]);
+  context.queueMode='assessment:supported';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,true,true,true]);
+  context.queueMode='assessment:insufficient-evidence';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[true,false,true,true]);
+  context.queueMode='assessment:available';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,false,true,false]);
+  context.queueMode='assessment:not-assessed';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[true,true,false,false]);
+  context.queueMode='preparation:ready';vm.runInNewContext('updatePreparationRows()',context);assert.deepEqual(rows.map(r=>r.hidden),[false,true,true,true]);
   context.sourceStale=true;vm.runInNewContext('updatePreparationRows()',context);assert.equal(rows[1].parts['.triage-ready-action'].hidden,true);assert.match(rows[1].parts['.triage-preparation-badge'].textContent,/Needs recheck/);
 });
 test('material checked dispatch and failure are direct annotations; only proof references are disclosed',()=>{
@@ -288,7 +313,7 @@ test('visible walkthrough result belongs to its displayed artifact, not a newer 
 
 test('negative successor status does not deny the separately retained accepted assessment',()=>{
   const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
-  const start=source.indexOf('      if(job?.verificationCompletion)preparationSurface.append'),end=source.indexOf('      if(technical?.revisionStatus)',start),messages=[];
+  const start=source.indexOf('      if(job?.verificationCompletion)preparationSurface.append'),end=source.indexOf('      if(technical?.revisionStatus&&',start),messages=[];
   const context={job:{verificationCompletion:{result:'repair'}},preparationSurface:{append:value=>messages.push(value)},element:(_t,_c,text)=>text};
   require('node:vm').runInNewContext(source.slice(start,end),context);
   assert.match(messages[0],/This review did not approve a new assessment/);assert.doesNotMatch(messages[0],/No technical assessment.*was accepted/);
