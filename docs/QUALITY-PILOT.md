@@ -42,8 +42,12 @@ insufficient-evidence/partial and 40 supported-partial cases. Required assertion
 are **160 assessed, 80 supported / 40 refuted / 40 insufficient-evidence, zero
 Ready tutorials, 320 scripted callbacks and zero remaining planned requests**.
 It checks every original report paragraph/disposition, substantive review,
-request receipt, frozen boundary, unchanged allocation and immutable response,
-then reopens in a fresh OS process with zero further callbacks. Its separate
+G/V request receipt, frozen boundary and unchanged allocation. Canonical
+arguments and the actual retained final-response checkpoints must remain
+byte-identical through reading, retry and a fresh OS-process reopen with zero
+further callbacks. Ordinary G/V retains one last response per finding; immutable
+archives belong to superseded/rejected or explicitly retained histories. This
+control does not invent an archive for each normal generation. Its separate
 240-second test timeout does not alter the unchanged 204-job/120-second gate.
 
 ### Validation completed here and remaining gates
@@ -89,6 +93,28 @@ temporary-path identity fixture failures. These failed runs remain recorded;
 the pull-request-triggered duplicate is the same source, not independent
 quality evidence. Corrected full-suite and browser results are recorded below
 when available. No ownership bypass or extended product deadline is permitted.
+
+The next [PR CI run](https://github.com/werulez99/flowboard-triage/actions/runs/38286320051)
+at `49fe7c4558b0b1a0af18a3fc028b7c42708cc1ca` passed **715/716** full Linux
+integration tests, zero skipped, in 123.058s. The human-note regression and
+missing-directory / changed-report / unreadable-report controls all passed;
+the unchanged 204 gate passed in **28.436s**. The remaining 160-case failure
+was its incorrect assumption that ordinary G/V creates an immutable archive
+for every response. Its exact reservation lookup now passed. The correction
+validates each actual retained response and its receipt/context rather than
+changing production storage to satisfy a fixture assumption. The whole
+read/retry/reopen gate still requires a completed passing run.
+
+Windows passed **293 tests, zero failed, 388 explicitly skipped** (681 total)
+in 28.547s, including controlled pipe-error health persistence and real-child
+cancellation with unconfirmed descendant cleanup, retained quarantine and
+blocked capacity reacquisition. POSIX confirmed-cleanup assertions remain;
+the native fd0-close test alone names its Windows primitive limitation, with
+an all-platform controlled Writable counterpart. macOS passed 294 tests with
+two remaining canonical temporary-path fixture failures and 385 skips. Its
+exact-root approval fixtures are normalized locally; production approval and
+source-path guards remain unchanged. Browser checks had not yet run because
+Linux integration stopped at the 160-case fixture assertion.
 
 The local Node process PID and `/proc` identity disagree. Existing ownership
 checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.

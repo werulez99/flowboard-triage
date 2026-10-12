@@ -28,7 +28,7 @@ test('answer capture does not claim exact text after malformed UTF-8',async t=>{
   await new Promise(resolve=>child.once('close',resolve));assert.equal(capture.status.state,'failed');assert.equal(capture.status.errors[0].kind,'decoding');assert.equal(capture.answers.length,0);
 });
 test('prepared exact input survives only acquisition-history/source-order changes without relaxing packet hashes',t=>{
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-prepared-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-prepared-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const input={phase:'generate',finding:{id:'A'},snapshot:{project:'controlled'},sources:[{id:'a',code:'complete A'},{id:'b',code:'complete B'}],actions:[{kind:'code-completion',result:'Source acquired'}]};
   const firstPacketPath=path.join(root,'input.json');fs.writeFileSync(firstPacketPath,JSON.stringify(input));
   const manifest={root,referenceHash:'outside-packet',maximumRequests:1,cases:[{findingId:'A',phases:['generate'],timeoutMs:600000,snapshotHash:hash(input.snapshot),firstPacket:packetIdentity(input),firstPacketPath}]};
@@ -41,7 +41,7 @@ test('prepared exact input survives only acquisition-history/source-order change
   fs.writeFileSync(firstPacketPath,JSON.stringify({...input,actions:[]}));assert.throws(()=>guard.preparedInput(reordered),/Frozen approved packet changed/);
 });
 test('five-call manifest keeps per-case phases nontransferable and packet/source/schema drift fails before reservation',t=>{
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-plan-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'evaluation-plan-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const input={phase:'generate',finding:{id:'A'},snapshot:{project:'controlled'},sources:[]};
   const manifest={root,referenceHash:'outside-packet',maximumRequests:5,cases:['A','B','C'].map(id=>({findingId:id,phases:id==='C'?['generate']:['generate','challenge'],timeoutMs:600000,snapshotHash:hash(input.snapshot),firstPacket:packetIdentity({...input,finding:{id}})}))};
   const ledger={manifestHash:hash(manifest),used:0,receipts:[]},approval={authorized:true,manifestHash:hash(manifest),maximumRequests:5};let saves=0;

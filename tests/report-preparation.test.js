@@ -150,7 +150,7 @@ function response(input) {
   };
 }
 async function fixture(t, count = 3, invoke, report = reportText(count), source = code, extraFiles={}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-report-jobs-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flowboard-report-jobs-')));
   fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/Gate.sol'), source); fs.writeFileSync(path.join(root, 'report.md'), report);
   for(const [file,text]of Object.entries(extraFiles)){fs.mkdirSync(path.dirname(path.join(root,file)),{recursive:true});fs.writeFileSync(path.join(root,file),text);}
   await importReport(path.join(root, 'report.md'), root, native, { deferMapping: true });

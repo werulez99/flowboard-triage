@@ -7,6 +7,7 @@ const engine=require('../extension/investigation-engine'),policy=require('../ext
 const technical=require('../extension/technical-assessment'),automatic=require('../extension/automatic-triage');
 const provider=require('../extension/semantic-provider'),format=require('../extension/challenge-format');
 const coverage=require('../extension/report-coverage'),packetContext=require('../extension/packet-context');
+const checkpoint=require('../extension/provider-result');
 const {ReportPreparation,reconcile}=require('../extension/report-preparation');
 const fixtureOutput=require('../scripts/fixtures/assessment-output'),native=process.env.FLOWBOARD_EXTENSION_PATH;
 
@@ -134,8 +135,21 @@ test('160 mixed ordinary findings finish automatic triage with zero Ready tutori
     for(const run of draft.runs){
       const receipt=ledger.receipts[run.requestId];assert.ok(receipt,entry.id+' has an exact reserved request receipt');
       assert.equal(receipt.findingId,entry.id);assert.equal(receipt.phase,run.phase);assert.equal(receipt.outcome,'completed');assert.ok(receipt.hostAcceptedAt);
-      assert.ok(run.retainedResponse?.archive);files.push(run.retainedResponse.archive);
+      assert.match(run.retainedResponse?.hash,/^[a-f0-9]{64}$/);
+      assert.deepEqual(receipt.audit.retainedResponse,run.retainedResponse,entry.id+' preserves the same exact response reference in its run and terminal receipt.');
+      if(run.retainedResponse.archive)files.push(run.retainedResponse.archive);
     }
+    // Ordinary G/V keeps one bounded last-response checkpoint per finding.
+    // Earlier run/receipt references remain durable; immutable raw archives
+    // belong to the production supersession/retained-history paths.
+    const verified=draft.runs.at(-1),retained=checkpoint.read(f.root,entry.id,verified.retainedResponse,
+      {phase:'challenge',snapshot:draft.snapshot,corrections:draft.corrections,previous:verified.retainedResponse.previous});
+    assert.ok(retained,entry.id+' final V checkpoint remains hash-valid for the exact current context.');
+    assert.equal(retained.input.finding.id,entry.id);assert.equal(retained.input.checkOnly,true);
+    assert.equal(retained.reservation.id,verified.requestId);assert.equal(retained.reservation.phase,'challenge');
+    assert.equal(retained.result.audit.requestId,verified.requestId);
+    assert.ok(format.valid(retained.result.value,provider.responseSchema(retained.input)));
+    files.push('.flowboard/provider-results/'+entry.id+'.json');
     files.push('.flowboard/investigations/'+entry.id+'.json');
   }
   const unchanged=fileHashes(f.root,files),batch=structuredClone(status.batch);
@@ -159,7 +173,7 @@ test('160 mixed ordinary findings finish automatic triage with zero Ready tutori
   assert.equal(restored.status.assessed,count);assert.equal(restored.status.notAssessed,0);assert.equal(restored.status.triageComplete,true);assert.equal(restored.status.ready,0);
   assert.deepEqual(restored.status.assessmentCounts,status.assessmentCounts);assert.deepEqual(restored.status.batch,batch);assert.deepEqual(restored.receipts,ledger.receipts);
   assert.equal(restored.status.requests,ledger.requests);assert.equal(restored.status.requestLimit,ledger.limit);assert.equal(restored.status.plan.expectedRequests,0);
-  assert.deepEqual(fileHashes(f.root,files),unchanged,'A fresh host reads the exact canonical arguments and immutable scripted responses.');
+  assert.deepEqual(fileHashes(f.root,files),unchanged,'A fresh host preserves exact canonical arguments, final response checkpoints and any actual immutable archives.');
   for(const entry of f.entries)assert.deepEqual(inspect(engine.read(f.root,entry.id),entry,f.report.issues.find(issue=>issue.id===entry.id)),identities[entry.id]);
   t.diagnostic(JSON.stringify({label:'Scripted orchestration only; zero real-provider requests, not model accuracy or real batch latency',findings:count,
     results:status.assessmentCounts,assessed:status.assessed,readyTutorials:status.ready,scriptedRequests:status.requests,catalogRequests,
