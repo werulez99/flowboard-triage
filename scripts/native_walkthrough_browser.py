@@ -289,10 +289,16 @@ try:
             field = page.locator('#triage-evidence-note'); field.fill('Do not replace this draft when preparation finishes.')
             field.evaluate('node=>node.setSelectionRange(4,11)')
             position = capture()
+            def manual_edit_state():
+                return {'view':capture(),'text':field.input_value(),
+                        'selection':field.evaluate('node=>[node.selectionStart,node.selectionEnd]'),
+                        'focused':field.evaluate('node=>document.activeElement===node')}
+            arrival_before = manual_edit_state()
             emit({'type':'triage:investigation','issueId':'I-01','token':base['token'],'draft':base['investigationDraft']})
+            result['observed']['manualReadinessArrival'] = {'before':arrival_before,'after':manual_edit_state()}
             assert page.locator('.guide-annotation').count()==0, 'An accepted result must not steal an explicitly selected note editor.'
-            assert capture()==position and field.input_value()=='Do not replace this draft when preparation finishes.'
-            assert field.evaluate('node=>[node.selectionStart,node.selectionEnd]')==[4,11]
+            assert capture()==position and field.input_value()=='Do not replace this draft when preparation finishes.', result['observed']['manualReadinessArrival']
+            assert field.evaluate('node=>document.activeElement===node && node.selectionStart===4 && node.selectionEnd===11'), result['observed']['manualReadinessArrival']
             result['checks'].append('Late selected-finding readiness does not replace deliberate exploration or an unfinished manual note.')
             load()
             mixed = {'mode':'running','published':False,'ready':1,'total':4,'counts':{'completed':1,'running':1,'blocked':1,'failed':1},'active':[{'id':'I-02','stage':'challenge'}],

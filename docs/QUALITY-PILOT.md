@@ -153,6 +153,23 @@ controls use the same production `openNote` handler. The fixture now enters
 through that accessible marker while staying in guided mode, preserving the
 original evidence detour, retry, stale-callback and Return assertions.
 
+The [PR run at `13c260f`](https://github.com/werulez99/flowboard-triage/actions/runs/38288935729)
+passed all 716 Linux source tests (124.850s), including the 160 control in
+26.272s and the unchanged 204 control in 28.128s. The native browser passed the
+visible-marker, evidence-retry, stale-response and Return controls, then exposed
+a real preservation defect: an incoming assessment revoked the exact manual
+code-note highlight while the researcher was typing. Generated-guidance
+revocation had cleared the manual source location as well.
+
+The bounded correction retains only an explicitly owned manual note anchor on
+the same current source, file, hash and single line. A resumed generated step
+at a coincidentally matching saved note line cannot use that exception. Generated
+assessment/blocker inspection and pending navigation still revoke; full or
+source-stale withdrawal still clears the location. The browser assertion keeps
+exact camera, source highlight, text, caret and focus equality and records its
+before/after values. A focused control exercises the actual revocation function
+for manual, generated, changed-source and full-withdrawal cases.
+
 The local Node process PID and `/proc` identity disagree. Existing ownership
 checks refuse coordination before dispatch, with `PROVIDER_RESOURCE_UNAVAILABLE`.
 Those guards were retained. Chromium installation also failed on its downloaded

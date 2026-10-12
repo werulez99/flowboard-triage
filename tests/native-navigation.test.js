@@ -84,6 +84,26 @@ test('guidance revocation removes blocker view mode and pending navigation autho
  require('node:vm').runInNewContext(body+'\nrevokeGeneratedGuidance();',context);
  assert.equal(context.blockerReturn,null);assert.notEqual(context.guideNavigation,'pending');assert.ok(removed.includes('triage-blocker-card'));assert.equal(context.checkedLocation,null);
 });
+test('assessment replacement preserves an exact current manual note anchor while revoking generated inspection authority',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../extension/webview/triage.js'),'utf8');
+ const body=source.slice(source.indexOf('  function revokeGeneratedGuidance'),source.indexOf("  window.addEventListener('message'",source.indexOf('  function revokeGeneratedGuidance')));
+ const anchor={file:'src/Demo.sol',sourceHash:'current',line:8,endLine:8};
+ for(const scenario of ['current manual note','current manual detour','resumed guide at note line','generated inspection','different source version','source invalidation','full withdrawal']){
+  const removed=[],context={sourceStale:scenario==='source invalidation',readOnly:false,drawerTab:'review',evidenceInput:{cardId:'card',line:8},selectedCard:'card',
+   checkedLocation:{...anchor},hints:{card:{file:anchor.file,sourceHash:scenario==='different source version'?'changed':anchor.sourceHash,line:8,endLine:10}},
+   guide:null,guideIntent:'explore',guideMode:'closed',guideDetour:null,guideReturn:{},visibleInvestigation:{revision:1},assessmentReturn:null,blockerReturn:null,guideNavigation:'pending',
+   crypto:require('node:crypto'),cards:new Map([['card',{el:{classList:{remove:(...names)=>removed.push(...names)}}}]]),
+   drawer:{classList:{contains:()=>true},querySelectorAll:()=>[],querySelector:()=>({})},document:{querySelectorAll:()=>[]}};
+  if(scenario==='current manual detour'){context.guide={key:'previous'};context.guideMode='detour';context.guideDetour='new-note';}
+  if(scenario==='resumed guide at note line'){context.guide={key:'previous'};context.guideMode='guided';context.guideIntent='guided';}
+  if(scenario==='generated inspection'){context.assessmentReturn={cardId:'card'};context.blockerReturn={navigationId:'pending'};}
+  require('node:vm').runInNewContext(body+`\nrevokeGeneratedGuidance(${scenario==='full withdrawal'});`,context);
+  assert.deepEqual(context.checkedLocation,scenario.startsWith('current manual')?anchor:null,scenario);
+  assert.equal(context.guide,null);assert.equal(context.guideReturn,null);assert.equal(context.visibleInvestigation,null);
+  assert.equal(context.assessmentReturn,null);assert.equal(context.blockerReturn,null);assert.notEqual(context.guideNavigation,'pending');
+  assert.ok(removed.includes('triage-assessment-card')&&removed.includes('triage-blocker-card'));
+ }
+});
 test('source editor inspection resolves indexed declaration-only files without relaxing path or view ownership',async t=>{
  const fs=require('node:fs'),path=require('node:path'),root=fs.realpathSync(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'flowboard-declaration-')));
  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));

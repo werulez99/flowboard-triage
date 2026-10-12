@@ -2114,7 +2114,18 @@
     panX = 30 - left * scale; panY = 30 - top * scale; applyTransform(); schedulePersist();
   }
   function revokeGeneratedGuidance(withdrawAssessment = true) {
-    guide = null; guideMode = 'closed'; guideReturn = null; checkedLocation = null;
+    // A new assessment does not move an unfinished manual note on unchanged
+    // code. Retain only that exact note anchor, never a generated inspection.
+    let manualLocation = null;
+    if (!withdrawAssessment && !sourceStale && !readOnly && guideIntent === 'explore' && drawerTab === 'review' && drawer.classList.contains('visible') &&
+        !assessmentReturn && !blockerReturn && (!guide || guideMode === 'detour' && guideDetour === 'new-note') &&
+        evidenceInput.cardId === selectedCard && cards.has(selectedCard)) {
+      const source = hints[selectedCard];
+      if (source?.file && source.sourceHash && checkedLocation?.file === source.file && checkedLocation.sourceHash === source.sourceHash &&
+          Number.isSafeInteger(checkedLocation.line) && checkedLocation.line >= source.line && checkedLocation.line <= source.endLine &&
+          checkedLocation.line === evidenceInput.line && (checkedLocation.endLine || checkedLocation.line) === checkedLocation.line) manualLocation = checkedLocation;
+    }
+    guide = null; guideMode = 'closed'; guideReturn = null; checkedLocation = manualLocation;
     if (withdrawAssessment) investigationDraft = null;
     assessmentReturn=null;blockerReturn=null;guideNavigation=crypto.randomUUID();
     for(const card of cards.values())card.el.classList.remove('triage-assessment-card','triage-blocker-card');
